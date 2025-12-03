@@ -1,5 +1,8 @@
 package com.cloudsimulator.engine;
 
+import com.cloudsimulator.config.ConfigParser;
+import com.cloudsimulator.config.ExperimentConfiguration;
+import com.cloudsimulator.config.FileConfigParser;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.utils.SimulationLogger;
 
@@ -13,15 +16,56 @@ import java.util.List;
  */
 public class SimulationEngine {
     private SimulationContext context;
+    private ExperimentConfiguration configuration;
     private List<SimulationStep> steps;
     private SimulationLogger logger;
+    private ConfigParser configParser;
     private long randomSeed;
 
     public SimulationEngine() {
         this.context = new SimulationContext();
         this.steps = new ArrayList<>();
         this.logger = new SimulationLogger();
+        this.configParser = new FileConfigParser();
         this.randomSeed = System.currentTimeMillis(); // Default seed
+    }
+
+    /**
+     * Configure the simulation from a config file.
+     *
+     * @param configFilePath Path to the .cosc configuration file
+     */
+    public void configure(String configFilePath) {
+        logger.info("Loading configuration from: " + configFilePath);
+        this.configuration = configParser.parse(configFilePath);
+        this.randomSeed = configuration.getRandomSeed();
+
+        // Initialize random generator with seed
+        RandomGenerator.initialize(randomSeed);
+
+        logger.info("Configuration loaded successfully");
+        logger.info("Random seed: " + randomSeed);
+        logger.info("Datacenters: " + configuration.getDatacenterConfigs().size());
+        logger.info("Hosts: " + configuration.getHostConfigs().size());
+        logger.info("Users: " + configuration.getUserConfigs().size());
+        logger.info("VMs: " + configuration.getVmConfigs().size());
+        logger.info("Tasks: " + configuration.getTaskConfigs().size());
+    }
+
+    /**
+     * Configure with an existing ExperimentConfiguration object.
+     *
+     * @param config ExperimentConfiguration object
+     */
+    public void configure(ExperimentConfiguration config) {
+        logger.info("Loading configuration from object");
+        this.configuration = config.clone(); // Deep copy
+        this.randomSeed = configuration.getRandomSeed();
+
+        // Initialize random generator with seed
+        RandomGenerator.initialize(randomSeed);
+
+        logger.info("Configuration loaded. Random seed: " + randomSeed);
     }
 
     /**
@@ -31,6 +75,9 @@ public class SimulationEngine {
      */
     public void setRandomSeed(long seed) {
         this.randomSeed = seed;
+        if (this.configuration != null) {
+            this.configuration.setRandomSeed(seed);
+        }
         RandomGenerator.initialize(seed);
         logger.info("Random seed set to: " + seed);
     }
@@ -105,6 +152,13 @@ public class SimulationEngine {
      */
     public SimulationContext getContext() {
         return context;
+    }
+
+    /**
+     * Gets the experiment configuration (for inspection/testing).
+     */
+    public ExperimentConfiguration getConfiguration() {
+        return configuration;
     }
 
     /**
