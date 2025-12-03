@@ -54,6 +54,16 @@ public class Host {
     private long totalNumberOfSecondsWorking;
     private long totalNumberOfSecondsIdle;
 
+    // Resource allocation tracking
+    private long allocatedRamMB;
+    private int allocatedCpuCores;
+    private int allocatedGpus;
+    private long allocatedStorageMB;
+    private long allocatedBandwidthMbps;
+
+    // Energy tracking
+    private double totalEnergyConsumedJoules;
+
     /**
      * Constructor with custom specifications.
      */
@@ -88,6 +98,14 @@ public class Host {
         this.assignedDatacenterId = null;
         this.totalNumberOfSecondsWorking = 0;
         this.totalNumberOfSecondsIdle = 0;
+
+        // Initialize resource allocation tracking
+        this.allocatedRamMB = 0;
+        this.allocatedCpuCores = 0;
+        this.allocatedGpus = 0;
+        this.allocatedStorageMB = 0;
+        this.allocatedBandwidthMbps = 0;
+        this.totalEnergyConsumedJoules = 0.0;
     }
 
     /**
@@ -98,12 +116,92 @@ public class Host {
     }
 
     /**
+     * Checks if the host has capacity for the specified resources.
+     */
+    public boolean hasCapacityFor(long ramMB, int vcpus, int gpus) {
+        return (allocatedRamMB + ramMB <= ramCapacityMB) &&
+               (allocatedCpuCores + vcpus <= numberOfCpuCores) &&
+               (allocatedGpus + gpus <= numberOfGpus);
+    }
+
+    /**
+     * Checks if the host has capacity for a specific VM.
+     */
+    public boolean hasCapacityForVM(VM vm) {
+        return hasCapacityFor(
+            vm.getRequestedRamMB(),
+            vm.getRequestedVcpuCount(),
+            vm.getRequestedGpuCount()
+        ) && (allocatedStorageMB + vm.getRequestedStorageMB() <= hardDriveCapacityMB) &&
+             (allocatedBandwidthMbps + vm.getRequestedBandwidthMbps() <= networkCapacityMbps);
+    }
+
+    /**
+     * Allocates resources for a VM.
+     */
+    public void allocateResources(VM vm) {
+        allocatedRamMB += vm.getRequestedRamMB();
+        allocatedCpuCores += vm.getRequestedVcpuCount();
+        allocatedGpus += vm.getRequestedGpuCount();
+        allocatedStorageMB += vm.getRequestedStorageMB();
+        allocatedBandwidthMbps += vm.getRequestedBandwidthMbps();
+    }
+
+    /**
+     * Deallocates resources for a VM.
+     */
+    public void deallocateResources(VM vm) {
+        allocatedRamMB -= vm.getRequestedRamMB();
+        allocatedCpuCores -= vm.getRequestedVcpuCount();
+        allocatedGpus -= vm.getRequestedGpuCount();
+        allocatedStorageMB -= vm.getRequestedStorageMB();
+        allocatedBandwidthMbps -= vm.getRequestedBandwidthMbps();
+    }
+
+    /**
+     * Gets available RAM in MB.
+     */
+    public long getAvailableRamMB() {
+        return ramCapacityMB - allocatedRamMB;
+    }
+
+    /**
+     * Gets available CPU cores.
+     */
+    public int getAvailableCpuCores() {
+        return numberOfCpuCores - allocatedCpuCores;
+    }
+
+    /**
+     * Gets available GPUs.
+     */
+    public int getAvailableGpus() {
+        return numberOfGpus - allocatedGpus;
+    }
+
+    /**
+     * Gets resource utilization percentage (0.0 to 1.0).
+     */
+    public double getResourceUtilization() {
+        double cpuUtil = (double) allocatedCpuCores / numberOfCpuCores;
+        double ramUtil = (double) allocatedRamMB / ramCapacityMB;
+        return (cpuUtil + ramUtil) / 2.0;
+    }
+
+    /**
      * Assigns a VM to this host.
      */
     public void assignVM(VM vm) {
+        if (!hasCapacityForVM(vm)) {
+            throw new IllegalStateException("Host does not have capacity for VM " + vm.getId());
+        }
         this.assignedVMs.add(vm);
+        allocateResources(vm);
         this.vmOpenSecondsMap.put(vm.getId(), 0L);
         this.vmWorkloadSecondsMap.put(vm.getId(), new HashMap<>());
+
+        // Set assigned host in VM
+        vm.setAssignedHostId(this.id);
     }
 
     /**
@@ -111,6 +209,8 @@ public class Host {
      */
     public void removeVM(VM vm) {
         this.assignedVMs.remove(vm);
+        deallocateResources(vm);
+        vm.setAssignedHostId(null);
     }
 
     /**
@@ -180,6 +280,39 @@ public class Host {
         }
 
         updatePowerConsumption();
+        updateEnergyConsumption();
+    }
+
+    /**
+     * Updates energy consumption for this simulation second.
+     * Energy = Power * Time (1 second)
+     */
+    public void updateEnergyConsumption() {
+        totalEnergyConsumedJoules += currentTotalPowerDraw;
+    }
+
+    /**
+     * Gets the total energy consumed in Joules.
+     */
+    public double getTotalEnergyConsumed() {
+        return totalEnergyConsumedJoules;
+    }
+
+    /**
+     * Gets the total energy consumed in kWh.
+     */
+    public double getTotalEnergyConsumedKWh() {
+        return totalEnergyConsumedJoules / 3_600_000.0;
+    }
+
+    /**
+     * Activates the host by assigning it to a datacenter.
+     */
+    public void activate(long timestamp, Long datacenterId) {
+        if (this.assignedDatacenterId == null) {
+            this.assignedDatacenterId = datacenterId;
+            this.activeSeconds = 0;
+        }
     }
 
     /**
