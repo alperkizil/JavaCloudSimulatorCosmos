@@ -52,6 +52,13 @@ public class VM {
     private Map<Long, Long> taskRunningSecondsMap;  // Task ID -> seconds running
     private Map<Long, Map<WorkloadType, Long>> taskWorkloadSecondsMap;  // Task ID -> Workload -> seconds
 
+    // Host assignment tracking
+    private Long assignedHostId;
+
+    // Task execution tracking
+    private Task currentExecutingTask;
+    private long currentTaskProgress;
+
     /**
      * Constructor with custom specifications.
      */
@@ -86,6 +93,11 @@ public class VM {
         this.utilizationHistory = new ArrayList<>();
         this.taskRunningSecondsMap = new HashMap<>();
         this.taskWorkloadSecondsMap = new HashMap<>();
+
+        // Initialize host assignment and task execution
+        this.assignedHostId = null;
+        this.currentExecutingTask = null;
+        this.currentTaskProgress = 0;
     }
 
     /**
@@ -161,6 +173,183 @@ public class VM {
             secondsIDLE++;
             totalIDLESeconds++;
         }
+    }
+
+    // Host assignment methods
+    public Long getAssignedHostId() {
+        return assignedHostId;
+    }
+
+    public void setAssignedHostId(Long hostId) {
+        this.assignedHostId = hostId;
+    }
+
+    public boolean isAssignedToHost() {
+        return assignedHostId != null;
+    }
+
+    /**
+     * Activates the VM by assigning it to a host.
+     */
+    public void activate(long timestamp, Long hostId) {
+        if (this.assignedHostId == null) {
+            this.assignedHostId = hostId;
+            this.vmState = VmState.QUEUED;
+            this.activeSeconds = 0;
+        }
+    }
+
+    /**
+     * Starts the VM (changes state to RUNNING).
+     */
+    public void start() {
+        this.vmState = VmState.RUNNING;
+    }
+
+    /**
+     * Checks if VM can accept a task based on compute type compatibility.
+     */
+    public boolean canAcceptTask(Task task) {
+        if (task.getWorkloadType() == WorkloadType.IDLE) return true;
+
+        boolean requiresGpu = isGpuWorkload(task.getWorkloadType());
+        if (requiresGpu && computeType == ComputeType.CPU_ONLY) {
+            return false;
+        }
+
+        boolean requiresCpu = isCpuWorkload(task.getWorkloadType());
+        if (requiresCpu && computeType == ComputeType.GPU_ONLY) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean isGpuWorkload(WorkloadType type) {
+        return type == WorkloadType.FURMARK ||
+               type == WorkloadType.IMAGE_GEN_GPU ||
+               type == WorkloadType.LLM_GPU;
+    }
+
+    private boolean isCpuWorkload(WorkloadType type) {
+        return type == WorkloadType.SEVEN_ZIP ||
+               type == WorkloadType.DATABASE ||
+               type == WorkloadType.IMAGE_GEN_CPU ||
+               type == WorkloadType.LLM_CPU ||
+               type == WorkloadType.CINEBENCH ||
+               type == WorkloadType.PRIME95SmallFFT;
+    }
+
+    /**
+     * Executes tasks for one simulation second.
+     */
+    public void executeOneSecond(long currentTime) {
+        if (vmState != VmState.RUNNING) {
+            return;
+        }
+
+        // Get or start next task
+        if (currentExecutingTask == null && !assignedTasks.isEmpty()) {
+            currentExecutingTask = assignedTasks.peek();
+            currentExecutingTask.startExecution(currentTime);
+            currentTaskProgress = 0;
+        }
+
+        if (currentExecutingTask != null) {
+            // Calculate IPS available for this task
+            long availableIps = getTotalRequestedIps();
+
+            // Execute instructions
+            currentTaskProgress += availableIps;
+            currentExecutingTask.executeInstructions(availableIps);
+
+            // Calculate utilization based on workload type
+            double[] utilization = calculateUtilization(currentExecutingTask.getWorkloadType());
+            double cpuUtil = utilization[0];
+            double gpuUtil = utilization[1];
+
+            // Update current utilization
+            currentUtilization.setActiveWorkloadType(currentExecutingTask.getWorkloadType());
+            currentUtilization.setCpuUtilization(cpuUtil);
+            currentUtilization.setGpuUtilization(gpuUtil);
+            currentUtilization.incrementProgress();
+
+            // Record utilization
+            double powerDraw = calculatePowerDraw(cpuUtil, gpuUtil);
+            recordUtilization(currentTime, currentExecutingTask.getId(),
+                             currentExecutingTask.getWorkloadType(),
+                             cpuUtil, gpuUtil, powerDraw);
+
+            // Check if task is complete
+            if (currentTaskProgress >= currentExecutingTask.getInstructionLength()) {
+                currentExecutingTask.finishExecution(currentTime);
+                finishTask(currentExecutingTask);
+                currentExecutingTask = null;
+                currentTaskProgress = 0;
+                currentUtilization.resetToIdle();
+            }
+        } else {
+            // VM is idle
+            currentUtilization.resetToIdle();
+        }
+    }
+
+    /**
+     * Calculate utilization based on workload type.
+     * Returns [cpuUtilization, gpuUtilization]
+     */
+    private double[] calculateUtilization(WorkloadType workloadType) {
+        switch (workloadType) {
+            case SEVEN_ZIP:
+                return new double[]{0.8, 0.0};
+            case DATABASE:
+                return new double[]{0.6, 0.0};
+            case FURMARK:
+                return new double[]{0.1, 1.0};
+            case IMAGE_GEN_CPU:
+                return new double[]{0.9, 0.0};
+            case IMAGE_GEN_GPU:
+                return new double[]{0.2, 0.9};
+            case LLM_CPU:
+                return new double[]{0.95, 0.0};
+            case LLM_GPU:
+                return new double[]{0.3, 0.95};
+            case CINEBENCH:
+                return new double[]{1.0, 0.0};
+            case PRIME95SmallFFT:
+                return new double[]{1.0, 0.0};
+            case IDLE:
+            default:
+                return new double[]{0.0, 0.0};
+        }
+    }
+
+    /**
+     * Calculate power draw (simplified).
+     */
+    private double calculatePowerDraw(double cpuUtil, double gpuUtil) {
+        double basePower = 50.0;
+        double cpuPower = cpuUtil * requestedVcpuCount * 30.0;
+        double gpuPower = gpuUtil * requestedGpuCount * 200.0;
+        return basePower + cpuPower + gpuPower;
+    }
+
+    /**
+     * Gets completion percentage.
+     */
+    public double getCompletionPercentage() {
+        if (assignedTasks.isEmpty() && finishedTasks.isEmpty()) {
+            return 0.0;
+        }
+        int total = assignedTasks.size() + finishedTasks.size();
+        return (double) finishedTasks.size() / total * 100.0;
+    }
+
+    /**
+     * Checks if all tasks are finished.
+     */
+    public boolean hasFinishedAllTasks() {
+        return assignedTasks.isEmpty() && !finishedTasks.isEmpty();
     }
 
     /**

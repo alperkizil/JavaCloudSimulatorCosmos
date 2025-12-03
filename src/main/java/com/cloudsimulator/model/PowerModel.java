@@ -7,6 +7,9 @@ import com.cloudsimulator.enums.WorkloadType;
  * It considers CPU utilization, GPU utilization, and other components.
  */
 public class PowerModel {
+    // Model identification
+    private String modelName;
+
     // Power consumption parameters
     private double maxCpuPower;           // Max power for CPU at 100% utilization (Watts)
     private double maxGpuPower;           // Max power for GPU at 100% utilization (Watts)
@@ -15,11 +18,12 @@ public class PowerModel {
     private double otherComponentsPower;  // Power for other components (RAM, storage, etc.) (Watts)
 
     /**
-     * Constructor with custom power parameters.
+     * Constructor with model name and custom power parameters.
      */
-    public PowerModel(double maxCpuPower, double maxGpuPower,
+    public PowerModel(String modelName, double maxCpuPower, double maxGpuPower,
                      double idleCpuPower, double idleGpuPower,
                      double otherComponentsPower) {
+        this.modelName = modelName;
         this.maxCpuPower = maxCpuPower;
         this.maxGpuPower = maxGpuPower;
         this.idleCpuPower = idleCpuPower;
@@ -28,11 +32,20 @@ public class PowerModel {
     }
 
     /**
+     * Constructor with custom power parameters (default model name).
+     */
+    public PowerModel(double maxCpuPower, double maxGpuPower,
+                     double idleCpuPower, double idleGpuPower,
+                     double otherComponentsPower) {
+        this("StandardPowerModel", maxCpuPower, maxGpuPower, idleCpuPower, idleGpuPower, otherComponentsPower);
+    }
+
+    /**
      * Default constructor with typical server values.
      * Assumes a typical server with moderate power consumption.
      */
     public PowerModel() {
-        this(300.0, 250.0, 50.0, 30.0, 100.0);
+        this("StandardPowerModel", 300.0, 250.0, 50.0, 30.0, 100.0);
     }
 
     /**
@@ -92,6 +105,14 @@ public class PowerModel {
     }
 
     // Getters and Setters
+
+    public String getModelName() {
+        return modelName;
+    }
+
+    public void setModelName(String modelName) {
+        this.modelName = modelName;
+    }
 
     public double getMaxCpuPower() {
         return maxCpuPower;

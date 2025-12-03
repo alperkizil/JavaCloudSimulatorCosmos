@@ -32,6 +32,9 @@ public class Task {
     private TaskExecutionStatus taskExecutionStatus;
     private long taskCpuExecTime;             // How many seconds spent executing
 
+    // Execution progress tracking
+    private long instructionsExecuted;
+
     /**
      * Full constructor.
      */
@@ -53,6 +56,7 @@ public class Task {
         // Initialize execution status
         this.taskExecutionStatus = TaskExecutionStatus.NOT_EXECUTED;
         this.taskCpuExecTime = 0;
+        this.instructionsExecuted = 0;
     }
 
     /**
@@ -117,6 +121,63 @@ public class Task {
      */
     public boolean isCompleted() {
         return taskExecutionStatus == TaskExecutionStatus.EXECUTED;
+    }
+
+    /**
+     * Executes the specified number of instructions.
+     */
+    public void executeInstructions(long instructions) {
+        instructionsExecuted += instructions;
+        if (instructionsExecuted >= instructionLength) {
+            instructionsExecuted = instructionLength;
+        }
+    }
+
+    /**
+     * Gets instructions executed so far.
+     */
+    public long getInstructionsExecuted() {
+        return instructionsExecuted;
+    }
+
+    /**
+     * Gets progress percentage (0.0 to 100.0).
+     */
+    public double getProgressPercentage() {
+        return (double) instructionsExecuted / instructionLength * 100.0;
+    }
+
+    /**
+     * Gets remaining instructions to complete.
+     */
+    public long getRemainingInstructions() {
+        return Math.max(0, instructionLength - instructionsExecuted);
+    }
+
+    /**
+     * Checks if task is complete.
+     */
+    public boolean isComplete() {
+        return instructionsExecuted >= instructionLength;
+    }
+
+    /**
+     * Gets estimated remaining time given available IPS.
+     */
+    public long getEstimatedRemainingTime(long ipsAvailable) {
+        if (ipsAvailable == 0) return Long.MAX_VALUE;
+        return getRemainingInstructions() / ipsAvailable;
+    }
+
+    /**
+     * Resets task for retry scenarios.
+     */
+    public void reset() {
+        instructionsExecuted = 0;
+        taskExecutionStatus = TaskExecutionStatus.NOT_EXECUTED;
+        taskExecStartTime = null;
+        taskExecEndTime = null;
+        taskCpuExecTime = 0;
     }
 
     /**
