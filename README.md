@@ -2,6 +2,12 @@
 
 A comprehensive cloud VM task scheduling simulation framework in Java, following object-oriented design principles and Gang of Four design patterns.
 
+## Project Status
+
+**Current Completion: ~50%**
+
+The configuration system, core model classes, and simulation engine framework are complete. Simulation step implementations, placement strategies, and reporting are in progress.
+
 ## Architecture
 
 ### Design Patterns Used
@@ -21,7 +27,7 @@ com.cloudsimulator
 ├── engine/         # Core simulation engine (SimulationEngine, SimulationContext)
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
-├── config/         # Configuration classes (planned for .cosc file support)
+├── config/         # Configuration system - COMPLETE ✓
 ├── steps/          # Simulation step implementations (planned)
 ├── strategy/       # Strategy implementations for placement/scheduling (planned)
 ├── calculator/     # Energy calculators (planned)
@@ -34,23 +40,479 @@ com.cloudsimulator
 - **Random Seed Support**: For experiment repeatability
 - **Power & Energy Modeling**: Configurable power models with real-time tracking
 - **Multi-Tenancy**: User-datacenter preferences and resource isolation
-- **Comprehensive Workloads**: CPU, GPU, and mixed workload types
+- **Comprehensive Workloads**: 9 workload types (CPU, GPU, and mixed)
 - **Extensible Architecture**: Plugin-based simulation steps
+- **Configuration System**: Custom .cosc file format for declarative experiment setup
+- **Deep-Copy Support**: Clone configurations for running multiple experiment variations
 
 ## Quick Start
 
-```bash
-# Compile
-javac -d out src/main/java/com/cloudsimulator/**/*.java
+### 1. Compile the Project
 
-# Run example
+```bash
+javac -d out src/main/java/com/cloudsimulator/**/*.java
+```
+
+### 2. Run Configuration Test
+
+```bash
+java -cp out com.cloudsimulator.ConfigTest
+```
+
+### 3. Run Basic Simulation Example
+
+```bash
 java -cp out com.cloudsimulator.SimulationExample
 ```
 
-See full documentation and examples in the expanded README below.
+---
+
+# Configuration System
+
+The simulation uses a custom `.cosc` (Cosmos Config) file format for declarative experiment configuration.
+
+## Configuration File Format (.cosc)
+
+A `.cosc` file consists of 6 sections:
+
+### 1. SEED Section
+
+Defines the random seed for experiment repeatability.
+
+```
+[SEED]
+42
+```
+
+### 2. DATACENTERS Section
+
+Format: `count` followed by `count` lines of datacenter definitions
+- Each line: `name,maxHostCapacity,totalMaxPowerDraw`
+
+```
+[DATACENTERS]
+3
+DC-East,50,100000.0
+DC-West,30,75000.0
+DC-Central,40,90000.0
+```
+
+### 3. HOSTS Section
+
+Format: `count` followed by `count` lines of host specifications
+- Each line: `ips,cpuCores,computeType,gpus,ram,network,storage,powerModel`
+- computeType: `CPU_ONLY`, `GPU_ONLY`, or `CPU_GPU_MIXED`
+
+```
+[HOSTS]
+2
+2500000000,16,CPU_ONLY,0,2097152,2000000,20971520,StandardPowerModel
+3000000000,32,CPU_GPU_MIXED,4,4194304,4000000,41943040,HighPerformancePowerModel
+```
+
+### 4. USERS Section
+
+Format: `count` followed by `count` lines of user definitions
+- Each line: `name,datacenters,gpuVMs,cpuVMs,mixedVMs,sevenZipTasks,dbTasks,furmarkTasks,imgGenCpuTasks,imgGenGpuTasks,llmCpuTasks,llmGpuTasks,cinebenchTasks,prime95Tasks`
+- datacenters: pipe-separated list (e.g., `DC-East|DC-West`)
+
+```
+[USERS]
+2
+Alice,DC-East|DC-West,2,3,1,5,3,0,2,1,4,2,1,3,2
+Bob,DC-Central,1,2,0,3,2,1,1,0,2,1,0,2,1
+```
+
+### 5. VMS Section
+
+Format: Multiple subsections for each compute type
+- Subsection header: `GPU:count`, `CPU:count`, or `MIXED:count`
+- Each VM line: `userName,ipsPerVcpu,vcpus,gpus,ram,storage,bandwidth`
+
+```
+[VMS]
+GPU:2
+Alice,2000000000,4,2,8192,102400,1000
+Bob,2500000000,8,4,16384,204800,2000
+CPU:3
+Alice,2000000000,4,0,8192,102400,1000
+Alice,2000000000,2,0,4096,51200,500
+Bob,2500000000,8,0,16384,204800,2000
+```
+
+### 6. TASKS Section
+
+Format: Multiple subsections for each workload type
+- Subsection header: `WORKLOAD_TYPE:count`
+- Each task line: `name,userName,instructionLength`
+
+```
+[TASKS]
+SEVEN_ZIP:3
+CompressData1,Alice,5000000000
+CompressData2,Alice,3000000000
+CompressBackup,Bob,7000000000
+DATABASE:2
+QueryProcessing,Alice,2000000000
+TransactionBatch,Bob,4000000000
+```
+
+## Using the Configuration System
+
+### Loading Configuration from File
+
+```java
+SimulationEngine engine = new SimulationEngine();
+engine.configure("configs/sample-experiment.cosc");
+
+// Access the configuration
+ExperimentConfiguration config = engine.getConfiguration();
+System.out.println("Loaded " + config.getDatacenterConfigs().size() + " datacenters");
+```
+
+### Programmatic Configuration
+
+```java
+ExperimentConfiguration config = new ExperimentConfiguration();
+config.setRandomSeed(42);
+
+DatacenterConfig dc = new DatacenterConfig("DC-Main", 100, 200000.0);
+config.addDatacenterConfig(dc);
+
+HostConfig host = new HostConfig(3000000000L, 32, ComputeType.CPU_GPU_MIXED,
+                                  4, 4194304, 4000000, 41943040,
+                                  "HighPerformancePowerModel");
+config.addHostConfig(host);
+
+engine.configure(config);
+```
+
+### Deep-Copy for Multiple Experiments
+
+```java
+// Load base configuration
+ExperimentConfiguration baseConfig = engine.getConfiguration();
+
+// Run with original seed
+engine.configure(baseConfig);
+engine.runSimulation(3600); // Run for 1 hour
+
+// Run with different seed
+ExperimentConfiguration variant1 = baseConfig.cloneWithSeed(999);
+engine.configure(variant1);
+engine.runSimulation(3600);
+
+// Create another variation
+ExperimentConfiguration variant2 = baseConfig.clone();
+// Modify variant2 as needed...
+engine.configure(variant2);
+engine.runSimulation(3600);
+```
+
+## Configuration Classes
+
+### Core Classes
+
+- **ExperimentConfiguration**: Main container with deep-copy support via `clone()` and `cloneWithSeed()`
+- **DatacenterConfig**: Datacenter specifications (name, capacity, power limit)
+- **HostConfig**: Physical host specifications (IPS, CPU, GPU, RAM, storage, network, power model)
+- **UserConfig**: User preferences (name, datacenter selection, VM/task counts by type)
+- **VMConfig**: Virtual machine specifications (resources, compute type, owner)
+- **TaskConfig**: Task definitions (name, owner, instruction length, workload type)
+
+### Parser Interface
+
+```java
+public interface ConfigParser {
+    ExperimentConfiguration parse(String configFilePath) throws ConfigurationException;
+}
+```
+
+Current implementation: **FileConfigParser** for `.cosc` files
 
 ---
 
-# Full Documentation
+# Model Classes
 
-## JavaCloudSimulatorCosmos
+## CloudDatacenter
+
+Represents a physical datacenter with power constraints.
+
+**Key Attributes:**
+- `name`: Datacenter identifier
+- `maxHostCapacity`: Maximum number of hosts
+- `totalMaxPowerDrawWatts`: Power budget
+- `hosts`: List of physical hosts
+- `totalEnergyConsumedJoules`: Energy tracking
+
+**Key Methods:**
+- `addHost(Host)`: Add host if capacity/power allows
+- `canAcceptHost(Host)`: Check if host can be accommodated
+- `isPowerLimitReached()`: Check power budget
+- `getAvailableHosts()`: Get hosts accepting VMs
+- `getTotalEnergyConsumedKWh()`: Get energy in kWh
+
+## Host
+
+Physical server with resources and power modeling.
+
+**Key Attributes:**
+- `ipsPerSecond`: Instructions per second capacity
+- `cpuCores`, `gpus`, `ramMB`, `networkMbps`, `storageMB`: Resource specs
+- `allocatedCpuCores`, `allocatedGpus`, etc.: Resource tracking
+- `assignedDatacenter`: Parent datacenter
+- `powerModel`: Energy calculation model
+
+**Key Methods:**
+- `hasCapacityForVM(VM)`: Check if VM fits
+- `allocateResources(VM)`: Reserve resources
+- `deallocateResources(VM)`: Release resources
+- `updateEnergyConsumption(double, double)`: Track energy usage
+- `getCpuUtilization()`, `getGpuUtilization()`: Current utilization %
+
+## VM
+
+Virtual machine executing tasks.
+
+**Key Attributes:**
+- `ipsPerVCPU`, `numberOfVCPUs`, `numberOfGPUs`: Compute resources
+- `vmState`: Current state (VmState enum)
+- `assignedTasks`: Task queue
+- `currentExecutingTask`: Currently running task
+- `utilizationHistory`: Historical utilization records
+
+**Key Methods:**
+- `executeOneSecond(long)`: Execute for one time step
+- `canAcceptTask(Task)`: Check task compatibility
+- `addTask(Task)`: Enqueue task
+- `calculateUtilization(WorkloadType)`: Get CPU/GPU utilization based on workload
+
+## Task
+
+Executable workload with instruction-level progress tracking.
+
+**Key Attributes:**
+- `instructionLength`: Total instructions
+- `instructionsExecuted`: Progress counter
+- `workloadType`: WorkloadType enum (SEVEN_ZIP, DATABASE, etc.)
+- `executionStatus`: TaskExecutionStatus enum
+
+**Key Methods:**
+- `executeInstructions(long)`: Execute specified instructions
+- `getProgressPercentage()`: Get completion %
+- `isComplete()`: Check if finished
+- `getRemainingInstructions()`: Get remaining work
+
+## User
+
+Cloud user with multi-tenancy support.
+
+**Key Attributes:**
+- `selectedDatacenterNames`: Preferred datacenters
+- `virtualMachines`: User's VMs
+- `tasks`: User's tasks
+- `startTimestamp`, `finishTimestamp`: Session timing
+
+**Key Methods:**
+- `addVirtualMachine(VM)`: Register VM
+- `addTask(Task)`: Register task
+- `finishTask(Task)`: Mark task complete
+- `startSession()`, `finishSession()`: Track session timing
+
+---
+
+# Workload Types
+
+The simulator supports 9 workload types with different CPU/GPU utilization profiles:
+
+1. **SEVEN_ZIP**: Compression (CPU-intensive)
+2. **DATABASE**: Database operations (CPU-intensive, moderate memory)
+3. **FURMARK**: GPU stress test (GPU-intensive)
+4. **IMAGE_GEN_CPU**: CPU-based image generation
+5. **IMAGE_GEN_GPU**: GPU-based image generation
+6. **LLM_CPU**: Large language model inference on CPU
+7. **LLM_GPU**: Large language model inference on GPU
+8. **CINEBENCH**: CPU rendering benchmark
+9. **PRIME95SmallFFT**: CPU stress test (high CPU utilization)
+
+---
+
+# Simulation Engine
+
+## Core Components
+
+### SimulationEngine
+
+Main orchestrator using Template Method pattern.
+
+```java
+SimulationEngine engine = new SimulationEngine();
+engine.setDebugEnabled(true);
+engine.configure("configs/sample-experiment.cosc");
+engine.runSimulation(3600); // Run for 3600 seconds
+```
+
+### SimulationContext
+
+Central state container with:
+- All entities (datacenters, hosts, VMs, tasks, users)
+- Simulation clock
+- Metrics tracking
+- Logger access
+
+### SimulationStep Interface
+
+Pluggable simulation steps:
+
+```java
+public interface SimulationStep {
+    void execute(SimulationContext context);
+    String getStepName();
+}
+```
+
+## 10 Planned Simulation Steps
+
+1. **Initialization**: Create entities from configuration
+2. **Host Placement**: Assign hosts to datacenters (Strategy)
+3. **User-Datacenter Mapping**: Map users to preferred datacenters
+4. **VM Placement**: Assign VMs to hosts (Strategy)
+5. **Task Assignment**: Assign tasks to VMs (Strategy)
+6. **VM Execution**: Execute VM time steps
+7. **Task Execution**: Track task progress
+8. **Energy Calculation**: Update power consumption
+9. **Metrics Collection**: Gather performance data
+10. **Reporting**: Generate CSV reports
+
+---
+
+# What's Missing (TODO)
+
+## 1. Simulation Step Implementations (~20% complete)
+
+Currently, the SimulationStep interface exists, but concrete implementations are missing:
+
+- [ ] InitializationStep: Create entities from ExperimentConfiguration
+- [ ] HostPlacementStep: Implement host-to-datacenter assignment strategies
+- [ ] UserDatacenterMappingStep: Map users to their preferred datacenters
+- [ ] VMPlacementStep: Implement VM-to-host placement strategies
+- [ ] TaskAssignmentStep: Implement task-to-VM assignment strategies
+- [ ] VMExecutionStep: Orchestrate VM.executeOneSecond() calls
+- [ ] TaskExecutionStep: Track task completion and handle finished tasks
+- [ ] EnergyCalculationStep: Update power consumption for all entities
+- [ ] MetricsCollectionStep: Aggregate performance metrics
+- [ ] ReportingStep: Generate CSV reports
+
+## 2. Strategy Pattern Implementations (0% complete)
+
+Need concrete strategy classes for:
+
+**Host Placement Strategies:**
+- [ ] FirstFitHostPlacementStrategy
+- [ ] BestFitHostPlacementStrategy
+- [ ] PowerAwareHostPlacementStrategy
+
+**VM Placement Strategies:**
+- [ ] FirstFitVMPlacementStrategy
+- [ ] BestFitVMPlacementStrategy
+- [ ] LoadBalancingVMPlacementStrategy
+- [ ] PowerAwareVMPlacementStrategy
+
+**Task Assignment Strategies:**
+- [ ] FirstAvailableTaskAssignmentStrategy
+- [ ] ShortestQueueTaskAssignmentStrategy
+- [ ] WorkloadAwareTaskAssignmentStrategy
+
+## 3. Calculator Infrastructure (0% complete)
+
+- [ ] EnergyCalculator: Aggregate energy consumption across datacenters
+- [ ] UtilizationCalculator: Calculate average utilization metrics
+- [ ] PerformanceCalculator: Calculate throughput, latency, etc.
+
+## 4. Reporting System (0% complete)
+
+- [ ] CSVReporter interface and implementation
+- [ ] Report formats:
+  - [ ] Datacenter energy report
+  - [ ] Host utilization report
+  - [ ] VM execution report
+  - [ ] Task completion report
+  - [ ] User summary report
+- [ ] Timestamped output files
+
+## 5. Testing & Validation (10% complete)
+
+- [x] ConfigTest: Basic configuration loading
+- [ ] Unit tests for all model classes
+- [ ] Integration tests for simulation steps
+- [ ] End-to-end simulation tests
+- [ ] Performance benchmarks
+
+## 6. Additional Features (0% complete)
+
+- [ ] Real-time simulation visualization
+- [ ] REST API for simulation control
+- [ ] Multi-threaded execution support
+- [ ] Checkpoint/resume functionality
+- [ ] Advanced power models (dynamic voltage/frequency scaling)
+- [ ] Network latency modeling
+- [ ] VM migration support
+- [ ] Fault tolerance and recovery scenarios
+
+---
+
+# Development
+
+## Build Commands
+
+```bash
+# Clean build
+rm -rf out
+
+# Compile all sources
+javac -d out src/main/java/com/cloudsimulator/**/*.java
+
+# Run configuration test
+java -cp out com.cloudsimulator.ConfigTest
+
+# Run simulation example
+java -cp out com.cloudsimulator.SimulationExample
+```
+
+## Project Structure
+
+```
+JavaCloudSimulatorCosmos/
+├── src/main/java/com/cloudsimulator/
+│   ├── model/              # Domain models
+│   ├── enums/              # Enumerations
+│   ├── engine/             # Simulation engine
+│   ├── utils/              # Utilities
+│   ├── factory/            # Factories
+│   ├── config/             # Configuration system ✓
+│   ├── steps/              # Simulation steps (TODO)
+│   ├── strategy/           # Strategies (TODO)
+│   ├── calculator/         # Calculators (TODO)
+│   ├── reporter/           # Reporters (TODO)
+│   ├── ConfigTest.java     # Config system test
+│   └── SimulationExample.java  # Basic example
+├── configs/
+│   └── sample-experiment.cosc  # Example configuration
+├── out/                    # Compiled classes
+└── README.md
+```
+
+## Example Configuration
+
+See `configs/sample-experiment.cosc` for a complete example with:
+- 3 datacenters (DC-East, DC-West, DC-Central)
+- 5 hosts with varied compute types
+- 2 users (Alice, Bob)
+- 6 VMs (2 GPU, 3 CPU, 1 Mixed)
+- 10 tasks across 5 workload types
+
+---
+
+# License
+
+This is an educational simulation framework developed for cloud computing research.
