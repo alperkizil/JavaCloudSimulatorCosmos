@@ -90,7 +90,11 @@ public class FileConfigParser implements ConfigParser {
         int count = Integer.parseInt(line.trim());
 
         for (int i = 0; i < count; i++) {
-            String dcLine = reader.readLine().trim();
+            String dcLine = reader.readLine();
+            if (dcLine == null) {
+                throw new ConfigurationException("Unexpected end of file while parsing datacenters. Expected " + count + " entries, found " + i);
+            }
+            dcLine = dcLine.trim();
             String[] parts = dcLine.split(",");
 
             if (parts.length != 3) {
@@ -111,7 +115,11 @@ public class FileConfigParser implements ConfigParser {
         int count = Integer.parseInt(line.trim());
 
         for (int i = 0; i < count; i++) {
-            String hostLine = reader.readLine().trim();
+            String hostLine = reader.readLine();
+            if (hostLine == null) {
+                throw new ConfigurationException("Unexpected end of file while parsing hosts. Expected " + count + " entries, found " + i);
+            }
+            hostLine = hostLine.trim();
             String[] parts = hostLine.split(",");
 
             if (parts.length != 8) {
@@ -138,7 +146,11 @@ public class FileConfigParser implements ConfigParser {
         int count = Integer.parseInt(line.trim());
 
         for (int i = 0; i < count; i++) {
-            String userLine = reader.readLine().trim();
+            String userLine = reader.readLine();
+            if (userLine == null) {
+                throw new ConfigurationException("Unexpected end of file while parsing users. Expected " + count + " entries, found " + i);
+            }
+            userLine = userLine.trim();
             String[] parts = userLine.split(",");
 
             if (parts.length < 13) {
@@ -176,6 +188,7 @@ public class FileConfigParser implements ConfigParser {
         // Format: GPU:2 or CPU:3 or MIXED:1
         String[] parts = line.split(":");
         if (parts.length != 2) {
+            System.err.println("Warning: Invalid VM section format, skipping: " + line);
             return; // Skip invalid format
         }
 
@@ -190,7 +203,11 @@ public class FileConfigParser implements ConfigParser {
         int count = Integer.parseInt(parts[1].trim());
 
         for (int i = 0; i < count; i++) {
-            String vmLine = reader.readLine().trim();
+            String vmLine = reader.readLine();
+            if (vmLine == null) {
+                throw new ConfigurationException("Unexpected end of file while parsing VMs. Expected " + count + " entries, found " + i);
+            }
+            vmLine = vmLine.trim();
             String[] vmParts = vmLine.split(",");
 
             if (vmParts.length != 7) {
@@ -216,6 +233,7 @@ public class FileConfigParser implements ConfigParser {
         // Format: SEVEN_ZIP:5 or DATABASE:3
         String[] parts = line.split(":");
         if (parts.length != 2) {
+            System.err.println("Warning: Invalid TASKS section format, skipping: " + line);
             return; // Skip invalid format
         }
 
@@ -223,7 +241,11 @@ public class FileConfigParser implements ConfigParser {
         int count = Integer.parseInt(parts[1].trim());
 
         for (int i = 0; i < count; i++) {
-            String taskLine = reader.readLine().trim();
+            String taskLine = reader.readLine();
+            if (taskLine == null) {
+                throw new ConfigurationException("Unexpected end of file while parsing tasks. Expected " + count + " entries, found " + i);
+            }
+            taskLine = taskLine.trim();
             String[] taskParts = taskLine.split(",");
 
             if (taskParts.length != 3) {
