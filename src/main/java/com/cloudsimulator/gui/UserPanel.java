@@ -18,7 +18,7 @@ import java.util.List;
 public class UserPanel extends VBox {
 
     private final ExperimentTemplate template;
-    private final ListView<UserTemplate> userListView;
+    private ListView<UserTemplate> userListView;
     private final ObservableList<UserTemplate> userList;
 
     private TextField userNameField;
