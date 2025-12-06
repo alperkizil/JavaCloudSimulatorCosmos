@@ -78,10 +78,54 @@
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>default-cli</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                    </execution>
+                </executions>
                 <configuration>
-                    <mainClass>com.cloudsimulator.gui.Launcher</mainClass>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>--module-path</argument>
+                        <modulepath/>
+                        <argument>--add-modules</argument>
+                        <argument>javafx.controls,javafx.fxml</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>com.cloudsimulator.gui.Launcher</argument>
+                    </arguments>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <!-- Profile for running with JavaFX in IDEs -->
+    <profiles>
+        <profile>
+            <id>ide</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <configuration>
+                            <executable>java</executable>
+                            <arguments>
+                                <argument>--module-path</argument>
+                                <modulepath/>
+                                <argument>--add-modules</argument>
+                                <argument>javafx.controls,javafx.fxml</argument>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>com.cloudsimulator.gui.Launcher</argument>
+                            </arguments>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
