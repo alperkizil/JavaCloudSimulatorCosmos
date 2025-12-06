@@ -82,6 +82,7 @@ public class CloudDatacenter {
     public void addHost(Host host) {
         if (this.hosts.size() < maxHostCapacity) {
             this.hosts.add(host);
+            host.setAssignedDatacenterId(this.id);
         } else {
             throw new IllegalStateException("Datacenter has reached maximum host capacity: " + maxHostCapacity);
         }

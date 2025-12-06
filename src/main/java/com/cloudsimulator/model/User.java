@@ -50,10 +50,23 @@ public class User {
     }
 
     /**
-     * Default constructor with generic name.
+     * Default constructor with generic name based on ID.
+     * Uses the assigned ID to ensure unique naming even in concurrent scenarios.
      */
     public User() {
-        this("User-" + (idGenerator.get() + 1));
+        this.id = idGenerator.incrementAndGet();
+        this.name = "User-" + this.id;
+
+        // Initialize collections
+        this.userSelectedDatacenters = new ArrayList<>();
+        this.virtualMachines = new ArrayList<>();
+        this.tasks = new ArrayList<>();
+        this.tasksFinishedExecuting = new ArrayList<>();
+        this.vmsFinishedExecuting = new ArrayList<>();
+
+        // Initialize timestamps as null (not yet set)
+        this.startTimestamp = null;
+        this.finishTimestamp = null;
     }
 
     /**

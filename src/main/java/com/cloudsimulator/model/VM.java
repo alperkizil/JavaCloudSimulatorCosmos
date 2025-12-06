@@ -347,9 +347,24 @@ public class VM {
 
     /**
      * Checks if all tasks are finished.
+     * Returns true if:
+     * - All assigned tasks have completed (queue is empty and finished list is not empty), OR
+     * - No tasks were ever assigned (both queue and finished list are empty)
      */
     public boolean hasFinishedAllTasks() {
-        return assignedTasks.isEmpty() && !finishedTasks.isEmpty();
+        // If no tasks were ever assigned, consider it as "finished" (nothing to do)
+        if (assignedTasks.isEmpty() && finishedTasks.isEmpty()) {
+            return true;
+        }
+        // If there are pending tasks, not finished
+        return assignedTasks.isEmpty();
+    }
+
+    /**
+     * Checks if this VM has ever been assigned any tasks.
+     */
+    public boolean hasEverHadTasks() {
+        return !assignedTasks.isEmpty() || !finishedTasks.isEmpty();
     }
 
     /**

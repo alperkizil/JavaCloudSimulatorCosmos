@@ -151,11 +151,11 @@ public class Host {
      * Deallocates resources for a VM.
      */
     public void deallocateResources(VM vm) {
-        allocatedRamMB -= vm.getRequestedRamMB();
-        allocatedCpuCores -= vm.getRequestedVcpuCount();
-        allocatedGpus -= vm.getRequestedGpuCount();
-        allocatedStorageMB -= vm.getRequestedStorageMB();
-        allocatedBandwidthMbps -= vm.getRequestedBandwidthMbps();
+        allocatedRamMB = Math.max(0, allocatedRamMB - vm.getRequestedRamMB());
+        allocatedCpuCores = Math.max(0, allocatedCpuCores - vm.getRequestedVcpuCount());
+        allocatedGpus = Math.max(0, allocatedGpus - vm.getRequestedGpuCount());
+        allocatedStorageMB = Math.max(0, allocatedStorageMB - vm.getRequestedStorageMB());
+        allocatedBandwidthMbps = Math.max(0, allocatedBandwidthMbps - vm.getRequestedBandwidthMbps());
     }
 
     /**
@@ -183,6 +183,9 @@ public class Host {
      * Gets resource utilization percentage (0.0 to 1.0).
      */
     public double getResourceUtilization() {
+        if (numberOfCpuCores == 0 || ramCapacityMB == 0) {
+            return 0.0;
+        }
         double cpuUtil = (double) allocatedCpuCores / numberOfCpuCores;
         double ramUtil = (double) allocatedRamMB / ramCapacityMB;
         return (cpuUtil + ramUtil) / 2.0;
@@ -253,9 +256,9 @@ public class Host {
             }
         }
 
-        // Normalize by number of cores/GPUs
-        double avgCpuUtil = assignedVMs.isEmpty() ? 0.0 : Math.min(1.0, totalCpuUtil);
-        double avgGpuUtil = assignedVMs.isEmpty() ? 0.0 : Math.min(1.0, totalGpuUtil);
+        // Normalize by number of VMs to get average utilization, clamped to [0.0, 1.0]
+        double avgCpuUtil = assignedVMs.isEmpty() ? 0.0 : Math.min(1.0, totalCpuUtil / assignedVMs.size());
+        double avgGpuUtil = assignedVMs.isEmpty() ? 0.0 : Math.min(1.0, totalGpuUtil / assignedVMs.size());
 
         // Calculate power components
         this.currentCpuPowerDraw = powerModel.calculateCpuPower(avgCpuUtil);

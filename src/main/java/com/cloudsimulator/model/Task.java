@@ -144,6 +144,9 @@ public class Task {
      * Gets progress percentage (0.0 to 100.0).
      */
     public double getProgressPercentage() {
+        if (instructionLength == 0) {
+            return 100.0; // Task with no instructions is considered complete
+        }
         return (double) instructionsExecuted / instructionLength * 100.0;
     }
 
@@ -166,7 +169,9 @@ public class Task {
      */
     public long getEstimatedRemainingTime(long ipsAvailable) {
         if (ipsAvailable == 0) return Long.MAX_VALUE;
-        return getRemainingInstructions() / ipsAvailable;
+        // Use ceiling division to ensure we don't underestimate remaining time
+        long remaining = getRemainingInstructions();
+        return (remaining + ipsAvailable - 1) / ipsAvailable;
     }
 
     /**
