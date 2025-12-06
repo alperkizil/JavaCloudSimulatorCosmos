@@ -67,9 +67,19 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.cloudsimulator.gui.ConfigGeneratorApp</mainClass>
+                            <mainClass>com.cloudsimulator.gui.Launcher</mainClass>
                         </manifest>
                     </archive>
+                </configuration>
+            </plugin>
+
+            <!-- Exec Maven Plugin - for running via exec:java in IDEs -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <mainClass>com.cloudsimulator.gui.Launcher</mainClass>
                 </configuration>
             </plugin>
         </plugins>
