@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <actions>
+    <!-- Project Run (F6) - launches the JavaFX GUI -->
     <action>
         <actionName>run</actionName>
         <packagings>
@@ -10,6 +11,8 @@
             <goal>javafx:run</goal>
         </goals>
     </action>
+
+    <!-- Project Debug - launches the JavaFX GUI with debugger -->
     <action>
         <actionName>debug</actionName>
         <packagings>
@@ -23,6 +26,8 @@
             <jpda.listen>true</jpda.listen>
         </properties>
     </action>
+
+    <!-- Run Single File (Shift+F6) - uses default exec:java for non-JavaFX classes -->
     <action>
         <actionName>run.single.main</actionName>
         <packagings>
@@ -30,7 +35,10 @@
         </packagings>
         <goals>
             <goal>process-classes</goal>
-            <goal>javafx:run</goal>
+            <goal>org.codehaus.mojo:exec-maven-plugin:3.1.0:java</goal>
         </goals>
+        <properties>
+            <exec.mainClass>${packageClassName}</exec.mainClass>
+        </properties>
     </action>
 </actions>
