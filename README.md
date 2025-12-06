@@ -31,7 +31,8 @@ com.cloudsimulator
 ├── steps/          # Simulation step implementations (planned)
 ├── strategy/       # Strategy implementations for placement/scheduling (planned)
 ├── calculator/     # Energy calculators (planned)
-└── reporter/       # Result reporters (planned)
+├── reporter/       # Result reporters (planned)
+└── gui/            # JavaFX Configuration Generator GUI ✓
 ```
 
 ## Features
@@ -44,6 +45,7 @@ com.cloudsimulator
 - **Extensible Architecture**: Plugin-based simulation steps
 - **Configuration System**: Custom .cosc file format for declarative experiment setup
 - **Deep-Copy Support**: Clone configurations for running multiple experiment variations
+- **GUI Configuration Generator**: JavaFX application for visual experiment configuration
 
 ## Quick Start
 
@@ -63,6 +65,78 @@ java -cp out com.cloudsimulator.ConfigTest
 
 ```bash
 java -cp out com.cloudsimulator.SimulationExample
+```
+
+---
+
+# GUI Configuration Generator
+
+The project includes a JavaFX-based GUI application for visually creating experiment configuration files. This tool allows you to generate multiple `.cosc` files with different random seeds while maintaining identical infrastructure configurations.
+
+## Features
+
+- **Visual Configuration**: Tabbed interface for configuring datacenters, hosts, users, VMs, and tasks
+- **Multi-Seed Generation**: Generate multiple configuration files with seeds in a specified range (e.g., 1-10 generates 10 files)
+- **Instruction Length Ranges**: Specify min/max instruction lengths for tasks; actual values are randomized per seed
+- **Configuration Summary**: Review all settings before generation
+- **File Preview**: Preview generated `.cosc` file content before saving
+
+## How Multi-Seed Generation Works
+
+When you generate configurations with a seed range (e.g., 46-56):
+
+1. **Identical across all files**: Datacenters, Hosts, Users, VMs, task counts, and task type distribution
+2. **Varies per seed**: Task instruction lengths are randomized within the specified min/max range using each seed
+
+This allows you to run multiple experiment variations with the same infrastructure but different workload characteristics.
+
+## Running the GUI Application
+
+### Prerequisites
+
+JavaFX is required to run the GUI. Make sure you have JavaFX SDK installed or use a JDK that includes JavaFX (OpenJDK with JavaFX modules).
+
+### Compile and Run
+
+```bash
+# Compile with JavaFX modules (adjust path to your JavaFX SDK)
+javac --module-path /path/to/javafx-sdk/lib --add-modules javafx.controls \
+    -d out src/main/java/com/cloudsimulator/**/*.java
+
+# Run the application
+java --module-path /path/to/javafx-sdk/lib --add-modules javafx.controls \
+    -cp out com.cloudsimulator.gui.ConfigGeneratorApp
+```
+
+### Using the GUI
+
+1. **Datacenters Tab**: Add datacenter configurations (name, host capacity, max power)
+2. **Hosts Tab**: Define physical host specifications (CPU cores, GPUs, RAM, storage, power model)
+3. **Users Tab**: Create users, assign them to datacenters, configure VMs and task templates
+   - For each user, add VMs with specific compute types (CPU, GPU, Mixed)
+   - Add task templates with workload type and instruction length range
+4. **Summary Tab**: Review configuration, set seed range, and generate files
+
+## Generated File Naming
+
+Files are named: `{seed}_{date}_{time}_{sequence}.cosc`
+
+Example: `46_20241206_143025_001.cosc`
+
+## GUI Package Structure
+
+```
+com.cloudsimulator.gui
+├── ConfigGeneratorApp.java    # Main JavaFX application
+├── ExperimentTemplate.java    # Main configuration container
+├── UserTemplate.java          # User with VMs and tasks
+├── VMTemplate.java            # VM specification
+├── TaskTemplate.java          # Task with instruction range
+├── DatacenterPanel.java       # Datacenter configuration UI
+├── HostPanel.java             # Host configuration UI
+├── UserPanel.java             # User/VM/Task configuration UI
+├── SummaryPanel.java          # Summary and export UI
+└── CosmosConfigWriter.java    # .cosc file generator
 ```
 
 ---
@@ -494,6 +568,7 @@ JavaCloudSimulatorCosmos/
 │   ├── strategy/           # Strategies (TODO)
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
+│   ├── gui/                # JavaFX Configuration Generator ✓
 │   ├── ConfigTest.java     # Config system test
 │   └── SimulationExample.java  # Basic example
 ├── configs/
