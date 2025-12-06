@@ -94,9 +94,26 @@ This allows you to run multiple experiment variations with the same infrastructu
 
 ### Prerequisites
 
-JavaFX is required to run the GUI. Make sure you have JavaFX SDK installed or use a JDK that includes JavaFX (OpenJDK with JavaFX modules).
+- Java 17 or later
+- Maven 3.6+ (recommended) OR JavaFX SDK manually installed
 
-### Compile and Run
+### Option 1: Using Maven (Recommended)
+
+The project includes a `pom.xml` with OpenJFX dependencies configured. This is the easiest way to run the application.
+
+```bash
+# Compile the project
+mvn compile
+
+# Run the GUI application
+mvn javafx:run
+```
+
+**In VS Code**: You can also right-click on `ConfigGeneratorApp.java` and select "Run Java" after Maven downloads the dependencies.
+
+### Option 2: Manual JavaFX Setup
+
+If not using Maven, download the JavaFX SDK from https://openjfx.io and run manually:
 
 ```bash
 # Compile with JavaFX modules (adjust path to your JavaFX SDK)
