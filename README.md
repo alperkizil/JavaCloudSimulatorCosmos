@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~60%**
+**Current Completion: ~65%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, and HostPlacementStep (with 5 placement strategies) are complete. Remaining simulation step implementations and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), and UserDatacenterMappingStep are complete. Remaining simulation step implementations and reporting are in progress.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (2/10 complete)
+├── steps/          # Simulation step implementations - IN PROGRESS (3/10 complete)
 ├── strategy/       # Host placement strategies - COMPLETE ✓
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
@@ -467,7 +467,7 @@ public interface SimulationStep {
 
 1. **Initialization**: Create entities from configuration ✓ COMPLETE
 2. **Host Placement**: Assign hosts to datacenters (Strategy) ✓ COMPLETE
-3. **User-Datacenter Mapping**: Map users to preferred datacenters
+3. **User-Datacenter Mapping**: Map users to preferred datacenters ✓ COMPLETE
 4. **VM Placement**: Assign VMs to hosts (Strategy)
 5. **Task Assignment**: Assign tasks to VMs (Strategy)
 6. **VM Execution**: Execute VM time steps
@@ -560,17 +560,70 @@ System.out.println("Hosts failed: " + step.getHostsFailed());
 - `hostPlacement.strategy`: Name of the strategy used
 - `hostPlacement.datacenter.<name>.hostCount`: Host count per datacenter
 
+### UserDatacenterMappingStep (Complete)
+
+The `UserDatacenterMappingStep` validates and finalizes user-datacenter relationships after hosts have been placed. This is the third step in the simulation pipeline.
+
+```java
+// Create and execute the step
+UserDatacenterMappingStep mappingStep = new UserDatacenterMappingStep();
+mappingStep.execute(context);
+
+// Check results
+System.out.println("Users processed: " + mappingStep.getUsersProcessed());
+System.out.println("Valid mappings: " + mappingStep.getValidMappings());
+System.out.println("Reassigned users: " + mappingStep.getReassignedUsers());
+```
+
+**What UserDatacenterMappingStep does:**
+
+| Action | Description |
+|--------|-------------|
+| **Validate Preferences** | Removes datacenters with no hosts from user preferences |
+| **Random Reassignment** | If user has no valid DCs, randomly assigns one using experiment seed |
+| **Resource Calculation** | Calculates total resource requirements per user (vCPUs, GPUs, RAM) |
+| **Session Start** | Calls `user.startSession(timestamp)` to mark activation |
+| **Error Handling** | Throws RuntimeException if no datacenter has any hosts |
+
+**Example Scenario:**
+```
+Before: Alice prefers DC-East (2 hosts), DC-West (0 hosts)
+After:  Alice prefers DC-East only (DC-West removed - no hosts)
+
+Before: Bob prefers DC-Empty (0 hosts)
+After:  Bob randomly assigned to DC-East (only available option)
+```
+
+**Resource Requirements Tracking:**
+```java
+UserResourceRequirements req = mappingStep.getUserResourceRequirements().get("Alice");
+System.out.println("VMs: " + req.vmCount);
+System.out.println("vCPUs: " + req.totalVcpus);
+System.out.println("GPUs: " + req.totalGpus);
+System.out.println("RAM: " + req.totalRamMB + "MB");
+```
+
+**Metrics recorded:**
+- `userMapping.usersProcessed`: Number of users processed
+- `userMapping.validMappings`: Users with at least one valid DC
+- `userMapping.reassignedUsers`: Users randomly assigned to available DC
+- `userMapping.insufficientResources`: Users whose requirements may not be met
+- `userMapping.datacenter.<name>.userCount`: User count per datacenter
+- `userMapping.totalRequiredVcpus`: Total vCPUs required by all users
+- `userMapping.totalRequiredGpus`: Total GPUs required by all users
+- `userMapping.totalRequiredRamMB`: Total RAM required by all users
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~40% complete)
+## 1. Simulation Step Implementations (~45% complete)
 
-The SimulationStep interface exists with InitializationStep and HostPlacementStep implemented:
+The SimulationStep interface exists with InitializationStep, HostPlacementStep, and UserDatacenterMappingStep implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
-- [ ] UserDatacenterMappingStep: Map users to their preferred datacenters
+- [x] UserDatacenterMappingStep: Validate/assign users to datacenters ✓
 - [ ] VMPlacementStep: Implement VM-to-host placement strategies
 - [ ] TaskAssignmentStep: Implement task-to-VM assignment strategies
 - [ ] VMExecutionStep: Orchestrate VM.executeOneSecond() calls
@@ -616,11 +669,12 @@ The SimulationStep interface exists with InitializationStep and HostPlacementSte
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (~25% complete)
+## 5. Testing & Validation (~30% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
 - [x] HostPlacementStepTest: Verifies all 5 host placement strategies
+- [x] UserDatacenterMappingStepTest: Verifies user-datacenter validation and reassignment
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -659,6 +713,9 @@ java -cp out com.cloudsimulator.InitializationStepTest
 # Run HostPlacementStep test
 java -cp out com.cloudsimulator.HostPlacementStepTest
 
+# Run UserDatacenterMappingStep test
+java -cp out com.cloudsimulator.UserDatacenterMappingStepTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -674,9 +731,10 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (2/10 complete)
-│   │   ├── InitializationStep.java  # Entity creation from config ✓
-│   │   └── HostPlacementStep.java   # Host-to-datacenter assignment ✓
+│   ├── steps/              # Simulation steps (3/10 complete)
+│   │   ├── InitializationStep.java        # Entity creation from config ✓
+│   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
+│   │   └── UserDatacenterMappingStep.java # User-datacenter validation ✓
 │   ├── strategy/           # Host placement strategies ✓
 │   │   ├── HostPlacementStrategy.java                    # Strategy interface
 │   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
@@ -687,10 +745,11 @@ JavaCloudSimulatorCosmos/
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
 │   ├── gui/                # JavaFX Configuration Generator ✓
-│   ├── ConfigTest.java     # Config system test
-│   ├── InitializationStepTest.java  # InitializationStep test ✓
-│   ├── HostPlacementStepTest.java   # HostPlacementStep test ✓
-│   └── SimulationExample.java  # Basic example
+│   ├── ConfigTest.java                  # Config system test
+│   ├── InitializationStepTest.java      # InitializationStep test ✓
+│   ├── HostPlacementStepTest.java       # HostPlacementStep test ✓
+│   ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
+│   └── SimulationExample.java           # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
 ├── out/                    # Compiled classes
