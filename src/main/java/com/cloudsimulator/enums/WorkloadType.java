@@ -13,5 +13,6 @@ public enum WorkloadType {
     LLM_GPU,            // AI Workload that taps into GPU
     CINEBENCH,          // Heavy CPU utilizing Application
     PRIME95SmallFFT,    // CPU saturating utilizing Application
+    VERACRYPT,          // Disk encryption/decryption (CPU-intensive AES operations)
     IDLE                // No Workload
 }

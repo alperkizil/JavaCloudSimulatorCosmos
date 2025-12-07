@@ -41,7 +41,7 @@ com.cloudsimulator
 - **Random Seed Support**: For experiment repeatability
 - **Power & Energy Modeling**: Configurable power models with real-time tracking
 - **Multi-Tenancy**: User-datacenter preferences and resource isolation
-- **Comprehensive Workloads**: 9 workload types (CPU, GPU, and mixed)
+- **Comprehensive Workloads**: 10 workload types (CPU, GPU, and mixed)
 - **Extensible Architecture**: Plugin-based simulation steps
 - **Configuration System**: Custom .cosc file format for declarative experiment setup
 - **Deep-Copy Support**: Clone configurations for running multiple experiment variations
@@ -204,14 +204,14 @@ Format: `count` followed by `count` lines of host specifications
 ### 4. USERS Section
 
 Format: `count` followed by `count` lines of user definitions
-- Each line: `name,datacenters,gpuVMs,cpuVMs,mixedVMs,sevenZipTasks,dbTasks,furmarkTasks,imgGenCpuTasks,imgGenGpuTasks,llmCpuTasks,llmGpuTasks,cinebenchTasks,prime95Tasks`
+- Each line: `name,datacenters,gpuVMs,cpuVMs,mixedVMs,sevenZipTasks,dbTasks,furmarkTasks,imgGenCpuTasks,imgGenGpuTasks,llmCpuTasks,llmGpuTasks,cinebenchTasks,prime95Tasks,veracryptTasks`
 - datacenters: pipe-separated list (e.g., `DC-East|DC-West`)
 
 ```
 [USERS]
 2
-Alice,DC-East|DC-West,2,3,1,5,3,0,2,1,4,2,1,3,2
-Bob,DC-Central,1,2,0,3,2,1,1,0,2,1,0,2,1
+Alice,DC-East|DC-West,2,3,1,5,3,0,2,1,4,2,1,3,2,1
+Bob,DC-Central,1,2,0,3,2,1,1,0,2,1,0,2,1,0
 ```
 
 ### 5. VMS Section
@@ -414,7 +414,7 @@ Cloud user with multi-tenancy support.
 
 # Workload Types
 
-The simulator supports 9 workload types with different CPU/GPU utilization profiles:
+The simulator supports 10 workload types with different CPU/GPU utilization profiles:
 
 1. **SEVEN_ZIP**: Compression (CPU-intensive)
 2. **DATABASE**: Database operations (CPU-intensive, moderate memory)
@@ -425,6 +425,7 @@ The simulator supports 9 workload types with different CPU/GPU utilization profi
 7. **LLM_GPU**: Large language model inference on GPU
 8. **CINEBENCH**: CPU rendering benchmark
 9. **PRIME95SmallFFT**: CPU stress test (high CPU utilization)
+10. **VERACRYPT**: Disk encryption/decryption (CPU-intensive AES operations)
 
 ---
 

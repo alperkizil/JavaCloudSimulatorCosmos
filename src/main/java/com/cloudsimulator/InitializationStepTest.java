@@ -140,11 +140,11 @@ public class InitializationStepTest {
                              ", type=" + task.getWorkloadType() +
                              ", instructions=" + task.getInstructionLength());
         }
-        boolean taskTestPassed = context.getTotalTaskCount() == 10;
+        boolean taskTestPassed = context.getTotalTaskCount() == 11;
         if (taskTestPassed) {
             System.out.println("  PASSED\n");
         } else {
-            System.out.println("  FAILED: Expected 10 tasks, got " + context.getTotalTaskCount() + "\n");
+            System.out.println("  FAILED: Expected 11 tasks, got " + context.getTotalTaskCount() + "\n");
         }
 
         // Test 8: Verify metrics recorded

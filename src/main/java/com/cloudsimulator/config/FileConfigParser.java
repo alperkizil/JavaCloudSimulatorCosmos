@@ -153,7 +153,7 @@ public class FileConfigParser implements ConfigParser {
             userLine = userLine.trim();
             String[] parts = userLine.split(",");
 
-            if (parts.length < 13) {
+            if (parts.length < 14) {
                 throw new ConfigurationException("Invalid user config: " + userLine);
             }
 
@@ -164,7 +164,7 @@ public class FileConfigParser implements ConfigParser {
             int mixedVMs = Integer.parseInt(parts[4].trim());
 
             // Parse task counts: SEVEN_ZIP, DATABASE, FURMARK, IMAGE_GEN_CPU, IMAGE_GEN_GPU,
-            // LLM_CPU, LLM_GPU, CINEBENCH, PRIME95SmallFFT
+            // LLM_CPU, LLM_GPU, CINEBENCH, PRIME95SmallFFT, VERACRYPT
             Map<WorkloadType, Integer> taskCounts = new HashMap<>();
             taskCounts.put(WorkloadType.SEVEN_ZIP, Integer.parseInt(parts[5].trim()));
             taskCounts.put(WorkloadType.DATABASE, Integer.parseInt(parts[6].trim()));
@@ -174,8 +174,9 @@ public class FileConfigParser implements ConfigParser {
             taskCounts.put(WorkloadType.LLM_CPU, Integer.parseInt(parts[10].trim()));
             taskCounts.put(WorkloadType.LLM_GPU, Integer.parseInt(parts[11].trim()));
             taskCounts.put(WorkloadType.CINEBENCH, Integer.parseInt(parts[12].trim()));
-            if (parts.length > 13) {
-                taskCounts.put(WorkloadType.PRIME95SmallFFT, Integer.parseInt(parts[13].trim()));
+            taskCounts.put(WorkloadType.PRIME95SmallFFT, Integer.parseInt(parts[13].trim()));
+            if (parts.length > 14) {
+                taskCounts.put(WorkloadType.VERACRYPT, Integer.parseInt(parts[14].trim()));
             }
 
             UserConfig userConfig = new UserConfig(name, datacenters, gpuVMs, cpuVMs, mixedVMs, taskCounts);
