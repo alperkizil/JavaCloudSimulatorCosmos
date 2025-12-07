@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~65%**
+**Current Completion: ~70%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), and UserDatacenterMappingStep are complete. Remaining simulation step implementations and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, and VMPlacementStep (with 4 placement strategies) are complete. Remaining simulation step implementations and reporting are in progress.
 
 ## Architecture
 
@@ -28,8 +28,8 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (3/10 complete)
-├── strategy/       # Host placement strategies - COMPLETE ✓
+├── steps/          # Simulation step implementations - IN PROGRESS (4/10 complete)
+├── strategy/       # Placement strategies (Host: 5, VM: 4) - COMPLETE ✓
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
 └── gui/            # JavaFX Configuration Generator GUI ✓
@@ -468,7 +468,7 @@ public interface SimulationStep {
 1. **Initialization**: Create entities from configuration ✓ COMPLETE
 2. **Host Placement**: Assign hosts to datacenters (Strategy) ✓ COMPLETE
 3. **User-Datacenter Mapping**: Map users to preferred datacenters ✓ COMPLETE
-4. **VM Placement**: Assign VMs to hosts (Strategy)
+4. **VM Placement**: Assign VMs to hosts (Strategy) ✓ COMPLETE
 5. **Task Assignment**: Assign tasks to VMs (Strategy)
 6. **VM Execution**: Execute VM time steps
 7. **Task Execution**: Track task progress
@@ -613,18 +613,121 @@ System.out.println("RAM: " + req.totalRamMB + "MB");
 - `userMapping.totalRequiredGpus`: Total GPUs required by all users
 - `userMapping.totalRequiredRamMB`: Total RAM required by all users
 
+### VMPlacementStep (Complete)
+
+The `VMPlacementStep` assigns VMs to hosts using a configurable placement strategy. This is the fourth step in the simulation pipeline.
+
+```java
+// Using default FirstFit strategy
+VMPlacementStep step = new VMPlacementStep();
+
+// Using custom strategy
+VMPlacementStep step = new VMPlacementStep(new PowerAwareVMPlacementStrategy());
+
+// Execute the step
+step.execute(context);
+
+// Check results
+System.out.println("VMs placed: " + step.getVmsPlaced());
+System.out.println("VMs failed: " + step.getVmsFailed());
+System.out.println("Active hosts: " + step.getActiveHostCount());
+```
+
+**Placement Constraints Enforced:**
+
+| Constraint | Description |
+|------------|-------------|
+| **User Datacenter Preferences** | VMs are only placed on hosts in datacenters the user has selected |
+| **Compute Type Compatibility** | CPU_ONLY VMs → CPU_ONLY or MIXED hosts; GPU_ONLY VMs → GPU_ONLY or MIXED hosts |
+| **Resource Capacity** | Host must have sufficient vCPUs, GPUs, RAM, storage, and bandwidth |
+
+**Available VM Placement Strategies:**
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `FirstFitVMPlacementStrategy` | Places VMs on the first host with capacity | Simple, fast, default choice |
+| `BestFitVMPlacementStrategy` | Minimizes remaining capacity (tightest fit) | Maximize resource utilization |
+| `LoadBalancingVMPlacementStrategy` | Distributes VMs to least utilized hosts | Fault tolerance, even distribution |
+| `PowerAwareVMPlacementStrategy` | Consolidates VMs to minimize active hosts | Green computing, energy savings |
+
+**Strategy Details:**
+
+1. **First Fit**: Sequential scan, places VM on first host with sufficient capacity. O(n) time complexity. Simple and fast but may lead to uneven distribution.
+
+2. **Best Fit**: Scans all eligible hosts, selects the one where placing the VM leaves the smallest remaining capacity. Reduces resource fragmentation and maximizes packing efficiency.
+
+3. **Load Balancing**: Scans all eligible hosts, selects the one with the lowest current utilization. **CPU and GPU utilization are considered separately** based on VM requirements:
+   - CPU-only VMs: Prioritizes hosts with lowest CPU utilization
+   - GPU-only VMs: Prioritizes hosts with lowest GPU utilization
+   - Mixed VMs: Considers both CPU and GPU utilization equally
+
+4. **Power Aware (Consolidation Heuristic)**: Minimizes power consumption by consolidating VMs into fewer hosts. Uses a consolidation heuristic that does not require power model calculations:
+
+   **Algorithm:**
+   ```
+   1. Categorize hosts into:
+      - "Active" hosts: Already have ≥1 VM assigned
+      - "Inactive" hosts: Have 0 VMs assigned
+
+   2. For each VM to place:
+      a. First, try to place on ACTIVE hosts only
+         - Among eligible active hosts, select the one with
+           HIGHEST current utilization (most packed)
+         - This maximizes consolidation within already-running hosts
+
+      b. If no active host has capacity:
+         - Select an INACTIVE host with the SMALLEST total capacity
+         - Smaller capacity hosts typically have lower idle power consumption
+
+   3. Utilization score = (allocatedCpus / totalCpus) + (allocatedRam / totalRam)
+      Higher score = more packed = preferred for consolidation
+   ```
+
+   **Rationale:**
+   - A host with 0 VMs can be powered off → 0 power consumption
+   - A host with 1+ VMs consumes idle power + utilization power
+   - Packing VMs into fewer hosts allows unused hosts to remain off
+
+   **Example Scenario:**
+   ```
+   Hosts available:
+   - Host A: 32 cores, 64GB RAM, currently 75% utilized (has 3 VMs)
+   - Host B: 16 cores, 32GB RAM, currently 0% utilized (no VMs)
+   - Host C: 8 cores, 16GB RAM, currently 0% utilized (no VMs)
+
+   VM to place: needs 4 cores, 8GB RAM
+
+   Strategy decision:
+   1. Check active hosts first → Host A is active
+   2. Host A has capacity? Yes (8 cores free, 16GB free)
+   3. Place VM on Host A (consolidate into already-running host)
+
+   If Host A was full:
+   1. No active hosts have capacity
+   2. Choose smallest inactive host → Host C (8 cores < 16 cores)
+   3. Place VM on Host C (turns on the smallest host)
+   ```
+
+**Metrics recorded:**
+- `vmPlacement.vmsPlaced`: Number of VMs successfully placed
+- `vmPlacement.vmsFailed`: Number of VMs that couldn't be placed
+- `vmPlacement.strategy`: Name of the strategy used
+- `vmPlacement.activeHosts`: Number of hosts with at least one VM
+- `vmPlacement.host.<id>.vmCount`: VM count per host
+- `vmPlacement.datacenter.<name>.vmCount`: VM count per datacenter
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~45% complete)
+## 1. Simulation Step Implementations (~50% complete)
 
-The SimulationStep interface exists with InitializationStep, HostPlacementStep, and UserDatacenterMappingStep implemented:
+The SimulationStep interface exists with InitializationStep, HostPlacementStep, UserDatacenterMappingStep, and VMPlacementStep implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
 - [x] UserDatacenterMappingStep: Validate/assign users to datacenters ✓
-- [ ] VMPlacementStep: Implement VM-to-host placement strategies
+- [x] VMPlacementStep: Assign VMs to hosts with 4 strategies ✓
 - [ ] TaskAssignmentStep: Implement task-to-VM assignment strategies
 - [ ] VMExecutionStep: Orchestrate VM.executeOneSecond() calls
 - [ ] TaskExecutionStep: Track task completion and handle finished tasks
@@ -632,7 +735,7 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
 - [ ] MetricsCollectionStep: Aggregate performance metrics
 - [ ] ReportingStep: Generate CSV reports
 
-## 2. Strategy Pattern Implementations (~35% complete)
+## 2. Strategy Pattern Implementations (~70% complete)
 
 **Host Placement Strategies:** ✓ COMPLETE
 - [x] FirstFitHostPlacementStrategy ✓
@@ -641,11 +744,11 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
 - [x] PowerAwareConsolidatingHostPlacementStrategy ✓
 - [x] PowerAwareLoadBalancingHostPlacementStrategy ✓
 
-**VM Placement Strategies:**
-- [ ] FirstFitVMPlacementStrategy
-- [ ] BestFitVMPlacementStrategy
-- [ ] LoadBalancingVMPlacementStrategy
-- [ ] PowerAwareVMPlacementStrategy
+**VM Placement Strategies:** ✓ COMPLETE
+- [x] FirstFitVMPlacementStrategy ✓
+- [x] BestFitVMPlacementStrategy ✓
+- [x] LoadBalancingVMPlacementStrategy ✓
+- [x] PowerAwareVMPlacementStrategy ✓
 
 **Task Assignment Strategies:**
 - [ ] FirstAvailableTaskAssignmentStrategy
@@ -669,12 +772,13 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (~30% complete)
+## 5. Testing & Validation (~40% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
 - [x] HostPlacementStepTest: Verifies all 5 host placement strategies
 - [x] UserDatacenterMappingStepTest: Verifies user-datacenter validation and reassignment
+- [x] VMPlacementStepTest: Verifies all 4 VM placement strategies with limited resources
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -716,6 +820,9 @@ java -cp out com.cloudsimulator.HostPlacementStepTest
 # Run UserDatacenterMappingStep test
 java -cp out com.cloudsimulator.UserDatacenterMappingStepTest
 
+# Run VMPlacementStep test
+java -cp out com.cloudsimulator.VMPlacementStepTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -731,17 +838,23 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (3/10 complete)
+│   ├── steps/              # Simulation steps (4/10 complete)
 │   │   ├── InitializationStep.java        # Entity creation from config ✓
 │   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
-│   │   └── UserDatacenterMappingStep.java # User-datacenter validation ✓
-│   ├── strategy/           # Host placement strategies ✓
-│   │   ├── HostPlacementStrategy.java                    # Strategy interface
+│   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
+│   │   └── VMPlacementStep.java           # VM-to-host assignment ✓
+│   ├── strategy/           # Placement strategies (Host: 5, VM: 4) ✓
+│   │   ├── HostPlacementStrategy.java                    # Host strategy interface
 │   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
 │   │   ├── PowerBasedBestFitHostPlacementStrategy.java   # Power-based Best Fit
 │   │   ├── SlotBasedBestFitHostPlacementStrategy.java    # Slot-based Best Fit
 │   │   ├── PowerAwareConsolidatingHostPlacementStrategy.java  # Consolidating
-│   │   └── PowerAwareLoadBalancingHostPlacementStrategy.java  # Load Balancing
+│   │   ├── PowerAwareLoadBalancingHostPlacementStrategy.java  # Load Balancing
+│   │   ├── VMPlacementStrategy.java                      # VM strategy interface
+│   │   ├── FirstFitVMPlacementStrategy.java              # First Fit for VMs
+│   │   ├── BestFitVMPlacementStrategy.java               # Best Fit for VMs
+│   │   ├── LoadBalancingVMPlacementStrategy.java         # Load Balancing for VMs
+│   │   └── PowerAwareVMPlacementStrategy.java            # Power Aware for VMs
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
 │   ├── gui/                # JavaFX Configuration Generator ✓
@@ -749,6 +862,7 @@ JavaCloudSimulatorCosmos/
 │   ├── InitializationStepTest.java      # InitializationStep test ✓
 │   ├── HostPlacementStepTest.java       # HostPlacementStep test ✓
 │   ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
+│   ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
 │   └── SimulationExample.java           # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
