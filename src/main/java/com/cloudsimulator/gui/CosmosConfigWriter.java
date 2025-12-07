@@ -160,12 +160,13 @@ public class CosmosConfigWriter {
             }
 
             // Write counts in order: SEVEN_ZIP, DATABASE, FURMARK, IMAGE_GEN_CPU, IMAGE_GEN_GPU,
-            // LLM_CPU, LLM_GPU, CINEBENCH, PRIME95SmallFFT
+            // LLM_CPU, LLM_GPU, CINEBENCH, PRIME95SmallFFT, VERACRYPT
             List<WorkloadType> orderedTypes = Arrays.asList(
                 WorkloadType.SEVEN_ZIP, WorkloadType.DATABASE, WorkloadType.FURMARK,
                 WorkloadType.IMAGE_GEN_CPU, WorkloadType.IMAGE_GEN_GPU,
                 WorkloadType.LLM_CPU, WorkloadType.LLM_GPU,
-                WorkloadType.CINEBENCH, WorkloadType.PRIME95SmallFFT
+                WorkloadType.CINEBENCH, WorkloadType.PRIME95SmallFFT,
+                WorkloadType.VERACRYPT
             );
 
             StringJoiner sj = new StringJoiner(",");

@@ -237,7 +237,8 @@ public class VM {
                type == WorkloadType.IMAGE_GEN_CPU ||
                type == WorkloadType.LLM_CPU ||
                type == WorkloadType.CINEBENCH ||
-               type == WorkloadType.PRIME95SmallFFT;
+               type == WorkloadType.PRIME95SmallFFT ||
+               type == WorkloadType.VERACRYPT;
     }
 
     /**
@@ -318,6 +319,8 @@ public class VM {
                 return new double[]{1.0, 0.0};
             case PRIME95SmallFFT:
                 return new double[]{1.0, 0.0};
+            case VERACRYPT:
+                return new double[]{0.85, 0.0};  // CPU-intensive AES encryption/decryption
             case IDLE:
             default:
                 return new double[]{0.0, 0.0};
