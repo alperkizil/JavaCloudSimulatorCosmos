@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~70%**
+**Current Completion: ~80%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, and VMPlacementStep (with 4 placement strategies) are complete. Remaining simulation step implementations and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), and TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization) are complete. Remaining simulation step implementations and reporting are in progress.
 
 ## Architecture
 
@@ -28,8 +28,8 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (4/10 complete)
-├── strategy/       # Placement strategies (Host: 5, VM: 4) - COMPLETE ✓
+├── steps/          # Simulation step implementations - IN PROGRESS (5/10 complete)
+├── strategy/       # Placement & assignment strategies (Host: 5, VM: 4, Task: 3 + NSGA-II) - COMPLETE ✓
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
 └── gui/            # JavaFX Configuration Generator GUI ✓
@@ -716,26 +716,151 @@ System.out.println("Active hosts: " + step.getActiveHostCount());
 - `vmPlacement.host.<id>.vmCount`: VM count per host
 - `vmPlacement.datacenter.<name>.vmCount`: VM count per datacenter
 
+### TaskAssignmentStep (Complete)
+
+The `TaskAssignmentStep` assigns tasks to VMs using a configurable assignment strategy. This is the fifth step in the simulation pipeline.
+
+```java
+// Using default FirstAvailable strategy
+TaskAssignmentStep step = new TaskAssignmentStep();
+
+// Using greedy strategy
+TaskAssignmentStep step = new TaskAssignmentStep(new WorkloadAwareTaskAssignmentStrategy());
+
+// Using NSGA-II multi-objective optimization
+NSGA2Configuration config = NSGA2Configuration.builder()
+    .populationSize(100)
+    .addObjective(new MakespanObjective())
+    .addObjective(new EnergyObjective())
+    .terminationCondition(new GenerationCountTermination(200))
+    .build();
+TaskAssignmentStep step = new TaskAssignmentStep(new NSGA2TaskSchedulingStrategy(config));
+
+// Execute the step
+step.execute(context);
+
+// Check results
+System.out.println("Tasks assigned: " + step.getTasksAssigned());
+System.out.println("Tasks failed: " + step.getTasksFailed());
+```
+
+**Assignment Constraints Enforced:**
+
+| Constraint | Description |
+|------------|-------------|
+| **User Ownership** | Tasks can only be assigned to VMs owned by the same user |
+| **Compute Type Compatibility** | GPU workloads require GPU-capable VMs; CPU workloads require CPU-capable VMs |
+| **VM State** | Tasks can only be assigned to VMs that are in RUNNING state |
+
+**Available Task Assignment Strategies:**
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `FirstAvailableTaskAssignmentStrategy` | Assigns to first compatible VM | Simple baseline, fast |
+| `ShortestQueueTaskAssignmentStrategy` | Assigns to VM with fewest pending tasks | Balance task count |
+| `WorkloadAwareTaskAssignmentStrategy` | Minimizes estimated completion time | Heterogeneous VMs, varying task sizes |
+| `NSGA2TaskSchedulingStrategy` | Multi-objective optimization (Pareto front) | Trade-off analysis, research |
+
+**Strategy Details:**
+
+1. **First Available**: Sequential scan, assigns task to first compatible VM found. O(m) per task where m=VMs. Simple but may create imbalanced queues.
+
+2. **Shortest Queue**: Assigns each task to the VM with the fewest pending tasks. Balances task count but ignores task size and VM processing power.
+
+3. **Workload Aware**: Considers task instruction length, VM processing power (IPS), and current queue workload. Calculates estimated completion time and assigns to minimize it. Greedy heuristic for makespan minimization.
+
+4. **NSGA-II (Multi-Objective)**: Uses Non-dominated Sorting Genetic Algorithm II to optimize multiple objectives simultaneously. Returns entire Pareto front of trade-off solutions.
+
+**NSGA-II Multi-Objective Optimization:**
+
+The NSGA-II strategy solves the combined task assignment + scheduling problem:
+- **Assignment**: Which VM each task is assigned to
+- **Ordering**: In what order tasks execute within each VM
+
+```java
+// Configure NSGA-II
+NSGA2Configuration config = NSGA2Configuration.builder()
+    .populationSize(100)
+    .crossoverRate(0.9)
+    .mutationRate(0.1)
+    .addObjective(new MakespanObjective())      // Minimize total completion time
+    .addObjective(new EnergyObjective())         // Minimize energy consumption
+    .terminationCondition(CompositeTermination.or(
+        new GenerationCountTermination(200),
+        TimeLimitTermination.seconds(60)
+    ))
+    .randomSeed(42L)
+    .verboseLogging(true)
+    .build();
+
+NSGA2TaskSchedulingStrategy strategy = new NSGA2TaskSchedulingStrategy(config);
+
+// Get entire Pareto front
+ParetoFront front = strategy.optimize(tasks, vms);
+
+// Access trade-off solutions
+System.out.println("Pareto front size: " + front.size());
+SchedulingSolution bestMakespan = front.getBestForObjective(0);
+SchedulingSolution bestEnergy = front.getBestForObjective(1);
+SchedulingSolution kneePoint = front.getKneePoint();  // Balanced trade-off
+```
+
+**Available Objectives:**
+
+| Objective | Description | Unit |
+|-----------|-------------|------|
+| `MakespanObjective` | Minimizes time for all tasks to complete | seconds |
+| `EnergyObjective` | Minimizes total energy consumption | joules |
+
+*Future objectives (easily addable): WaitingTimeObjective, LoadBalanceObjective, ThroughputObjective*
+
+**Termination Conditions:**
+
+| Condition | Description |
+|-----------|-------------|
+| `GenerationCountTermination` | Stop after N generations |
+| `FitnessEvaluationsTermination` | Stop after N objective evaluations |
+| `TimeLimitTermination` | Stop after specified time (ms/seconds/minutes) |
+| `TargetFitnessTermination` | Stop when target value is reached |
+| `CompositeTermination` | Combine conditions with AND/OR logic |
+
+**Repair Strategy for Invalid Solutions:**
+
+NSGA-II uses a repair operator to fix invalid solutions:
+1. Pre-compute valid VMs for each task (same user + compatible compute type)
+2. If a task is assigned to an invalid VM, randomly select from valid VMs
+3. Rebuild task ordering after repair
+
+**Metrics recorded:**
+- `taskAssignment.tasksAssigned`: Number of tasks successfully assigned
+- `taskAssignment.tasksFailed`: Number of tasks that couldn't be assigned
+- `taskAssignment.strategy`: Name of the strategy used
+- `taskAssignment.vm.<id>.taskCount`: Task count per VM
+- `taskAssignment.user.<name>.taskCount`: Task count per user
+- `taskAssignment.distribution.maxTasksPerVM`: Maximum tasks on any VM
+- `taskAssignment.distribution.minTasksPerVM`: Minimum tasks on any VM
+- `taskAssignment.distribution.avgTasksPerVM`: Average tasks per VM
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~50% complete)
+## 1. Simulation Step Implementations (~60% complete)
 
-The SimulationStep interface exists with InitializationStep, HostPlacementStep, UserDatacenterMappingStep, and VMPlacementStep implemented:
+The SimulationStep interface exists with InitializationStep, HostPlacementStep, UserDatacenterMappingStep, VMPlacementStep, and TaskAssignmentStep implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
 - [x] UserDatacenterMappingStep: Validate/assign users to datacenters ✓
 - [x] VMPlacementStep: Assign VMs to hosts with 4 strategies ✓
-- [ ] TaskAssignmentStep: Implement task-to-VM assignment strategies
+- [x] TaskAssignmentStep: Assign tasks to VMs with 3 strategies + NSGA-II ✓
 - [ ] VMExecutionStep: Orchestrate VM.executeOneSecond() calls
 - [ ] TaskExecutionStep: Track task completion and handle finished tasks
 - [ ] EnergyCalculationStep: Update power consumption for all entities
 - [ ] MetricsCollectionStep: Aggregate performance metrics
 - [ ] ReportingStep: Generate CSV reports
 
-## 2. Strategy Pattern Implementations (~70% complete)
+## 2. Strategy Pattern Implementations (~90% complete)
 
 **Host Placement Strategies:** ✓ COMPLETE
 - [x] FirstFitHostPlacementStrategy ✓
@@ -750,10 +875,11 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
 - [x] LoadBalancingVMPlacementStrategy ✓
 - [x] PowerAwareVMPlacementStrategy ✓
 
-**Task Assignment Strategies:**
-- [ ] FirstAvailableTaskAssignmentStrategy
-- [ ] ShortestQueueTaskAssignmentStrategy
-- [ ] WorkloadAwareTaskAssignmentStrategy
+**Task Assignment Strategies:** ✓ COMPLETE
+- [x] FirstAvailableTaskAssignmentStrategy ✓
+- [x] ShortestQueueTaskAssignmentStrategy ✓
+- [x] WorkloadAwareTaskAssignmentStrategy ✓
+- [x] NSGA2TaskSchedulingStrategy (multi-objective metaheuristic) ✓
 
 ## 3. Calculator Infrastructure (0% complete)
 
@@ -772,13 +898,14 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (~40% complete)
+## 5. Testing & Validation (~50% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
 - [x] HostPlacementStepTest: Verifies all 5 host placement strategies
 - [x] UserDatacenterMappingStepTest: Verifies user-datacenter validation and reassignment
 - [x] VMPlacementStepTest: Verifies all 4 VM placement strategies with limited resources
+- [x] TaskAssignmentStepTest: Verifies all 3 basic strategies + NSGA-II multi-objective optimization
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -823,6 +950,9 @@ java -cp out com.cloudsimulator.UserDatacenterMappingStepTest
 # Run VMPlacementStep test
 java -cp out com.cloudsimulator.VMPlacementStepTest
 
+# Run TaskAssignmentStep test
+java -cp out com.cloudsimulator.TaskAssignmentStepTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -838,12 +968,13 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (4/10 complete)
+│   ├── steps/              # Simulation steps (5/10 complete)
 │   │   ├── InitializationStep.java        # Entity creation from config ✓
 │   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
 │   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
-│   │   └── VMPlacementStep.java           # VM-to-host assignment ✓
-│   ├── strategy/           # Placement strategies (Host: 5, VM: 4) ✓
+│   │   ├── VMPlacementStep.java           # VM-to-host assignment ✓
+│   │   └── TaskAssignmentStep.java        # Task-to-VM assignment ✓
+│   ├── strategy/           # Placement & assignment strategies ✓
 │   │   ├── HostPlacementStrategy.java                    # Host strategy interface
 │   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
 │   │   ├── PowerBasedBestFitHostPlacementStrategy.java   # Power-based Best Fit
@@ -854,7 +985,34 @@ JavaCloudSimulatorCosmos/
 │   │   ├── FirstFitVMPlacementStrategy.java              # First Fit for VMs
 │   │   ├── BestFitVMPlacementStrategy.java               # Best Fit for VMs
 │   │   ├── LoadBalancingVMPlacementStrategy.java         # Load Balancing for VMs
-│   │   └── PowerAwareVMPlacementStrategy.java            # Power Aware for VMs
+│   │   ├── PowerAwareVMPlacementStrategy.java            # Power Aware for VMs
+│   │   └── task/                                         # Task assignment strategies ✓
+│   │       ├── TaskAssignmentStrategy.java               # Task strategy interface
+│   │       ├── FirstAvailableTaskAssignmentStrategy.java # First Available
+│   │       ├── ShortestQueueTaskAssignmentStrategy.java  # Shortest Queue
+│   │       ├── WorkloadAwareTaskAssignmentStrategy.java  # Workload Aware
+│   │       └── metaheuristic/                            # NSGA-II framework ✓
+│   │           ├── SchedulingSolution.java               # Solution chromosome
+│   │           ├── SchedulingObjective.java              # Objective interface
+│   │           ├── NSGA2Configuration.java               # Algorithm config
+│   │           ├── NSGA2Algorithm.java                   # Core NSGA-II
+│   │           ├── NSGA2TaskSchedulingStrategy.java      # Strategy wrapper
+│   │           ├── ParetoFront.java                      # Pareto front container
+│   │           ├── objectives/                           # Objective implementations
+│   │           │   ├── MakespanObjective.java            # Minimize makespan
+│   │           │   └── EnergyObjective.java              # Minimize energy
+│   │           ├── termination/                          # Termination conditions
+│   │           │   ├── TerminationCondition.java         # Condition interface
+│   │           │   ├── AlgorithmStatistics.java          # Runtime statistics
+│   │           │   ├── GenerationCountTermination.java   # Stop after N gens
+│   │           │   ├── FitnessEvaluationsTermination.java # Stop after N evals
+│   │           │   ├── TimeLimitTermination.java         # Stop after time
+│   │           │   ├── TargetFitnessTermination.java     # Stop at target
+│   │           │   └── CompositeTermination.java         # AND/OR logic
+│   │           └── operators/                            # Genetic operators
+│   │               ├── RepairOperator.java               # Solution repair
+│   │               ├── CrossoverOperator.java            # Recombination
+│   │               └── MutationOperator.java             # Mutation
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
 │   ├── gui/                # JavaFX Configuration Generator ✓
@@ -863,6 +1021,7 @@ JavaCloudSimulatorCosmos/
 │   ├── HostPlacementStepTest.java       # HostPlacementStep test ✓
 │   ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
 │   ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
+│   ├── TaskAssignmentStepTest.java      # TaskAssignmentStep test ✓
 │   └── SimulationExample.java           # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
