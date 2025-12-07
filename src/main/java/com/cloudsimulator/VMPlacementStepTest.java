@@ -31,6 +31,9 @@ public class VMPlacementStepTest {
         testEdgeCases();
         testComputeTypeCompatibility();
 
+        // New test that shows strategy differentiation
+        testStrategyDifferentiation();
+
         System.out.println("\n=== All Tests Completed ===");
     }
 
@@ -369,5 +372,117 @@ public class VMPlacementStepTest {
                     gpuUtil,
                     ramUtil);
         }
+    }
+
+    /**
+     * Test that demonstrates STRATEGY DIFFERENTIATION.
+     *
+     * Setup: MORE hosts than required, all CPU_GPU_MIXED to remove compute type constraints
+     * - 4 identical hosts: 16 cores, 4 GPUs, 64GB RAM each
+     * - 4 small VMs: 2 cores, 1 GPU, 4GB RAM each (can all fit on 1 host)
+     *
+     * Expected Results:
+     * - PowerAware: 1 active host (consolidates all VMs into one)
+     * - LoadBalancing: 4 active hosts (spreads VMs across all)
+     * - FirstFit: 1 active host (fills first host)
+     * - BestFit: 1 active host (similar to FirstFit for small VMs)
+     */
+    private static void testStrategyDifferentiation() {
+        System.out.println("Test 7: Strategy Differentiation (Key Test)");
+        System.out.println("-".repeat(60));
+        System.out.println("  Setup: 4 identical hosts, 4 small VMs that can fit on 1 host");
+        System.out.println("  Goal: Show different strategies produce different active host counts\n");
+
+        int firstFitHosts = runDifferentiationScenario(new FirstFitVMPlacementStrategy());
+        int bestFitHosts = runDifferentiationScenario(new BestFitVMPlacementStrategy());
+        int loadBalancingHosts = runDifferentiationScenario(new LoadBalancingVMPlacementStrategy());
+        int powerAwareHosts = runDifferentiationScenario(new PowerAwareVMPlacementStrategy());
+
+        System.out.println("\n  Summary of Active Hosts:");
+        System.out.println("  +-----------------------+---------------+");
+        System.out.println("  | Strategy              | Active Hosts  |");
+        System.out.println("  +-----------------------+---------------+");
+        System.out.printf("  | First Fit             |       %d       |%n", firstFitHosts);
+        System.out.printf("  | Best Fit              |       %d       |%n", bestFitHosts);
+        System.out.printf("  | Load Balancing        |       %d       |%n", loadBalancingHosts);
+        System.out.printf("  | Power Aware           |       %d       |%n", powerAwareHosts);
+        System.out.println("  +-----------------------+---------------+");
+
+        // Verify differentiation
+        boolean loadBalancingDifferent = loadBalancingHosts > powerAwareHosts;
+        boolean powerAwareConsolidates = powerAwareHosts == 1;
+
+        System.out.println("\n  Differentiation Checks:");
+        System.out.println("    Load Balancing uses more hosts than Power Aware: " +
+            (loadBalancingDifferent ? "PASSED" : "FAILED"));
+        System.out.println("    Power Aware consolidates to minimum hosts: " +
+            (powerAwareConsolidates ? "PASSED" : "FAILED"));
+
+        boolean passed = loadBalancingDifferent && powerAwareConsolidates;
+        System.out.println("\n  Overall Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println();
+    }
+
+    /**
+     * Runs the differentiation scenario with a given strategy and returns active host count.
+     */
+    private static int runDifferentiationScenario(VMPlacementStrategy strategy) {
+        SimulationContext context = createDifferentiationContext();
+        VMPlacementStep step = new VMPlacementStep(strategy);
+        step.execute(context);
+
+        System.out.println("  " + strategy.getStrategyName() + ":");
+        System.out.printf("    VMs placed: %d, Active hosts: %d%n",
+            step.getVmsPlaced(), step.getActiveHostCount());
+
+        // Show which hosts have VMs
+        StringBuilder hostInfo = new StringBuilder("    Distribution: ");
+        for (Host host : context.getHosts()) {
+            hostInfo.append("H").append(host.getId() % 100).append("=")
+                   .append(host.getAssignedVMs().size()).append(" ");
+        }
+        System.out.println(hostInfo.toString().trim());
+
+        return step.getActiveHostCount();
+    }
+
+    /**
+     * Creates a context designed to show strategy differentiation.
+     *
+     * 4 identical large hosts (all can hold all VMs)
+     * 4 small VMs (can all fit on 1 host)
+     */
+    private static SimulationContext createDifferentiationContext() {
+        SimulationContext context = new SimulationContext();
+
+        // Create datacenter
+        CloudDatacenter dc = new CloudDatacenter("DC-Diff", 10, 500000.0);
+        context.addDatacenter(dc);
+
+        // Create 4 IDENTICAL hosts - all CPU_GPU_MIXED to remove compute type constraints
+        // Each host: 16 cores, 4 GPUs, 64GB RAM (can hold all 4 VMs)
+        for (int i = 0; i < 4; i++) {
+            Host host = new Host(2_500_000_000L, 16, ComputeType.CPU_GPU_MIXED, 4);
+            host.setRamCapacityMB(65536);
+            host.setNetworkCapacityMbps(10000);
+            host.setHardDriveCapacityMB(1024 * 1024);
+            dc.addHost(host);
+            context.addHost(host);
+        }
+
+        // Create user
+        User user = new User("DiffUser");
+        user.addSelectedDatacenter(dc.getId());
+        context.addUser(user);
+
+        // Create 4 small VMs - total: 8 cores, 4 GPUs, 16GB RAM
+        // All can fit on a single host (16 cores, 4 GPUs, 64GB RAM)
+        for (int i = 0; i < 4; i++) {
+            VM vm = new VM(user.getName(), 2_000_000_000L, 2, 1, 4096, 10240, 500, ComputeType.CPU_GPU_MIXED);
+            user.addVirtualMachine(vm);
+            context.addVM(vm);
+        }
+
+        return context;
     }
 }
