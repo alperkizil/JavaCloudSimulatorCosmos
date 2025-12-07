@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~50%**
+**Current Completion: ~55%**
 
-The configuration system, core model classes, and simulation engine framework are complete. Simulation step implementations, placement strategies, and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, and InitializationStep are complete. Remaining simulation step implementations, placement strategies, and reporting are in progress.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations (planned)
+├── steps/          # Simulation step implementations - IN PROGRESS (1/10 complete)
 ├── strategy/       # Strategy implementations for placement/scheduling (planned)
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
@@ -464,7 +464,7 @@ public interface SimulationStep {
 
 ## 10 Planned Simulation Steps
 
-1. **Initialization**: Create entities from configuration
+1. **Initialization**: Create entities from configuration ✓ COMPLETE
 2. **Host Placement**: Assign hosts to datacenters (Strategy)
 3. **User-Datacenter Mapping**: Map users to preferred datacenters
 4. **VM Placement**: Assign VMs to hosts (Strategy)
@@ -475,15 +475,52 @@ public interface SimulationStep {
 9. **Metrics Collection**: Gather performance data
 10. **Reporting**: Generate CSV reports
 
+### InitializationStep (Complete)
+
+The `InitializationStep` creates all simulation entities from an `ExperimentConfiguration`:
+
+```java
+// Load configuration from file
+FileConfigParser parser = new FileConfigParser();
+ExperimentConfiguration config = parser.parse("configs/sample-experiment.cosc");
+
+// Create InitializationStep and execute
+SimulationEngine engine = new SimulationEngine();
+engine.addStep(new InitializationStep(config));
+engine.run();
+
+// Access created entities
+SimulationContext context = engine.getContext();
+System.out.println("Datacenters: " + context.getTotalDatacenterCount());
+System.out.println("Hosts: " + context.getTotalHostCount());
+System.out.println("Users: " + context.getUsers().size());
+System.out.println("VMs: " + context.getTotalVMCount());
+System.out.println("Tasks: " + context.getTotalTaskCount());
+```
+
+**What InitializationStep creates:**
+- **CloudDatacenters** with name, host capacity, and power limits
+- **Hosts** with CPU/GPU specs and power models from `PowerModelFactory`
+- **Users** with datacenter preferences (maps datacenter names to IDs)
+- **VMs** linked to their owner users
+- **Tasks** linked to their owner users
+
+**Metrics recorded:**
+- `initialization.datacenters`: Number of datacenters created
+- `initialization.hosts`: Number of hosts created
+- `initialization.users`: Number of users created
+- `initialization.vms`: Number of VMs created
+- `initialization.tasks`: Number of tasks created
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~20% complete)
+## 1. Simulation Step Implementations (~30% complete)
 
-Currently, the SimulationStep interface exists, but concrete implementations are missing:
+The SimulationStep interface exists with InitializationStep implemented:
 
-- [ ] InitializationStep: Create entities from ExperimentConfiguration
+- [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [ ] HostPlacementStep: Implement host-to-datacenter assignment strategies
 - [ ] UserDatacenterMappingStep: Map users to their preferred datacenters
 - [ ] VMPlacementStep: Implement VM-to-host placement strategies
@@ -531,9 +568,10 @@ Need concrete strategy classes for:
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (10% complete)
+## 5. Testing & Validation (~15% complete)
 
 - [x] ConfigTest: Basic configuration loading
+- [x] InitializationStepTest: Verifies entity creation from configuration
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -560,11 +598,14 @@ Need concrete strategy classes for:
 # Clean build
 rm -rf out
 
-# Compile all sources
-javac -d out src/main/java/com/cloudsimulator/**/*.java
+# Compile all sources (excluding GUI which requires JavaFX)
+find src/main/java -name "*.java" ! -path "*/gui/*" | xargs javac -d out
 
 # Run configuration test
 java -cp out com.cloudsimulator.ConfigTest
+
+# Run InitializationStep test
+java -cp out com.cloudsimulator.InitializationStepTest
 
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
@@ -581,12 +622,14 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (TODO)
+│   ├── steps/              # Simulation steps (1/10 complete)
+│   │   └── InitializationStep.java  # Entity creation from config ✓
 │   ├── strategy/           # Strategies (TODO)
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
 │   ├── gui/                # JavaFX Configuration Generator ✓
 │   ├── ConfigTest.java     # Config system test
+│   ├── InitializationStepTest.java  # InitializationStep test ✓
 │   └── SimulationExample.java  # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
