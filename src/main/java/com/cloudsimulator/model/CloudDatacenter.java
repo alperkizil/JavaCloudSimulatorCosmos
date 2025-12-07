@@ -168,10 +168,21 @@ public class CloudDatacenter {
 
     /**
      * Checks if the datacenter can accommodate a specific host without exceeding power limit.
+     * Updates the current power draw before checking to ensure accurate projection.
      */
     public boolean canAccommodateHost(Host host) {
         if (!canAcceptHost()) return false;
-        double projectedPower = totalMomentaryPowerDraw + host.getCurrentTotalPowerDraw();
+
+        // Update current power draw from all existing hosts
+        updateTotalMomentaryPowerDraw();
+
+        // Get the host's power draw (use idle power if not yet calculated)
+        double hostPower = host.getCurrentTotalPowerDraw();
+        if (hostPower <= 0 && host.getPowerModel() != null) {
+            hostPower = host.getPowerModel().calculateTotalPower(0.0, 0.0);
+        }
+
+        double projectedPower = totalMomentaryPowerDraw + hostPower;
         return projectedPower <= totalMaxPowerDraw;
     }
 

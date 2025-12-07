@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~55%**
+**Current Completion: ~60%**
 
-The configuration system, core model classes, simulation engine framework, and InitializationStep are complete. Remaining simulation step implementations, placement strategies, and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, and HostPlacementStep (with 5 placement strategies) are complete. Remaining simulation step implementations and reporting are in progress.
 
 ## Architecture
 
@@ -28,8 +28,8 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (1/10 complete)
-├── strategy/       # Strategy implementations for placement/scheduling (planned)
+├── steps/          # Simulation step implementations - IN PROGRESS (2/10 complete)
+├── strategy/       # Host placement strategies - COMPLETE ✓
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
 └── gui/            # JavaFX Configuration Generator GUI ✓
@@ -466,7 +466,7 @@ public interface SimulationStep {
 ## 10 Planned Simulation Steps
 
 1. **Initialization**: Create entities from configuration ✓ COMPLETE
-2. **Host Placement**: Assign hosts to datacenters (Strategy)
+2. **Host Placement**: Assign hosts to datacenters (Strategy) ✓ COMPLETE
 3. **User-Datacenter Mapping**: Map users to preferred datacenters
 4. **VM Placement**: Assign VMs to hosts (Strategy)
 5. **Task Assignment**: Assign tasks to VMs (Strategy)
@@ -513,16 +513,63 @@ System.out.println("Tasks: " + context.getTotalTaskCount());
 - `initialization.vms`: Number of VMs created
 - `initialization.tasks`: Number of tasks created
 
+### HostPlacementStep (Complete)
+
+The `HostPlacementStep` assigns hosts to datacenters using a configurable placement strategy. This is the second step in the simulation pipeline.
+
+```java
+// Using default FirstFit strategy
+HostPlacementStep step = new HostPlacementStep();
+
+// Using custom strategy
+HostPlacementStep step = new HostPlacementStep(new PowerAwareConsolidatingHostPlacementStrategy());
+
+// Execute the step
+step.execute(context);
+
+// Check results
+System.out.println("Hosts placed: " + step.getHostsPlaced());
+System.out.println("Hosts failed: " + step.getHostsFailed());
+```
+
+**Available Host Placement Strategies:**
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `FirstFitHostPlacementStrategy` | Places hosts in the first datacenter with capacity | Simple, fast, default choice |
+| `PowerBasedBestFitHostPlacementStrategy` | Minimizes remaining power budget after placement | Power resource optimization |
+| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots after placement | Capacity utilization |
+| `PowerAwareConsolidatingHostPlacementStrategy` | Consolidates hosts into fewer datacenters | Green computing, energy savings |
+| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances power load across datacenters | Fault tolerance, even distribution |
+
+**Strategy Details:**
+
+1. **First Fit**: Sequential scan, places host in first datacenter that has capacity and power budget. O(n) time complexity.
+
+2. **Power-Based Best Fit**: Scans all datacenters, selects the one where placing the host leaves the smallest remaining power budget. Reduces power fragmentation.
+
+3. **Slot-Based Best Fit**: Scans all datacenters, selects the one with the fewest remaining host slots after placement. Maximizes capacity utilization.
+
+4. **Power-Aware Consolidating**: Prioritizes the most utilized datacenters first. Packs hosts into minimum number of datacenters, allowing unused ones to be powered off. Ideal for green cloud computing.
+
+5. **Power-Aware Load Balancing**: Selects the datacenter with the lowest power utilization. Distributes load evenly to prevent hotspots and ensure fault tolerance.
+
+**Metrics recorded:**
+- `hostPlacement.hostsPlaced`: Number of hosts successfully placed
+- `hostPlacement.hostsFailed`: Number of hosts that couldn't be placed
+- `hostPlacement.strategy`: Name of the strategy used
+- `hostPlacement.datacenter.<name>.hostCount`: Host count per datacenter
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~30% complete)
+## 1. Simulation Step Implementations (~40% complete)
 
-The SimulationStep interface exists with InitializationStep implemented:
+The SimulationStep interface exists with InitializationStep and HostPlacementStep implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
-- [ ] HostPlacementStep: Implement host-to-datacenter assignment strategies
+- [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
 - [ ] UserDatacenterMappingStep: Map users to their preferred datacenters
 - [ ] VMPlacementStep: Implement VM-to-host placement strategies
 - [ ] TaskAssignmentStep: Implement task-to-VM assignment strategies
@@ -532,14 +579,14 @@ The SimulationStep interface exists with InitializationStep implemented:
 - [ ] MetricsCollectionStep: Aggregate performance metrics
 - [ ] ReportingStep: Generate CSV reports
 
-## 2. Strategy Pattern Implementations (0% complete)
+## 2. Strategy Pattern Implementations (~35% complete)
 
-Need concrete strategy classes for:
-
-**Host Placement Strategies:**
-- [ ] FirstFitHostPlacementStrategy
-- [ ] BestFitHostPlacementStrategy
-- [ ] PowerAwareHostPlacementStrategy
+**Host Placement Strategies:** ✓ COMPLETE
+- [x] FirstFitHostPlacementStrategy ✓
+- [x] PowerBasedBestFitHostPlacementStrategy ✓
+- [x] SlotBasedBestFitHostPlacementStrategy ✓
+- [x] PowerAwareConsolidatingHostPlacementStrategy ✓
+- [x] PowerAwareLoadBalancingHostPlacementStrategy ✓
 
 **VM Placement Strategies:**
 - [ ] FirstFitVMPlacementStrategy
@@ -569,10 +616,11 @@ Need concrete strategy classes for:
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (~15% complete)
+## 5. Testing & Validation (~25% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
+- [x] HostPlacementStepTest: Verifies all 5 host placement strategies
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -608,6 +656,9 @@ java -cp out com.cloudsimulator.ConfigTest
 # Run InitializationStep test
 java -cp out com.cloudsimulator.InitializationStepTest
 
+# Run HostPlacementStep test
+java -cp out com.cloudsimulator.HostPlacementStepTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -623,14 +674,22 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (1/10 complete)
-│   │   └── InitializationStep.java  # Entity creation from config ✓
-│   ├── strategy/           # Strategies (TODO)
+│   ├── steps/              # Simulation steps (2/10 complete)
+│   │   ├── InitializationStep.java  # Entity creation from config ✓
+│   │   └── HostPlacementStep.java   # Host-to-datacenter assignment ✓
+│   ├── strategy/           # Host placement strategies ✓
+│   │   ├── HostPlacementStrategy.java                    # Strategy interface
+│   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
+│   │   ├── PowerBasedBestFitHostPlacementStrategy.java   # Power-based Best Fit
+│   │   ├── SlotBasedBestFitHostPlacementStrategy.java    # Slot-based Best Fit
+│   │   ├── PowerAwareConsolidatingHostPlacementStrategy.java  # Consolidating
+│   │   └── PowerAwareLoadBalancingHostPlacementStrategy.java  # Load Balancing
 │   ├── calculator/         # Calculators (TODO)
 │   ├── reporter/           # Reporters (TODO)
 │   ├── gui/                # JavaFX Configuration Generator ✓
 │   ├── ConfigTest.java     # Config system test
 │   ├── InitializationStepTest.java  # InitializationStep test ✓
+│   ├── HostPlacementStepTest.java   # HostPlacementStep test ✓
 │   └── SimulationExample.java  # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
