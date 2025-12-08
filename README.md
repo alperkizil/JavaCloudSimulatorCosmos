@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~80%**
+**Current Completion: ~85%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), and TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization) are complete. Remaining simulation step implementations and reporting are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization), VMExecutionStep (time-stepped simulation loop), and TaskExecutionStep (post-simulation analysis) are complete. Remaining steps (energy calculation, metrics collection, reporting) are in progress.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (5/10 complete)
+├── steps/          # Simulation step implementations - IN PROGRESS (7/10 complete)
 ├── strategy/       # Placement & assignment strategies (Host: 5, VM: 4, Task: 3 + NSGA-II) - COMPLETE ✓
 ├── calculator/     # Energy calculators (planned)
 ├── reporter/       # Result reporters (planned)
@@ -469,9 +469,9 @@ public interface SimulationStep {
 2. **Host Placement**: Assign hosts to datacenters (Strategy) ✓ COMPLETE
 3. **User-Datacenter Mapping**: Map users to preferred datacenters ✓ COMPLETE
 4. **VM Placement**: Assign VMs to hosts (Strategy) ✓ COMPLETE
-5. **Task Assignment**: Assign tasks to VMs (Strategy)
-6. **VM Execution**: Execute VM time steps
-7. **Task Execution**: Track task progress
+5. **Task Assignment**: Assign tasks to VMs (Strategy) ✓ COMPLETE
+6. **VM Execution**: Execute VM time steps ✓ COMPLETE
+7. **Task Execution**: Track task progress and analyze results ✓ COMPLETE
 8. **Energy Calculation**: Update power consumption
 9. **Metrics Collection**: Gather performance data
 10. **Reporting**: Generate CSV reports
@@ -841,21 +841,157 @@ NSGA-II uses a repair operator to fix invalid solutions:
 - `taskAssignment.distribution.minTasksPerVM`: Minimum tasks on any VM
 - `taskAssignment.distribution.avgTasksPerVM`: Average tasks per VM
 
+### VMExecutionStep (Complete)
+
+The `VMExecutionStep` orchestrates the main time-stepped simulation loop where all VMs execute their assigned tasks. This is the sixth step in the simulation pipeline.
+
+```java
+// Create and execute the step
+VMExecutionStep step = new VMExecutionStep();
+step.execute(context);
+
+// Check results
+System.out.println("Total simulation time: " + step.getTotalSimulationSeconds() + " seconds");
+System.out.println("Tasks completed: " + step.getTasksCompleted());
+System.out.println("VM utilization: " + step.getVmUtilizationRatio());
+```
+
+**Execution Flow Per Tick:**
+
+```
+WHILE (assigned tasks remain incomplete):
+    1. Track peak concurrent tasks
+    2. For each VM assigned to a host and in RUNNING state:
+       - Call vm.executeOneSecond(currentTime)
+       - Update VM state (active seconds, idle time)
+       - Track execution vs idle time
+    3. For each Host with assigned datacenter:
+       - Call host.updateState()
+       - Update power consumption and energy tracking
+    4. Advance simulation clock by 1 second
+    5. Log progress every 100 ticks
+```
+
+**Progress Logging:**
+
+Real-time progress is logged every 100 simulation ticks:
+```
+[Tick 100] Progress: 25.0% (5/20 tasks completed, 3 executing)
+[Tick 200] Progress: 50.0% (10/20 tasks completed, 2 executing)
+[Tick 300] Progress: 75.0% (15/20 tasks completed, 1 executing)
+```
+
+**Termination Conditions:**
+- All assigned tasks are completed
+- No assigned tasks exist (immediate termination)
+
+**Metrics recorded:**
+- `vmExecution.totalSimulationSeconds`: Total simulation time in seconds
+- `vmExecution.vmSecondsExecuted`: Total VM-seconds spent executing tasks
+- `vmExecution.vmSecondsIdle`: Total VM-seconds spent idle
+- `vmExecution.tasksCompleted`: Number of tasks completed during execution
+- `vmExecution.peakConcurrentTasks`: Maximum concurrent executing tasks
+- `vmExecution.vmUtilizationRatio`: Ratio of executing time to total time
+- `vmExecution.simulationStartTime`: Timestamp when simulation started
+- `vmExecution.simulationEndTime`: Timestamp when simulation ended
+
+### TaskExecutionStep (Complete)
+
+The `TaskExecutionStep` performs post-simulation analysis of task completion. This is the seventh step in the simulation pipeline, executed after VMExecutionStep.
+
+```java
+// Create and execute the step
+TaskExecutionStep step = new TaskExecutionStep();
+step.execute(context);
+
+// Check results
+System.out.println("Makespan: " + step.getMakespan() + " seconds");
+System.out.println("Avg turnaround time: " + step.getAverageTurnaroundTime() + " seconds");
+System.out.println("Throughput: " + step.getThroughput() + " tasks/second");
+System.out.println("Users completed: " + step.getUsersCompleted());
+```
+
+**Analysis Performed:**
+
+| Analysis | Description |
+|----------|-------------|
+| **Task Metrics** | Makespan, waiting time, turnaround time, execution time |
+| **Throughput** | Tasks completed per second |
+| **User Session Finalization** | Marks users as complete when all their tasks finish |
+| **Per-User Statistics** | Completion rate, avg times per user |
+| **Per-Workload Statistics** | Completion rate, avg execution time per workload type |
+
+**Key Metrics Calculated:**
+
+| Metric | Formula | Description |
+|--------|---------|-------------|
+| **Makespan** | `lastTaskEnd - firstTaskStart` | Total time span from first task start to last task completion |
+| **Waiting Time** | `taskExecStart - taskCreation` | Time a task waited before execution began |
+| **Turnaround Time** | `taskExecEnd - taskCreation` | Total time from task creation to completion |
+| **Throughput** | `completedTasks / makespan` | Task completion rate |
+
+**User Session Finalization:**
+
+```
+For each user:
+  IF all user's assigned tasks are completed:
+    - Find the last task completion timestamp
+    - Call user.finishSession(lastCompletionTime)
+    - Mark user as completed
+```
+
+**Per-User Statistics:**
+
+```java
+TaskExecutionStep.UserTaskStatistics userStats = step.getUserStatistics().get("Alice");
+System.out.println("Total tasks: " + userStats.totalTasks);
+System.out.println("Completed: " + userStats.completedTasks);
+System.out.println("Completion rate: " + userStats.getCompletionRate());
+System.out.println("Avg turnaround: " + userStats.getAverageTurnaroundTime() + " sec");
+```
+
+**Per-Workload Statistics:**
+
+```java
+TaskExecutionStep.WorkloadStatistics stats = step.getWorkloadStatistics().get(WorkloadType.SEVEN_ZIP);
+System.out.println("Total: " + stats.totalTasks);
+System.out.println("Completed: " + stats.completedTasks);
+System.out.println("Avg execution time: " + stats.getAverageExecutionTime() + " sec");
+```
+
+**Metrics recorded:**
+- `taskExecution.completedTasks`: Number of tasks completed
+- `taskExecution.failedTasks`: Number of tasks that failed (assigned but not completed)
+- `taskExecution.unassignedTasks`: Number of tasks never assigned to a VM
+- `taskExecution.makespan`: Total makespan in seconds
+- `taskExecution.avgWaitingTime`: Average task waiting time
+- `taskExecution.avgTurnaroundTime`: Average task turnaround time
+- `taskExecution.avgExecutionTime`: Average task execution time
+- `taskExecution.throughput`: Tasks per second
+- `taskExecution.usersCompleted`: Number of users who completed all tasks
+- `taskExecution.user.<name>.total`: Total tasks for user
+- `taskExecution.user.<name>.completed`: Completed tasks for user
+- `taskExecution.user.<name>.avgWaitingTime`: Average waiting time for user
+- `taskExecution.user.<name>.avgTurnaroundTime`: Average turnaround time for user
+- `taskExecution.workload.<type>.total`: Total tasks of workload type
+- `taskExecution.workload.<type>.completed`: Completed tasks of workload type
+- `taskExecution.workload.<type>.avgExecutionTime`: Average execution time for workload type
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~60% complete)
+## 1. Simulation Step Implementations (~70% complete)
 
-The SimulationStep interface exists with InitializationStep, HostPlacementStep, UserDatacenterMappingStep, VMPlacementStep, and TaskAssignmentStep implemented:
+The SimulationStep interface exists with 7 of 10 steps implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
 - [x] UserDatacenterMappingStep: Validate/assign users to datacenters ✓
 - [x] VMPlacementStep: Assign VMs to hosts with 4 strategies ✓
 - [x] TaskAssignmentStep: Assign tasks to VMs with 3 strategies + NSGA-II ✓
-- [ ] VMExecutionStep: Orchestrate VM.executeOneSecond() calls
-- [ ] TaskExecutionStep: Track task completion and handle finished tasks
+- [x] VMExecutionStep: Time-stepped simulation loop with progress logging ✓
+- [x] TaskExecutionStep: Post-simulation analysis and user session finalization ✓
 - [ ] EnergyCalculationStep: Update power consumption for all entities
 - [ ] MetricsCollectionStep: Aggregate performance metrics
 - [ ] ReportingStep: Generate CSV reports
@@ -898,7 +1034,7 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
   - [ ] User summary report
 - [ ] Timestamped output files
 
-## 5. Testing & Validation (~50% complete)
+## 5. Testing & Validation (~60% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
@@ -906,6 +1042,7 @@ The SimulationStep interface exists with InitializationStep, HostPlacementStep, 
 - [x] UserDatacenterMappingStepTest: Verifies user-datacenter validation and reassignment
 - [x] VMPlacementStepTest: Verifies all 4 VM placement strategies with limited resources
 - [x] TaskAssignmentStepTest: Verifies all 3 basic strategies + NSGA-II multi-objective optimization
+- [x] ExecutionStepsTest: Verifies VMExecutionStep and TaskExecutionStep with full pipeline test
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
@@ -953,6 +1090,9 @@ java -cp out com.cloudsimulator.VMPlacementStepTest
 # Run TaskAssignmentStep test
 java -cp out com.cloudsimulator.TaskAssignmentStepTest
 
+# Run ExecutionSteps test (VMExecutionStep + TaskExecutionStep)
+java -cp out com.cloudsimulator.ExecutionStepsTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -968,12 +1108,14 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (5/10 complete)
+│   ├── steps/              # Simulation steps (7/10 complete)
 │   │   ├── InitializationStep.java        # Entity creation from config ✓
 │   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
 │   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
 │   │   ├── VMPlacementStep.java           # VM-to-host assignment ✓
-│   │   └── TaskAssignmentStep.java        # Task-to-VM assignment ✓
+│   │   ├── TaskAssignmentStep.java        # Task-to-VM assignment ✓
+│   │   ├── VMExecutionStep.java           # Time-stepped simulation loop ✓
+│   │   └── TaskExecutionStep.java         # Post-simulation analysis ✓
 │   ├── strategy/           # Placement & assignment strategies ✓
 │   │   ├── HostPlacementStrategy.java                    # Host strategy interface
 │   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
@@ -1022,6 +1164,7 @@ JavaCloudSimulatorCosmos/
 │   ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
 │   ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
 │   ├── TaskAssignmentStepTest.java      # TaskAssignmentStep test ✓
+│   ├── ExecutionStepsTest.java          # VMExecutionStep + TaskExecutionStep test ✓
 │   └── SimulationExample.java           # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
