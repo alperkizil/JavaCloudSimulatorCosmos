@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~85%**
+**Current Completion: ~95%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization), VMExecutionStep (time-stepped simulation loop), and TaskExecutionStep (post-simulation analysis) are complete. Remaining steps (energy calculation, metrics collection, reporting) are in progress.
+The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization), VMExecutionStep (time-stepped simulation loop), TaskExecutionStep (post-simulation analysis), EnergyCalculationStep (energy/carbon/cost metrics), and MetricsCollectionStep (comprehensive metrics aggregation with SLA compliance) are complete. Remaining step (CSV reporting) is in progress.
 
 ## Architecture
 
@@ -28,9 +28,9 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (7/10 complete)
+├── steps/          # Simulation step implementations - IN PROGRESS (9/10 complete)
 ├── strategy/       # Placement & assignment strategies (Host: 5, VM: 4, Task: 3 + NSGA-II) - COMPLETE ✓
-├── calculator/     # Energy calculators (planned)
+├── calculator/     # Energy calculators (integrated into EnergyCalculationStep) ✓
 ├── reporter/       # Result reporters (planned)
 └── gui/            # JavaFX Configuration Generator GUI ✓
 ```
@@ -40,12 +40,16 @@ com.cloudsimulator
 - **Time-Stepped Simulation**: Fixed Δt = 1 second
 - **Random Seed Support**: For experiment repeatability
 - **Power & Energy Modeling**: Configurable power models with real-time tracking
+- **Carbon Footprint Tracking**: Region-specific CO2 emissions (16 predefined regions)
+- **PUE (Power Usage Effectiveness)**: Industry-standard datacenter efficiency metric
+- **SLA Compliance Tracking**: Configurable thresholds with percentile metrics (P50, P90, P99)
 - **Multi-Tenancy**: User-datacenter preferences and resource isolation
 - **Comprehensive Workloads**: 10 workload types (CPU, GPU, and mixed)
 - **Extensible Architecture**: Plugin-based simulation steps
 - **Configuration System**: Custom .cosc file format for declarative experiment setup
 - **Deep-Copy Support**: Clone configurations for running multiple experiment variations
 - **GUI Configuration Generator**: JavaFX application for visual experiment configuration
+- **JSON-Serializable Summary**: SimulationSummary object for integration with external tools
 
 ## Quick Start
 
@@ -472,8 +476,8 @@ public interface SimulationStep {
 5. **Task Assignment**: Assign tasks to VMs (Strategy) ✓ COMPLETE
 6. **VM Execution**: Execute VM time steps ✓ COMPLETE
 7. **Task Execution**: Track task progress and analyze results ✓ COMPLETE
-8. **Energy Calculation**: Update power consumption
-9. **Metrics Collection**: Gather performance data
+8. **Energy Calculation**: Aggregate energy, PUE, carbon footprint, costs ✓ COMPLETE
+9. **Metrics Collection**: SLA compliance, percentiles, JSON summary ✓ COMPLETE
 10. **Reporting**: Generate CSV reports
 
 ### InitializationStep (Complete)
@@ -977,13 +981,126 @@ System.out.println("Avg execution time: " + stats.getAverageExecutionTime() + " 
 - `taskExecution.workload.<type>.completed`: Completed tasks of workload type
 - `taskExecution.workload.<type>.avgExecutionTime`: Average execution time for workload type
 
+### EnergyCalculationStep (Complete)
+
+The `EnergyCalculationStep` aggregates and analyzes energy consumption data from all hosts and datacenters after simulation completes. This is the eighth step in the simulation pipeline.
+
+```java
+// Create and execute the step
+EnergyCalculationStep step = new EnergyCalculationStep();
+step.setPUE(1.5);                                    // Power Usage Effectiveness
+step.setCarbonIntensity(CarbonIntensityRegion.EU_AVERAGE);  // Carbon region
+step.setElectricityCostPerKWh(0.12);                 // Cost per kWh
+step.execute(context);
+
+// Check results
+System.out.println("Total IT Energy: " + step.getTotalITEnergyKWh() + " kWh");
+System.out.println("Total Facility Energy: " + step.getTotalFacilityEnergyKWh() + " kWh");
+System.out.println("Carbon Footprint: " + step.getCarbonFootprintKg() + " kg CO2");
+System.out.println("Estimated Cost: $" + step.getEstimatedCostDollars());
+```
+
+**Available Carbon Intensity Regions:**
+
+| Region | kg CO2/kWh | Description |
+|--------|------------|-------------|
+| `US_AVERAGE` | 0.42 | US national average |
+| `US_CALIFORNIA` | 0.22 | California (high renewables) |
+| `EU_AVERAGE` | 0.30 | European Union average |
+| `EU_FRANCE` | 0.06 | France (nuclear) |
+| `EU_NORDICS` | 0.05 | Nordic countries (hydro) |
+| `EU_POLAND` | 0.70 | Poland (coal-heavy) |
+| `CHINA` | 0.58 | China average |
+| `INDIA` | 0.70 | India average |
+| `CANADA` | 0.12 | Canada (hydro) |
+| `BRAZIL` | 0.08 | Brazil (hydro) |
+| `RENEWABLE_ONLY` | 0.00 | 100% renewable datacenter |
+
+**Key Metrics Calculated:**
+
+| Metric | Description | Unit |
+|--------|-------------|------|
+| **Total IT Energy** | Sum of all host energy consumption | kWh, Joules |
+| **Total Facility Energy** | IT Energy × PUE | kWh, Joules |
+| **Per-Datacenter Energy** | Energy breakdown per datacenter | kWh |
+| **Carbon Footprint** | Facility Energy × Carbon Intensity | kg CO2 |
+| **Electricity Cost** | Facility Energy × Cost/kWh | $ |
+| **Energy per Task** | Total Energy / Completed Tasks | Joules |
+| **Energy Efficiency** | Instructions / Energy | IPS/Watt |
+
+**Metrics recorded:**
+- `energy.totalITEnergyJoules`: IT equipment energy consumption
+- `energy.totalFacilityEnergyKWh`: Total facility energy with PUE
+- `energy.pue`: Configured PUE value
+- `energy.carbonFootprintKg`: CO2 emissions
+- `energy.estimatedCostDollars`: Electricity cost
+- `energy.datacenter.<name>.energyKWh`: Per-datacenter energy
+- `energy.host.<id>.energyJoules`: Per-host energy
+
+### MetricsCollectionStep (Complete)
+
+The `MetricsCollectionStep` collects, aggregates, and organizes all simulation metrics into a comprehensive `SimulationSummary` object. This is the ninth step in the simulation pipeline.
+
+```java
+// Create and execute the step
+MetricsCollectionStep step = new MetricsCollectionStep();
+step.setPrimarySLAThreshold(3600);   // 1 hour SLA
+step.addSLAThreshold(1800);          // 30 min SLA
+step.addSLAThreshold(7200);          // 2 hour SLA
+step.execute(context);
+
+// Access the summary
+SimulationSummary summary = step.getSummary();
+System.out.println("SLA Compliance: " + summary.getSla().slaCompliancePercent + "%");
+System.out.println("P90 Turnaround: " + summary.getPerformance().p90TurnaroundTimeSeconds + "s");
+System.out.println("Load Balance Index: " + summary.getPerformance().loadBalanceIndex);
+
+// Export to JSON
+String json = summary.toJson();
+```
+
+**SimulationSummary Structure:**
+
+```
+SimulationSummary
+├── metadata (simulationId, timestamp, randomSeed)
+├── infrastructure (datacenterCount, hostCount, vmCount, utilization)
+├── tasks (totalTasks, completedTasks, completionRate)
+├── energy (totalEnergyKWh, carbonFootprintKg, estimatedCostDollars)
+├── performance (makespan, throughput, avgTurnaroundTime, percentiles)
+├── sla (slaCompliancePercent, complianceByThreshold)
+├── datacenters[] (per-datacenter summaries)
+├── hosts[] (per-host summaries)
+├── users[] (per-user summaries)
+└── workloads[] (per-workload type summaries)
+```
+
+**SLA Compliance Features:**
+- Multiple configurable thresholds
+- Compliance calculated for each threshold
+- Percentile metrics: P50, P90, P99 turnaround times
+- Per-user SLA tracking
+
+**Load Balance Index:**
+- Coefficient of variation of task distribution across VMs
+- 0 = perfect balance, higher values = more imbalance
+
+**Metrics recorded:**
+- `metricsCollection.infrastructure.*`: Infrastructure metrics
+- `metricsCollection.tasks.completionRate`: Task completion rate
+- `metricsCollection.performance.p90TurnaroundTimeSeconds`: 90th percentile turnaround
+- `metricsCollection.performance.p99TurnaroundTimeSeconds`: 99th percentile turnaround
+- `metricsCollection.performance.loadBalanceIndex`: Load balance metric
+- `metricsCollection.sla.primaryCompliancePercent`: Primary SLA compliance
+- `metricsCollection.sla.compliance.<threshold>s`: Per-threshold compliance
+
 ---
 
 # What's Missing (TODO)
 
-## 1. Simulation Step Implementations (~70% complete)
+## 1. Simulation Step Implementations (~90% complete)
 
-The SimulationStep interface exists with 7 of 10 steps implemented:
+The SimulationStep interface exists with 9 of 10 steps implemented:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
@@ -992,8 +1109,8 @@ The SimulationStep interface exists with 7 of 10 steps implemented:
 - [x] TaskAssignmentStep: Assign tasks to VMs with 3 strategies + NSGA-II ✓
 - [x] VMExecutionStep: Time-stepped simulation loop with progress logging ✓
 - [x] TaskExecutionStep: Post-simulation analysis and user session finalization ✓
-- [ ] EnergyCalculationStep: Update power consumption for all entities
-- [ ] MetricsCollectionStep: Aggregate performance metrics
+- [x] EnergyCalculationStep: Energy aggregation, PUE, carbon footprint, costs ✓
+- [x] MetricsCollectionStep: SLA compliance, percentiles, JSON summary ✓
 - [ ] ReportingStep: Generate CSV reports
 
 ## 2. Strategy Pattern Implementations (~90% complete)
@@ -1017,11 +1134,11 @@ The SimulationStep interface exists with 7 of 10 steps implemented:
 - [x] WorkloadAwareTaskAssignmentStrategy ✓
 - [x] NSGA2TaskSchedulingStrategy (multi-objective metaheuristic) ✓
 
-## 3. Calculator Infrastructure (0% complete)
+## 3. Calculator Infrastructure (100% complete - integrated into Steps)
 
-- [ ] EnergyCalculator: Aggregate energy consumption across datacenters
-- [ ] UtilizationCalculator: Calculate average utilization metrics
-- [ ] PerformanceCalculator: Calculate throughput, latency, etc.
+- [x] EnergyCalculator: Integrated into EnergyCalculationStep ✓
+- [x] UtilizationCalculator: Integrated into MetricsCollectionStep ✓
+- [x] PerformanceCalculator: Integrated into TaskExecutionStep and MetricsCollectionStep ✓
 
 ## 4. Reporting System (0% complete)
 
