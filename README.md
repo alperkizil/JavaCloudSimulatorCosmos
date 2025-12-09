@@ -4,9 +4,9 @@ A comprehensive cloud VM task scheduling simulation framework in Java, following
 
 ## Project Status
 
-**Current Completion: ~95%**
+**Current Completion: 100%**
 
-The configuration system, core model classes, simulation engine framework, InitializationStep, HostPlacementStep (with 5 placement strategies), UserDatacenterMappingStep, VMPlacementStep (with 4 placement strategies), TaskAssignmentStep (with 3 basic strategies + NSGA-II multi-objective optimization), VMExecutionStep (time-stepped simulation loop), TaskExecutionStep (post-simulation analysis), EnergyCalculationStep (energy/carbon/cost metrics), and MetricsCollectionStep (comprehensive metrics aggregation with SLA compliance) are complete. Remaining step (CSV reporting) is in progress.
+All 10 simulation steps are complete: InitializationStep, HostPlacementStep (5 strategies), UserDatacenterMappingStep, VMPlacementStep (4 strategies), TaskAssignmentStep (3 strategies + NSGA-II), VMExecutionStep, TaskExecutionStep, EnergyCalculationStep, MetricsCollectionStep, and ReportingStep (CSV export with 6 report types). The framework is fully functional for cloud VM task scheduling simulation experiments.
 
 ## Architecture
 
@@ -28,10 +28,10 @@ com.cloudsimulator
 ├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
 ├── factory/        # Factories (PowerModelFactory)
 ├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - IN PROGRESS (9/10 complete)
+├── steps/          # Simulation step implementations - COMPLETE ✓ (10/10)
 ├── strategy/       # Placement & assignment strategies (Host: 5, VM: 4, Task: 3 + NSGA-II) - COMPLETE ✓
 ├── calculator/     # Energy calculators (integrated into EnergyCalculationStep) ✓
-├── reporter/       # Result reporters (planned)
+├── reporter/       # CSV report generators - COMPLETE ✓
 └── gui/            # JavaFX Configuration Generator GUI ✓
 ```
 
@@ -50,6 +50,7 @@ com.cloudsimulator
 - **Deep-Copy Support**: Clone configurations for running multiple experiment variations
 - **GUI Configuration Generator**: JavaFX application for visual experiment configuration
 - **JSON-Serializable Summary**: SimulationSummary object for integration with external tools
+- **CSV Report Generation**: 6 report types with streaming writes and custom folder naming
 
 ## Quick Start
 
@@ -467,7 +468,7 @@ public interface SimulationStep {
 }
 ```
 
-## 10 Planned Simulation Steps
+## 10 Simulation Steps (All Complete)
 
 1. **Initialization**: Create entities from configuration ✓ COMPLETE
 2. **Host Placement**: Assign hosts to datacenters (Strategy) ✓ COMPLETE
@@ -478,7 +479,7 @@ public interface SimulationStep {
 7. **Task Execution**: Track task progress and analyze results ✓ COMPLETE
 8. **Energy Calculation**: Aggregate energy, PUE, carbon footprint, costs ✓ COMPLETE
 9. **Metrics Collection**: SLA compliance, percentiles, JSON summary ✓ COMPLETE
-10. **Reporting**: Generate CSV reports
+10. **Reporting**: Generate CSV reports ✓ COMPLETE
 
 ### InitializationStep (Complete)
 
@@ -1094,13 +1095,109 @@ SimulationSummary
 - `metricsCollection.sla.primaryCompliancePercent`: Primary SLA compliance
 - `metricsCollection.sla.compliance.<threshold>s`: Per-threshold compliance
 
+### ReportingStep (Complete)
+
+The `ReportingStep` generates CSV reports from simulation results. This is the tenth and final step in the simulation pipeline. Reports are organized in experiment folders with timestamped naming.
+
+```java
+// Create and execute the step
+ReportingStep step = new ReportingStep();
+step.setBaseOutputDirectory("./reports");
+step.setCustomPrefix("my_experiment");        // Optional custom prefix
+step.enableReport(ReportingStep.ReportType.TASKS);
+step.enableReport(ReportingStep.ReportType.HOSTS);
+step.execute(context);
+
+// Access results
+System.out.println("Output directory: " + step.getOutputDirectory());
+System.out.println("Total files: " + step.getTotalFilesGenerated());
+System.out.println("Total size: " + step.getTotalBytesWritten() + " bytes");
+```
+
+**Experiment Folder Naming:**
+```
+{prefix}_{DATE}_{TIME}_{UNIQUEID}/
+Examples:
+  experiment_20241209_143025_a1b2c3/
+  my_experiment_20241209_143025_d4e5f6/
+```
+
+**Available Report Types:**
+
+| Report Type | Filename | Description |
+|-------------|----------|-------------|
+| `SUMMARY` | `{simId}_summary.csv` | One-row overview of entire simulation |
+| `DATACENTERS` | `{simId}_datacenters.csv` | Per-datacenter infrastructure and energy |
+| `HOSTS` | `{simId}_hosts.csv` | Per-host resources, utilization, energy |
+| `VMS` | `{simId}_vms.csv` | Per-VM tasks, execution, utilization |
+| `TASKS` | `{simId}_tasks.csv` | Per-task timing and completion details |
+| `USERS` | `{simId}_users.csv` | Per-user VMs, tasks, session metrics |
+
+**Summary Report Columns:**
+- Metadata: simulation_id, timestamp, random_seed, config_file, duration
+- Infrastructure: datacenter_count, host_count, vm_count, user_count, cpu_cores, gpus
+- Tasks: total_tasks, completed_tasks, failed_tasks, completion_rate
+- Performance: makespan, throughput, avg_waiting_time, avg_turnaround_time, p90, p99
+- Energy: total_energy_kwh, pue, carbon_footprint_kg, estimated_cost_dollars
+- SLA: sla_threshold_seconds, tasks_within_sla, sla_compliance_percent
+
+**Tasks Report Columns:**
+- Identity: task_id, task_name, user_id, workload_type
+- Execution: instruction_length, instructions_executed, progress_percent, vm_id
+- Timing: creation_time_s, assignment_time_s, exec_start_time_s, exec_end_time_s
+- Derived: waiting_time_s, execution_time_s, turnaround_time_s
+- Status: status, is_completed, is_assigned
+
+**Selective Report Generation:**
+
+```java
+ReportingStep step = new ReportingStep();
+step.disableAllReports();                     // Disable all first
+step.enableReport(ReportingStep.ReportType.SUMMARY);
+step.enableReport(ReportingStep.ReportType.TASKS);
+step.execute(context);  // Only generates 2 reports
+```
+
+**Reporter Package Structure:**
+
+```
+com.cloudsimulator.reporter
+├── CSVReporter.java              # Interface for CSV generation
+├── AbstractCSVReporter.java      # Base class with streaming writes
+├── SummaryReporter.java          # Simulation overview report
+├── DatacenterReporter.java       # Per-datacenter report
+├── HostReporter.java             # Per-host report
+├── VMReporter.java               # Per-VM report
+├── TaskReporter.java             # Per-task report (streaming)
+└── UserReporter.java             # Per-user report
+```
+
+**Streaming Writes:**
+
+The TaskReporter uses streaming writes for memory efficiency with large task counts:
+```java
+// Writes row-by-row instead of building full content in memory
+for (Task task : tasks) {
+    writer.writeRow(task.getId(), task.getName(), ...);
+}
+```
+
+**Metrics recorded:**
+- `reporting.filesGenerated`: Number of files created
+- `reporting.totalBytesWritten`: Total size of all reports
+- `reporting.outputDirectory`: Path to experiment folder
+- `reporting.durationMs`: Time taken to generate reports
+- `reporting.<reportType>.success`: Whether report was generated
+- `reporting.<reportType>.rowCount`: Number of data rows
+- `reporting.<reportType>.bytesWritten`: Size of report file
+
 ---
 
-# What's Missing (TODO)
+# What's Remaining (Future Enhancements)
 
-## 1. Simulation Step Implementations (~90% complete)
+## Simulation Steps ✓ ALL COMPLETE
 
-The SimulationStep interface exists with 9 of 10 steps implemented:
+All 10 simulation steps are implemented and tested:
 
 - [x] InitializationStep: Create entities from ExperimentConfiguration ✓
 - [x] HostPlacementStep: Assign hosts to datacenters with 5 strategies ✓
@@ -1111,47 +1208,24 @@ The SimulationStep interface exists with 9 of 10 steps implemented:
 - [x] TaskExecutionStep: Post-simulation analysis and user session finalization ✓
 - [x] EnergyCalculationStep: Energy aggregation, PUE, carbon footprint, costs ✓
 - [x] MetricsCollectionStep: SLA compliance, percentiles, JSON summary ✓
-- [ ] ReportingStep: Generate CSV reports
+- [x] ReportingStep: Generate CSV reports with 6 report types ✓
 
-## 2. Strategy Pattern Implementations (~90% complete)
+## Strategy Pattern Implementations ✓ ALL COMPLETE
 
-**Host Placement Strategies:** ✓ COMPLETE
-- [x] FirstFitHostPlacementStrategy ✓
-- [x] PowerBasedBestFitHostPlacementStrategy ✓
-- [x] SlotBasedBestFitHostPlacementStrategy ✓
-- [x] PowerAwareConsolidatingHostPlacementStrategy ✓
-- [x] PowerAwareLoadBalancingHostPlacementStrategy ✓
+**Host Placement Strategies (5):** ✓
+- FirstFitHostPlacementStrategy, PowerBasedBestFitHostPlacementStrategy
+- SlotBasedBestFitHostPlacementStrategy, PowerAwareConsolidatingHostPlacementStrategy
+- PowerAwareLoadBalancingHostPlacementStrategy
 
-**VM Placement Strategies:** ✓ COMPLETE
-- [x] FirstFitVMPlacementStrategy ✓
-- [x] BestFitVMPlacementStrategy ✓
-- [x] LoadBalancingVMPlacementStrategy ✓
-- [x] PowerAwareVMPlacementStrategy ✓
+**VM Placement Strategies (4):** ✓
+- FirstFitVMPlacementStrategy, BestFitVMPlacementStrategy
+- LoadBalancingVMPlacementStrategy, PowerAwareVMPlacementStrategy
 
-**Task Assignment Strategies:** ✓ COMPLETE
-- [x] FirstAvailableTaskAssignmentStrategy ✓
-- [x] ShortestQueueTaskAssignmentStrategy ✓
-- [x] WorkloadAwareTaskAssignmentStrategy ✓
-- [x] NSGA2TaskSchedulingStrategy (multi-objective metaheuristic) ✓
+**Task Assignment Strategies (4):** ✓
+- FirstAvailableTaskAssignmentStrategy, ShortestQueueTaskAssignmentStrategy
+- WorkloadAwareTaskAssignmentStrategy, NSGA2TaskSchedulingStrategy
 
-## 3. Calculator Infrastructure (100% complete - integrated into Steps)
-
-- [x] EnergyCalculator: Integrated into EnergyCalculationStep ✓
-- [x] UtilizationCalculator: Integrated into MetricsCollectionStep ✓
-- [x] PerformanceCalculator: Integrated into TaskExecutionStep and MetricsCollectionStep ✓
-
-## 4. Reporting System (0% complete)
-
-- [ ] CSVReporter interface and implementation
-- [ ] Report formats:
-  - [ ] Datacenter energy report
-  - [ ] Host utilization report
-  - [ ] VM execution report
-  - [ ] Task completion report
-  - [ ] User summary report
-- [ ] Timestamped output files
-
-## 5. Testing & Validation (~60% complete)
+## Testing & Validation (~75% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
@@ -1160,12 +1234,13 @@ The SimulationStep interface exists with 9 of 10 steps implemented:
 - [x] VMPlacementStepTest: Verifies all 4 VM placement strategies with limited resources
 - [x] TaskAssignmentStepTest: Verifies all 3 basic strategies + NSGA-II multi-objective optimization
 - [x] ExecutionStepsTest: Verifies VMExecutionStep and TaskExecutionStep with full pipeline test
+- [x] ReportingStepTest: Verifies ReportingStep with selective reports, custom prefix, and full pipeline
 - [ ] Unit tests for all model classes
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
 - [ ] Performance benchmarks
 
-## 6. Additional Features (0% complete)
+## Additional Features (Potential Future Work)
 
 - [ ] Real-time simulation visualization
 - [ ] REST API for simulation control
@@ -1210,6 +1285,9 @@ java -cp out com.cloudsimulator.TaskAssignmentStepTest
 # Run ExecutionSteps test (VMExecutionStep + TaskExecutionStep)
 java -cp out com.cloudsimulator.ExecutionStepsTest
 
+# Run ReportingStep test
+java -cp out com.cloudsimulator.ReportingStepTest
+
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
 ```
@@ -1225,14 +1303,17 @@ JavaCloudSimulatorCosmos/
 │   ├── utils/              # Utilities
 │   ├── factory/            # Factories
 │   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (7/10 complete)
+│   ├── steps/              # Simulation steps (10/10 complete) ✓
 │   │   ├── InitializationStep.java        # Entity creation from config ✓
 │   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
 │   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
 │   │   ├── VMPlacementStep.java           # VM-to-host assignment ✓
 │   │   ├── TaskAssignmentStep.java        # Task-to-VM assignment ✓
 │   │   ├── VMExecutionStep.java           # Time-stepped simulation loop ✓
-│   │   └── TaskExecutionStep.java         # Post-simulation analysis ✓
+│   │   ├── TaskExecutionStep.java         # Post-simulation analysis ✓
+│   │   ├── EnergyCalculationStep.java     # Energy/carbon/cost metrics ✓
+│   │   ├── MetricsCollectionStep.java     # SLA compliance, percentiles ✓
+│   │   └── ReportingStep.java             # CSV report generation ✓
 │   ├── strategy/           # Placement & assignment strategies ✓
 │   │   ├── HostPlacementStrategy.java                    # Host strategy interface
 │   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
@@ -1272,8 +1353,16 @@ JavaCloudSimulatorCosmos/
 │   │               ├── RepairOperator.java               # Solution repair
 │   │               ├── CrossoverOperator.java            # Recombination
 │   │               └── MutationOperator.java             # Mutation
-│   ├── calculator/         # Calculators (TODO)
-│   ├── reporter/           # Reporters (TODO)
+│   ├── calculator/         # Calculators (integrated into steps) ✓
+│   ├── reporter/           # CSV report generators ✓
+│   │   ├── CSVReporter.java              # Interface for CSV generation
+│   │   ├── AbstractCSVReporter.java      # Base class with streaming writes
+│   │   ├── SummaryReporter.java          # Simulation overview report
+│   │   ├── DatacenterReporter.java       # Per-datacenter report
+│   │   ├── HostReporter.java             # Per-host report
+│   │   ├── VMReporter.java               # Per-VM report
+│   │   ├── TaskReporter.java             # Per-task report
+│   │   └── UserReporter.java             # Per-user report
 │   ├── gui/                # JavaFX Configuration Generator ✓
 │   ├── ConfigTest.java                  # Config system test
 │   ├── InitializationStepTest.java      # InitializationStep test ✓
@@ -1282,6 +1371,7 @@ JavaCloudSimulatorCosmos/
 │   ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
 │   ├── TaskAssignmentStepTest.java      # TaskAssignmentStep test ✓
 │   ├── ExecutionStepsTest.java          # VMExecutionStep + TaskExecutionStep test ✓
+│   ├── ReportingStepTest.java           # ReportingStep test ✓
 │   └── SimulationExample.java           # Basic example
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
