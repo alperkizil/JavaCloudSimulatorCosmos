@@ -1,0 +1,331 @@
+Power Log Template v2
+=====================
+
+This text file is a human-readable export of the Excel template 'power_log_template_v2.xlsx'.
+It preserves the two sheets: 'How to use' and 'Power Log'.
+
+How to Use
+----------
+- Basics: Fill Total Time (s) and Total Energy (kWh). Average Power and Energy (J) compute
+  automatically.
+- Idle: Create one 'IDLE' row with the same peripherals connected. Copy its Average Power into 'Idle
+  Avg (W)' for all workload rows.
+- Incremental: Incremental columns remove idle power, so you compare the workload itself rather than
+  your PC existing.
+- Normalization: Use 'Units Processed' for images, tokens, frames, iterations, etc. Energy per Unit
+  and Throughput will compute.
+- Meter notes: If your meter provides Power Factor, Voltage, Current averages, log them. Otherwise
+  leave blank.
+- Repeatability: Warm up the workload, run at least 3 times, and use the 'Runs' and 'Run Notes' to
+  track repeats and quirks.
+- Sanity check: Average Power (W) ≈ (kWh * 1000) / (Time(h)). Energy(J) = kWh * 3,600,000.
+
+Power Log Columns
+-----------------
+Likely inputs you record:
+  • Workload
+  • Date
+  • System Notes (CPU/GPU/PSU/Driver)
+  • Meter Model
+  • Total Time (s)
+  • Total Energy (kWh)
+  • Units Processed
+  • Runs
+  • Run Notes
+  • Power Factor (avg)
+  • Voltage (avg, V)
+  • Current (avg, A)
+  • Peak Power (W)
+  • Lowest Power (W)
+
+Likely calculated by spreadsheet formulas:
+  • Energy (J)
+  • Average Power (W)
+  • Idle Avg (W)
+  • Incremental Avg Power (W)
+  • Incremental Energy (J)
+  • Energy per Unit (J/unit)
+  • Throughput (units/s)
+
+Power Log Summary (key fields)
+------------------------------
+Workload               | Date       | Total Time (s) | Total Energy (kWh) | Average Power (W) | Idle Avg (W) | Incremental Avg Power (W) | Units Processed     | Energy per Unit (J/unit) | Throughput (units/s) | Runs
+-----------------------+------------+----------------+--------------------+-------------------+--------------+---------------------------+---------------------+--------------------------+----------------------+-----
+IDLE                   | 2025-10-20 | 86402          | 1.819              | 75.79             | 75.79        | 0                         |                     |                          |                      | 1
+Veracrypt              | 2025-10-20 | 1894           | 0.05               | 95.04             | 75.79        | 19.25                     | 30762703 Kbytes     | 0                        | 15.7 MiB/s           | 1
+HammerDB               | 2025-10-20 | 468            | 0.015              | 115.38            | 75.79        | 39.59                     | 137313 transactions | 0.1                      | 18861 TPM            | 3
+7-zip                  | 2025-10-22 | 3389           | 0.194              | 206.08            | 75.79        | 130.29                    |                     |                          | 2569GIPS             | 1
+Cinebench 2024         | 2025-10-22 | 4020           | 0.234              | 209.55            | 75.79        | 133.76                    | 9 Passes            | 59747.2                  | 751 Points           | 1
+LMStudio - OpenAI(GPU) | 2025-11-24 | 193            | 0.014              | 261.14            | 75.79        | 185.35                    | 20 Prompts          | 1788.6                   | 0.1036               | 1
+LMStudio - OpenAI(CPU) | 2025-11-24 | 2820           | 0.141              | 180               | 75.79        | 104.21                    | 20 Prompts          | 14693.6                  | 0.0071               | 1
+ComfyUI ImageGen (GPU) | 2025-11-26 | 83             | 0.005              | 216.87            | 75.79        | 141.08                    | 5 Images            | 2341.9                   | 0.0602               | 1
+ComfyUI ImageGen (CPU) | 2025-11-26 | 9480           | 0.439              | 166.71            | 75.79        | 90.92                     | 5 Images            | 172382.3                 | 0.0005               | 1
+Furmark (GPU)          | 2025-11-26 | 143            | 0.017              | 427.97            | 75.79        | 352.18                    | 2 tests             | 25181                    | 0.014                | 1
+Prime95 Small FFT      | 2025-11-26 | 1800           | 0.1                | 200               | 75.79        | 124.21                    | 30 min test         | 7452.6                   | 0.0167               | 1
+
+Detailed Power Log Entries
+--------------------------
+1. IDLE (2025-10-20)
+~~~~~~~~~~~~~~~~~~~~
+Workload: IDLE
+Date: 2025-10-20
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 86402
+Total Energy (kWh): 1.819
+Energy (J): 6,548,400
+Peak Power (W): 126.7
+Lowest Power (W): 70.5
+Average Power (W): 75.789912
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 0
+Incremental Energy (J): 0
+Power Factor (avg): 0.81
+Voltage (avg, V): 230.7
+Current (avg, A): 0.405582
+Runs: 1
+Run Notes: IDLE Power draw of 1 day
+
+2. Veracrypt (2025-10-20)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: Veracrypt
+Date: 2025-10-20
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 1894
+Total Energy (kWh): 0.05
+Energy (J): 180,000
+Peak Power (W): 138.7
+Lowest Power (W): 90.8
+Average Power (W): 95.036959
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 19.247047
+Incremental Energy (J): 36,453.906
+Units Processed: 30762703 Kbytes
+Energy per Unit (J/unit): 0.001185
+Throughput (units/s): 15.7 MiB/s
+Power Factor (avg): 0.75
+Voltage (avg, V): 230.4
+Current (avg, A): 0.438599
+Runs: 1
+Run Notes:
+  Encrypting 32GB Sandisk Flash drive with Camellia Algorithm, Low CPU Usage, NO GPU , Low NVME,
+  High USB Device throughput
+
+3. HammerDB (2025-10-20)
+~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: HammerDB
+Date: 2025-10-20
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 468
+Total Energy (kWh): 0.015
+Energy (J): 54,000
+Peak Power (W): 133.6
+Lowest Power (W): 92.5
+Average Power (W): 115.384615
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 39.594703
+Incremental Energy (J): 18,530.321
+Units Processed: 137313 transactions
+Energy per Unit (J/unit): 0.13495
+Throughput (units/s): 18861 TPM
+Power Factor (avg): 0.78
+Voltage (avg, V): 230.7
+Current (avg, A): 0.421181
+Runs: 3
+Run Notes: HammerDB 5.0 with MySQL 8.0 TPROC-Timed 100 Virtual Users, 12% CPU Usage,NOGPU,100%IO
+
+4. 7-zip (2025-10-22)
+~~~~~~~~~~~~~~~~~~~~~
+Workload: 7-zip
+Date: 2025-10-22
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 3389
+Total Energy (kWh): 0.194
+Energy (J): 698,400
+Peak Power (W): 215.8
+Lowest Power (W): 99.3
+Average Power (W): 206.078489
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 130.288577
+Incremental Energy (J): 441,547.987
+Throughput (units/s): 2569GIPS
+Power Factor (avg): 0.74
+Voltage (avg, V): 230.9
+Current (avg, A): 0.443563
+Runs: 1
+Run Notes:
+  Dictionary size = 96 MB, Nr of Threads = 40 , CPU Usage %100,Intermittent disk activity, high
+  memory use(23/32),100 passes
+
+5. Cinebench 2024 (2025-10-22)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: Cinebench 2024
+Date: 2025-10-22
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 4020
+Total Energy (kWh): 0.234
+Energy (J): 842,400
+Peak Power (W): 214.1
+Lowest Power (W): 102.8
+Average Power (W): 209.552239
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 133.762327
+Incremental Energy (J): 537,724.553
+Units Processed: 9 Passes
+Energy per Unit (J/unit): 59,747.173
+Throughput (units/s): 751 Points
+Power Factor (avg): 0.82
+Voltage (avg, V): 230
+Current (avg, A): 0.401855
+Runs: 1
+Run Notes:
+  CPU Multicore bench , 60 Minutes render time,40 Threads, High CPU Usage , Mid Memory Usage, Total
+  of 9 passes
+
+6. LMStudio - OpenAI(GPU) (2025-11-24)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: LMStudio - OpenAI(GPU)
+Date: 2025-11-24
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 193
+Total Energy (kWh): 0.014
+Energy (J): 50,400
+Peak Power (W): 349.5
+Lowest Power (W): 101.1
+Average Power (W): 261.139896
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 185.349984
+Incremental Energy (J): 35,772.547
+Units Processed: 20 Prompts
+Energy per Unit (J/unit): 1,788.627
+Throughput (units/s): 0.103627
+Power Factor (avg): 0.76
+Voltage (avg, V): 230.9
+Current (avg, A): 0.431891
+Runs: 1
+Run Notes: 40 CPU Threads , 24/24 GPU memory, KV Cache = On,Seed = 120, Temp = 0.8
+
+7. LMStudio - OpenAI(CPU) (2025-11-24)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: LMStudio - OpenAI(CPU)
+Date: 2025-11-24
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 2820
+Total Energy (kWh): 0.141
+Energy (J): 507,600
+Peak Power (W): 214.1
+Lowest Power (W): 95.6
+Average Power (W): 180
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 104.210088
+Incremental Energy (J): 293,872.447
+Units Processed: 20 Prompts
+Energy per Unit (J/unit): 14,693.622
+Throughput (units/s): 0.007092
+Power Factor (avg): 0.77
+Voltage (avg, V): 230.7
+Current (avg, A): 0.426651
+Runs: 1
+Run Notes: 40 CPU Threads , 0/24 GPU memory, KV Cache = Off,Seed = 120, Temp = 0.8
+
+8. ComfyUI ImageGen (GPU) (2025-11-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: ComfyUI ImageGen (GPU)
+Date: 2025-11-26
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 83
+Total Energy (kWh): 0.005
+Energy (J): 18,000
+Peak Power (W): 430
+Lowest Power (W): 102.8
+Average Power (W): 216.86747
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 141.077558
+Incremental Energy (J): 11,709.437
+Units Processed: 5 Images
+Energy per Unit (J/unit): 2,341.887
+Throughput (units/s): 0.060241
+Power Factor (avg): 0.78
+Voltage (avg, V): 230.7
+Current (avg, A): 0.421181
+Runs: 1
+Run Notes: ComfyUI 3.0.73 cfg = 8.0 euler sampler normal scheduler, SDXL 1.0 base model
+
+9. ComfyUI ImageGen (CPU) (2025-11-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: ComfyUI ImageGen (CPU)
+Date: 2025-11-26
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 9480
+Total Energy (kWh): 0.439
+Energy (J): 1,580,400
+Peak Power (W): 202.1
+Lowest Power (W): 104.5
+Average Power (W): 166.708861
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 90.918948
+Incremental Energy (J): 861,911.632
+Units Processed: 5 Images
+Energy per Unit (J/unit): 172,382.326
+Throughput (units/s): 0.000527
+Power Factor (avg): 0.78
+Voltage (avg, V): 230.9
+Current (avg, A): 0.420817
+Runs: 1
+Run Notes: ComfyUI 3.0.73 cfg = 8.0 euler sampler normal scheduler, SDXL 1.0 base model
+
+10. Furmark (GPU) (2025-11-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: Furmark (GPU)
+Date: 2025-11-26
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 143
+Total Energy (kWh): 0.017
+Energy (J): 61,200
+Peak Power (W): 452.3
+Lowest Power (W): 164.4
+Average Power (W): 427.972028
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 352.182116
+Incremental Energy (J): 50,362.043
+Units Processed: 2 tests
+Energy per Unit (J/unit): 25,181.021
+Throughput (units/s): 0.013986
+Power Factor (avg): 0.9
+Voltage (avg, V): 229.6
+Current (avg, A): 0.366773
+Runs: 1
+Run Notes: Version = 2.9.0.0, Furmark (VK)+ Furmark Knot VK, 7680x4320 Res. MSAA=8X
+
+11. Prime95 Small FFT (2025-11-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Workload: Prime95 Small FFT
+Date: 2025-11-26
+System Notes (CPU/GPU/PSU/Driver): Dell Workstation Precision 7920 with Nvidia 5080 GPU
+Meter Model: WellHise PM004
+Total Time (s): 1800
+Total Energy (kWh): 0.1
+Energy (J): 360,000
+Peak Power (W): 203.8
+Lowest Power (W): 197
+Average Power (W): 200
+Idle Avg (W): 75.789912
+Incremental Avg Power (W): 124.210088
+Incremental Energy (J): 223,578.158
+Units Processed: 30 min test
+Energy per Unit (J/unit): 7,452.605
+Throughput (units/s): 0.016667
+Power Factor (avg): 0.87
+Voltage (avg, V): 230.6
+Current (avg, A): 0.377775
+Runs: 1
+Run Notes: SmallFFT
