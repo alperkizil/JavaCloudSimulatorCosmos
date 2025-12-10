@@ -29,3 +29,6 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.rar
+
+# Generated simulation reports
+reports/
