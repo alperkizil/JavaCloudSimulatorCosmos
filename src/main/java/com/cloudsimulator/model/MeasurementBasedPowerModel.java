@@ -99,21 +99,21 @@ public class MeasurementBasedPowerModel {
             138.7,      // peakPower
             90.8,       // lowestPower
             95.04,      // averagePower
-            0.85,       // typicalCpuUtilization (from VM.java utilization profile)
+            0.03,       // typicalCpuUtilization (3% - disk-bound workload)
             0.0,        // typicalGpuUtilization
             0.001185,   // energyPerUnit (J/Kbyte)
             "15.7 MiB/s",
             "Encrypting 32GB Sandisk Flash drive with Camellia Algorithm, Low CPU Usage, NO GPU"
         ));
 
-        // DATABASE (HammerDB) - I/O bound, moderate CPU
+        // DATABASE (HammerDB) - I/O bound, low CPU
         workloadProfiles.put(WorkloadType.DATABASE, new EmpiricalWorkloadProfile(
             WorkloadType.DATABASE,
             39.59,      // incrementalPower
             133.6,      // peakPower
             92.5,       // lowestPower
             115.38,     // averagePower
-            0.6,        // typicalCpuUtilization (12% measured, but we use profile value)
+            0.12,       // typicalCpuUtilization (12% CPU)
             0.0,        // typicalGpuUtilization
             0.13495,    // energyPerUnit (J/transaction)
             "18861 TPM",
@@ -127,7 +127,7 @@ public class MeasurementBasedPowerModel {
             215.8,      // peakPower
             99.3,       // lowestPower
             206.08,     // averagePower
-            0.8,        // typicalCpuUtilization (100% measured, but profile uses 0.8)
+            1.0,        // typicalCpuUtilization (100% CPU)
             0.0,        // typicalGpuUtilization
             0.0,        // energyPerUnit (not applicable - continuous benchmark)
             "2569 GIPS",
@@ -141,7 +141,7 @@ public class MeasurementBasedPowerModel {
             214.1,      // peakPower
             102.8,      // lowestPower
             209.55,     // averagePower
-            1.0,        // typicalCpuUtilization
+            1.0,        // typicalCpuUtilization (100% CPU)
             0.0,        // typicalGpuUtilization
             59747.17,   // energyPerUnit (J/pass)
             "751 Points",
@@ -155,7 +155,7 @@ public class MeasurementBasedPowerModel {
             203.8,      // peakPower
             197.0,      // lowestPower
             200.0,      // averagePower
-            1.0,        // typicalCpuUtilization
+            1.0,        // typicalCpuUtilization (100% CPU)
             0.0,        // typicalGpuUtilization
             7452.61,    // energyPerUnit (J/30min test)
             "30 min test",
@@ -169,7 +169,7 @@ public class MeasurementBasedPowerModel {
             214.1,      // peakPower
             95.6,       // lowestPower
             180.0,      // averagePower
-            0.95,       // typicalCpuUtilization
+            0.55,       // typicalCpuUtilization (55% CPU)
             0.0,        // typicalGpuUtilization
             14693.62,   // energyPerUnit (J/prompt)
             "0.0071 prompts/s",
@@ -183,8 +183,8 @@ public class MeasurementBasedPowerModel {
             349.5,      // peakPower
             101.1,      // lowestPower
             261.14,     // averagePower
-            0.3,        // typicalCpuUtilization
-            0.95,       // typicalGpuUtilization
+            0.12,       // typicalCpuUtilization (12% CPU)
+            0.12,       // typicalGpuUtilization (12% GPU)
             1788.63,    // energyPerUnit (J/prompt)
             "0.1036 prompts/s",
             "LMStudio OpenAI, 40 CPU Threads, 24/24 GPU memory, KV Cache = On"
@@ -197,7 +197,7 @@ public class MeasurementBasedPowerModel {
             202.1,      // peakPower
             104.5,      // lowestPower
             166.71,     // averagePower
-            0.9,        // typicalCpuUtilization
+            0.80,       // typicalCpuUtilization (80% CPU)
             0.0,        // typicalGpuUtilization
             172382.33,  // energyPerUnit (J/image)
             "0.0005 images/s",
@@ -211,8 +211,8 @@ public class MeasurementBasedPowerModel {
             430.0,      // peakPower
             102.8,      // lowestPower
             216.87,     // averagePower
-            0.2,        // typicalCpuUtilization
-            0.9,        // typicalGpuUtilization
+            0.30,       // typicalCpuUtilization (30% CPU)
+            0.10,       // typicalGpuUtilization (10% GPU)
             2341.89,    // energyPerUnit (J/image)
             "0.0602 images/s",
             "ComfyUI 3.0.73, SDXL 1.0 base model, GPU accelerated"
@@ -225,8 +225,8 @@ public class MeasurementBasedPowerModel {
             452.3,      // peakPower
             164.4,      // lowestPower
             427.97,     // averagePower
-            0.1,        // typicalCpuUtilization
-            1.0,        // typicalGpuUtilization
+            0.08,       // typicalCpuUtilization (8% CPU)
+            1.0,        // typicalGpuUtilization (100% GPU)
             25181.02,   // energyPerUnit (J/test)
             "0.014 tests/s",
             "Furmark 2.9.0.0, VK + Knot VK, 7680x4320 Res. MSAA=8X"

@@ -59,7 +59,7 @@ public class MeasurementBasedPowerModelTest {
     }
 
     private static void testVeracryptExample() {
-        System.out.println("TEST 2: VERACRYPT Task Example (from README)");
+        System.out.println("TEST 2: VERACRYPT Task Example");
         System.out.println("-" .repeat(80));
         System.out.println();
 
@@ -72,8 +72,8 @@ public class MeasurementBasedPowerModelTest {
 
         MeasurementBasedPowerModel model = PowerModelFactory.createMeasurementBasedPowerModel();
 
-        // VERACRYPT utilization from VM.calculateUtilization()
-        double cpuUtil = 0.85;
+        // VERACRYPT utilization from VM.calculateUtilization() - 3% CPU (disk-bound)
+        double cpuUtil = 0.03;
         double gpuUtil = 0.0;
 
         // Calculate power
@@ -112,18 +112,19 @@ public class MeasurementBasedPowerModelTest {
         MeasurementBasedPowerModel model = PowerModelFactory.createMeasurementBasedPowerModel();
 
         // Define typical utilization for each workload (from VM.calculateUtilization)
+        // Values based on actual measurements from Dell Precision 7920 + Nvidia 5080 GPU
         double[][] workloadUtils = {
             {0.0, 0.0},    // IDLE
-            {0.85, 0.0},   // VERACRYPT
-            {0.6, 0.0},    // DATABASE
-            {0.8, 0.0},    // SEVEN_ZIP
-            {1.0, 0.0},    // CINEBENCH
-            {1.0, 0.0},    // PRIME95SmallFFT
-            {0.95, 0.0},   // LLM_CPU
-            {0.3, 0.95},   // LLM_GPU
-            {0.9, 0.0},    // IMAGE_GEN_CPU
-            {0.2, 0.9},    // IMAGE_GEN_GPU
-            {0.1, 1.0}     // FURMARK
+            {0.03, 0.0},   // VERACRYPT - 3% CPU (disk-bound)
+            {0.12, 0.0},   // DATABASE - 12% CPU
+            {1.0, 0.0},    // SEVEN_ZIP - 100% CPU
+            {1.0, 0.0},    // CINEBENCH - 100% CPU
+            {1.0, 0.0},    // PRIME95SmallFFT - 100% CPU
+            {0.55, 0.0},   // LLM_CPU - 55% CPU
+            {0.12, 0.12},  // LLM_GPU - 12% CPU, 12% GPU
+            {0.80, 0.0},   // IMAGE_GEN_CPU - 80% CPU
+            {0.30, 0.10},  // IMAGE_GEN_GPU - 30% CPU, 10% GPU
+            {0.08, 1.0}    // FURMARK - 8% CPU, 100% GPU
         };
 
         WorkloadType[] workloads = {
@@ -228,11 +229,12 @@ public class MeasurementBasedPowerModelTest {
             WorkloadType.LLM_GPU
         };
 
+        // Actual measured utilization values
         double[][] testUtils = {
-            {0.85, 0.0},   // VERACRYPT
-            {0.8, 0.0},    // SEVEN_ZIP
-            {0.1, 1.0},    // FURMARK
-            {0.3, 0.95}    // LLM_GPU
+            {0.03, 0.0},   // VERACRYPT - 3% CPU (disk-bound)
+            {1.0, 0.0},    // SEVEN_ZIP - 100% CPU
+            {0.08, 1.0},   // FURMARK - 8% CPU, 100% GPU
+            {0.12, 0.12}   // LLM_GPU - 12% CPU, 12% GPU
         };
 
         System.out.printf("%-15s %10s %10s %18s %18s %12s\n",
