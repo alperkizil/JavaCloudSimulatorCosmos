@@ -298,30 +298,31 @@ public class VM {
 
     /**
      * Calculate utilization based on workload type.
+     * Values are based on actual measurements from Dell Precision 7920 + Nvidia 5080 GPU.
      * Returns [cpuUtilization, gpuUtilization]
      */
     private double[] calculateUtilization(WorkloadType workloadType) {
         switch (workloadType) {
             case SEVEN_ZIP:
-                return new double[]{0.8, 0.0};
+                return new double[]{1.0, 0.0};      // 100% CPU, 0% GPU
             case DATABASE:
-                return new double[]{0.6, 0.0};
+                return new double[]{0.12, 0.0};     // 12% CPU, 0% GPU
             case FURMARK:
-                return new double[]{0.1, 1.0};
+                return new double[]{0.08, 1.0};     // 8% CPU, 100% GPU
             case IMAGE_GEN_CPU:
-                return new double[]{0.9, 0.0};
+                return new double[]{0.80, 0.0};     // 80% CPU, 0% GPU
             case IMAGE_GEN_GPU:
-                return new double[]{0.2, 0.9};
+                return new double[]{0.30, 0.10};    // 30% CPU, 10% GPU
             case LLM_CPU:
-                return new double[]{0.95, 0.0};
+                return new double[]{0.55, 0.0};     // 55% CPU, 0% GPU
             case LLM_GPU:
-                return new double[]{0.3, 0.95};
+                return new double[]{0.12, 0.12};    // 12% CPU, 12% GPU
             case CINEBENCH:
-                return new double[]{1.0, 0.0};
+                return new double[]{1.0, 0.0};      // 100% CPU, 0% GPU
             case PRIME95SmallFFT:
-                return new double[]{1.0, 0.0};
+                return new double[]{1.0, 0.0};      // 100% CPU, 0% GPU
             case VERACRYPT:
-                return new double[]{0.85, 0.0};  // CPU-intensive AES encryption/decryption
+                return new double[]{0.03, 0.0};     // 3% CPU, 0% GPU (disk-bound)
             case IDLE:
             default:
                 return new double[]{0.0, 0.0};
