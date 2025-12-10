@@ -317,6 +317,10 @@ public class MetricsCollectionStep implements SimulationStep {
 
     /**
      * Calculates SLA compliance for configured thresholds.
+     *
+     * SLA compliance is calculated against ALL tasks, not just completed ones.
+     * Unassigned and failed tasks count as SLA violations since they were
+     * never successfully completed within the threshold.
      */
     private void calculateSLACompliance(SimulationContext context) {
         SimulationSummary.SLASummary sla = summary.getSla();
@@ -328,13 +332,21 @@ public class MetricsCollectionStep implements SimulationStep {
             return;
         }
 
+        int totalTasks = taskList.size();
+
         List<Task> completedTasks = taskList.stream()
             .filter(Task::isCompleted)
             .collect(Collectors.toList());
 
-        if (completedTasks.isEmpty()) {
-            return;
-        }
+        // Count unassigned tasks (these are SLA violations - never completed)
+        int unassignedTasks = (int) taskList.stream()
+            .filter(t -> !t.isAssigned())
+            .count();
+
+        // Count failed tasks (assigned but not completed - also SLA violations)
+        int failedTasks = (int) taskList.stream()
+            .filter(t -> t.isAssigned() && !t.isCompleted())
+            .count();
 
         // Calculate compliance for primary threshold
         int withinSLA = 0;
@@ -351,12 +363,17 @@ public class MetricsCollectionStep implements SimulationStep {
             }
         }
 
+        // Unassigned and failed tasks count as beyond SLA (never completed)
+        beyondSLA += unassignedTasks + failedTasks;
+
         sla.tasksWithinSLA = withinSLA;
         sla.tasksBeyondSLA = beyondSLA;
-        sla.slaCompliancePercent = completedTasks.isEmpty() ? 0 :
-            (double) withinSLA / completedTasks.size() * 100.0;
 
-        // Calculate compliance for all thresholds
+        // SLA compliance calculated against ALL tasks, not just completed ones
+        sla.slaCompliancePercent = totalTasks == 0 ? 0 :
+            (double) withinSLA / totalTasks * 100.0;
+
+        // Calculate compliance for all thresholds (also against total tasks)
         for (Long threshold : slaThresholds) {
             int within = 0;
             for (Task task : completedTasks) {
@@ -365,11 +382,13 @@ public class MetricsCollectionStep implements SimulationStep {
                     within++;
                 }
             }
-            double compliance = (double) within / completedTasks.size() * 100.0;
+            double compliance = (double) within / totalTasks * 100.0;
             sla.complianceByThreshold.put(threshold, compliance);
         }
 
         aggregatedMetrics.put("sla.primaryCompliancePercent", sla.slaCompliancePercent);
+        aggregatedMetrics.put("sla.unassignedTasks", unassignedTasks);
+        aggregatedMetrics.put("sla.failedTasks", failedTasks);
         for (Long threshold : slaThresholds) {
             aggregatedMetrics.put("sla.compliance." + threshold + "s",
                 sla.complianceByThreshold.get(threshold));
