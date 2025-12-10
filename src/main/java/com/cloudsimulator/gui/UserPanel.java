@@ -14,6 +14,8 @@ import java.util.List;
 
 /**
  * Panel for managing user configurations with VMs and tasks.
+ * Uses an accordion layout for Datacenter Assignment, VMs, and Tasks sections
+ * where only one section can be expanded at a time.
  */
 public class UserPanel extends VBox {
 
@@ -25,6 +27,12 @@ public class UserPanel extends VBox {
     private VBox userDetailBox;
     private UserTemplate selectedUser;
 
+    // Accordion for expandable sections
+    private Accordion accordion;
+    private TitledPane dcTitledPane;
+    private TitledPane vmTitledPane;
+    private TitledPane taskTitledPane;
+
     // VM components
     private ListView<VMTemplate> vmListView;
     private ObservableList<VMTemplate> vmList;
@@ -35,6 +43,7 @@ public class UserPanel extends VBox {
     private TextField vmRamField;
     private TextField vmStorageField;
     private TextField vmBandwidthField;
+    private Spinner<Integer> vmInstanceCountSpinner;
 
     // Task components
     private ListView<TaskTemplate> taskListView;
@@ -48,6 +57,7 @@ public class UserPanel extends VBox {
     // Datacenter selection
     private ListView<String> datacenterListView;
     private ObservableList<String> selectedDatacenters;
+    private ComboBox<String> dcCombo;
 
     public UserPanel(ExperimentTemplate template) {
         this.template = template;
@@ -70,7 +80,7 @@ public class UserPanel extends VBox {
         // Left side - user list
         VBox leftPane = createUserListPane();
 
-        // Right side - user details
+        // Right side - user details with accordion
         userDetailBox = createUserDetailPane();
         userDetailBox.setDisable(true);
 
@@ -113,38 +123,59 @@ public class UserPanel extends VBox {
     }
 
     private VBox createUserDetailPane() {
-        VBox pane = new VBox(15);
+        VBox pane = new VBox(10);
         pane.setPadding(new Insets(10));
 
-        // Datacenter selection
-        TitledPane dcPane = createDatacenterSelectionPane();
+        // Create the accordion with three expandable sections
+        accordion = new Accordion();
 
-        // VM configuration
-        TitledPane vmPane = createVMPane();
+        // Datacenter selection pane
+        dcTitledPane = createDatacenterSelectionPane();
 
-        // Task configuration
-        TitledPane taskPane = createTaskPane();
+        // VM configuration pane
+        vmTitledPane = createVMPane();
 
-        pane.getChildren().addAll(dcPane, vmPane, taskPane);
+        // Task configuration pane
+        taskTitledPane = createTaskPane();
+
+        // Add all panes to accordion
+        accordion.getPanes().addAll(dcTitledPane, vmTitledPane, taskTitledPane);
+
+        // Set default expanded pane
+        accordion.setExpandedPane(dcTitledPane);
+
+        VBox.setVgrow(accordion, Priority.ALWAYS);
+        pane.getChildren().add(accordion);
+
         return pane;
     }
 
     private TitledPane createDatacenterSelectionPane() {
         VBox content = new VBox(10);
-        content.setPadding(new Insets(10));
+        content.setPadding(new Insets(15));
 
         Label infoLabel = new Label("Select datacenters for this user:");
+        infoLabel.setStyle("-fx-font-weight: bold;");
 
-        datacenterListView = new ListView<>(selectedDatacenters);
-        datacenterListView.setPrefHeight(80);
-        datacenterListView.setPlaceholder(new Label("No datacenters selected"));
+        // Datacenter ComboBox - made larger and more prominent
+        dcCombo = new ComboBox<>();
+        dcCombo.setPromptText("Select datacenter to add");
+        dcCombo.setMaxWidth(Double.MAX_VALUE);
+        dcCombo.setPrefHeight(35);
+        dcCombo.setStyle("-fx-font-size: 14px;");
+        HBox.setHgrow(dcCombo, Priority.ALWAYS);
 
+        // Refresh combo when showing
+        dcCombo.setOnShowing(e -> {
+            dcCombo.setItems(FXCollections.observableArrayList(template.getDatacenterNames()));
+        });
+
+        // Buttons row
         HBox btnBox = new HBox(10);
-        ComboBox<String> dcCombo = new ComboBox<>();
-        dcCombo.setPromptText("Select datacenter");
-        dcCombo.setPrefWidth(150);
+        btnBox.setAlignment(Pos.CENTER_LEFT);
 
-        Button addDcBtn = new Button("Add");
+        Button addDcBtn = new Button("Add Datacenter");
+        addDcBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
         addDcBtn.setOnAction(e -> {
             String dc = dcCombo.getValue();
             if (dc != null && !selectedDatacenters.contains(dc) && selectedUser != null) {
@@ -153,7 +184,8 @@ public class UserPanel extends VBox {
             }
         });
 
-        Button removeDcBtn = new Button("Remove");
+        Button removeDcBtn = new Button("Remove Selected");
+        removeDcBtn.setStyle("-fx-background-color: #f44336; -fx-text-fill: white;");
         removeDcBtn.setOnAction(e -> {
             String dc = datacenterListView.getSelectionModel().getSelectedItem();
             if (dc != null && selectedUser != null) {
@@ -162,69 +194,93 @@ public class UserPanel extends VBox {
             }
         });
 
-        // Refresh combo when panel is updated
-        dcCombo.setOnShowing(e -> {
-            dcCombo.setItems(FXCollections.observableArrayList(template.getDatacenterNames()));
-        });
+        btnBox.getChildren().addAll(addDcBtn, removeDcBtn);
 
-        btnBox.getChildren().addAll(dcCombo, addDcBtn, removeDcBtn);
-        content.getChildren().addAll(infoLabel, datacenterListView, btnBox);
+        // Datacenter list
+        datacenterListView = new ListView<>(selectedDatacenters);
+        datacenterListView.setPrefHeight(150);
+        datacenterListView.setPlaceholder(new Label("No datacenters selected"));
+        VBox.setVgrow(datacenterListView, Priority.ALWAYS);
+
+        content.getChildren().addAll(infoLabel, dcCombo, btnBox, datacenterListView);
 
         TitledPane pane = new TitledPane("Datacenter Assignment", content);
-        pane.setCollapsible(false);
         return pane;
     }
 
     private TitledPane createVMPane() {
         VBox content = new VBox(10);
-        content.setPadding(new Insets(10));
+        content.setPadding(new Insets(15));
 
-        // VM input form
+        // Bulk instance option row
+        HBox bulkRow = new HBox(15);
+        bulkRow.setAlignment(Pos.CENTER_LEFT);
+        bulkRow.setPadding(new Insets(5, 10, 10, 10));
+        bulkRow.setStyle("-fx-background-color: #e3f2fd; -fx-background-radius: 5;");
+
+        Label instanceLabel = new Label("Number of VMs to Add:");
+        instanceLabel.setStyle("-fx-font-weight: bold;");
+        vmInstanceCountSpinner = new Spinner<>(1, 1000, 1);
+        vmInstanceCountSpinner.setEditable(true);
+        vmInstanceCountSpinner.setPrefWidth(80);
+        vmInstanceCountSpinner.setTooltip(new Tooltip("Number of identical VMs to add at once"));
+
+        bulkRow.getChildren().addAll(instanceLabel, vmInstanceCountSpinner);
+
+        // VM input form - more compact layout
         GridPane form = new GridPane();
         form.setHgap(10);
-        form.setVgap(5);
+        form.setVgap(8);
 
         vmTypeCombo = new ComboBox<>(FXCollections.observableArrayList(ComputeType.values()));
         vmTypeCombo.setValue(ComputeType.CPU_ONLY);
-        vmTypeCombo.setPrefWidth(120);
+        vmTypeCombo.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setHgrow(vmTypeCombo, Priority.ALWAYS);
 
         vmIpsField = new TextField("2000000000");
-        vmIpsField.setPrefWidth(100);
+        vmIpsField.setPromptText("IPS per vCPU");
 
         vmVcpusField = new TextField("4");
-        vmVcpusField.setPrefWidth(50);
+        vmVcpusField.setPromptText("vCPUs");
 
         vmGpusField = new TextField("0");
-        vmGpusField.setPrefWidth(50);
+        vmGpusField.setPromptText("GPUs");
 
         vmRamField = new TextField("8192");
-        vmRamField.setPrefWidth(80);
+        vmRamField.setPromptText("RAM (MB)");
 
         vmStorageField = new TextField("102400");
-        vmStorageField.setPrefWidth(80);
+        vmStorageField.setPromptText("Storage (MB)");
 
         vmBandwidthField = new TextField("1000");
-        vmBandwidthField.setPrefWidth(80);
+        vmBandwidthField.setPromptText("Bandwidth (Mbps)");
 
+        // Row 0: Type and IPS
         form.add(new Label("Type:"), 0, 0);
-        form.add(vmTypeCombo, 1, 0);
-        form.add(new Label("IPS/vCPU:"), 2, 0);
-        form.add(vmIpsField, 3, 0);
-        form.add(new Label("vCPUs:"), 4, 0);
-        form.add(vmVcpusField, 5, 0);
-        form.add(new Label("GPUs:"), 6, 0);
-        form.add(vmGpusField, 7, 0);
+        form.add(vmTypeCombo, 1, 0, 3, 1);
 
-        form.add(new Label("RAM (MB):"), 0, 1);
-        form.add(vmRamField, 1, 1);
-        form.add(new Label("Storage (MB):"), 2, 1);
-        form.add(vmStorageField, 3, 1);
-        form.add(new Label("Bandwidth:"), 4, 1);
-        form.add(vmBandwidthField, 5, 1);
+        form.add(new Label("IPS/vCPU:"), 0, 1);
+        form.add(vmIpsField, 1, 1);
+        form.add(new Label("vCPUs:"), 2, 1);
+        form.add(vmVcpusField, 3, 1);
+
+        // Row 2: GPUs and RAM
+        form.add(new Label("GPUs:"), 0, 2);
+        form.add(vmGpusField, 1, 2);
+        form.add(new Label("RAM (MB):"), 2, 2);
+        form.add(vmRamField, 3, 2);
+
+        // Row 3: Storage and Bandwidth
+        form.add(new Label("Storage (MB):"), 0, 3);
+        form.add(vmStorageField, 1, 3);
+        form.add(new Label("Bandwidth:"), 2, 3);
+        form.add(vmBandwidthField, 3, 3);
 
         // VM buttons
         HBox vmBtnBox = new HBox(10);
-        Button addVmBtn = new Button("Add VM");
+        vmBtnBox.setAlignment(Pos.CENTER_LEFT);
+
+        Button addVmBtn = new Button("Add VM(s)");
         addVmBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
         addVmBtn.setOnAction(e -> addVM());
 
@@ -236,27 +292,27 @@ public class UserPanel extends VBox {
 
         // VM list
         vmListView = new ListView<>(vmList);
-        vmListView.setPrefHeight(100);
+        vmListView.setPrefHeight(120);
         vmListView.setPlaceholder(new Label("No VMs configured"));
+        VBox.setVgrow(vmListView, Priority.ALWAYS);
 
-        content.getChildren().addAll(form, vmBtnBox, vmListView);
+        content.getChildren().addAll(bulkRow, form, vmBtnBox, vmListView);
 
         TitledPane pane = new TitledPane("Virtual Machines", content);
-        pane.setCollapsible(false);
         return pane;
     }
 
     private TitledPane createTaskPane() {
         VBox content = new VBox(10);
-        content.setPadding(new Insets(10));
+        content.setPadding(new Insets(15));
 
         // Task input form
         GridPane form = new GridPane();
         form.setHgap(10);
-        form.setVgap(5);
+        form.setVgap(8);
 
         taskPrefixField = new TextField("Task");
-        taskPrefixField.setPrefWidth(100);
+        taskPrefixField.setPromptText("Task name prefix");
 
         List<WorkloadType> workloadTypes = new ArrayList<>();
         for (WorkloadType wt : WorkloadType.values()) {
@@ -266,34 +322,42 @@ public class UserPanel extends VBox {
         }
         taskTypeCombo = new ComboBox<>(FXCollections.observableArrayList(workloadTypes));
         taskTypeCombo.setValue(WorkloadType.SEVEN_ZIP);
-        taskTypeCombo.setPrefWidth(140);
+        taskTypeCombo.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setHgrow(taskTypeCombo, Priority.ALWAYS);
 
         taskMinInstrField = new TextField("1000000000");
-        taskMinInstrField.setPrefWidth(120);
+        taskMinInstrField.setPromptText("Min instructions");
 
         taskMaxInstrField = new TextField("10000000000");
-        taskMaxInstrField.setPrefWidth(120);
+        taskMaxInstrField.setPromptText("Max instructions");
 
         taskCountField = new TextField("1");
-        taskCountField.setPrefWidth(50);
+        taskCountField.setPromptText("Count");
 
+        // Row 0: Name prefix and workload type
         form.add(new Label("Name Prefix:"), 0, 0);
         form.add(taskPrefixField, 1, 0);
-        form.add(new Label("Workload Type:"), 2, 0);
-        form.add(taskTypeCombo, 3, 0);
-        form.add(new Label("Count:"), 4, 0);
-        form.add(taskCountField, 5, 0);
 
-        form.add(new Label("Min Instructions:"), 0, 1);
-        form.add(taskMinInstrField, 1, 1);
-        form.add(new Label("Max Instructions:"), 2, 1);
-        form.add(taskMaxInstrField, 3, 1);
+        form.add(new Label("Workload Type:"), 0, 1);
+        form.add(taskTypeCombo, 1, 1, 3, 1);
+
+        // Row 2: Instructions range
+        form.add(new Label("Min Instructions:"), 0, 2);
+        form.add(taskMinInstrField, 1, 2);
+        form.add(new Label("Max Instructions:"), 2, 2);
+        form.add(taskMaxInstrField, 3, 2);
+
+        // Row 3: Count
+        form.add(new Label("Count:"), 0, 3);
+        form.add(taskCountField, 1, 3);
 
         Label rangeHint = new Label("(Actual instruction length randomized per seed within range)");
         rangeHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #666;");
 
         // Task buttons
         HBox taskBtnBox = new HBox(10);
+        taskBtnBox.setAlignment(Pos.CENTER_LEFT);
+
         Button addTaskBtn = new Button("Add Task Template");
         addTaskBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
         addTaskBtn.setOnAction(e -> addTask());
@@ -306,13 +370,13 @@ public class UserPanel extends VBox {
 
         // Task list
         taskListView = new ListView<>(taskList);
-        taskListView.setPrefHeight(120);
+        taskListView.setPrefHeight(150);
         taskListView.setPlaceholder(new Label("No tasks configured"));
+        VBox.setVgrow(taskListView, Priority.ALWAYS);
 
         content.getChildren().addAll(form, rangeHint, taskBtnBox, taskListView);
 
         TitledPane pane = new TitledPane("Tasks (with instruction length range)", content);
-        pane.setCollapsible(false);
         return pane;
     }
 
@@ -357,6 +421,8 @@ public class UserPanel extends VBox {
             vmList.setAll(user.getVmTemplates());
             taskList.setAll(user.getTaskTemplates());
             selectedDatacenters.setAll(user.getSelectedDatacenterNames());
+            // Expand the first section when user is selected
+            accordion.setExpandedPane(dcTitledPane);
         } else {
             vmList.clear();
             taskList.clear();
@@ -376,9 +442,17 @@ public class UserPanel extends VBox {
             long storage = Long.parseLong(vmStorageField.getText().trim());
             long bandwidth = Long.parseLong(vmBandwidthField.getText().trim());
 
-            VMTemplate vm = new VMTemplate(ips, vcpus, gpus, ram, storage, bandwidth, type);
-            selectedUser.addVmTemplate(vm);
-            vmList.add(vm);
+            int instanceCount = vmInstanceCountSpinner.getValue();
+
+            for (int i = 0; i < instanceCount; i++) {
+                VMTemplate vm = new VMTemplate(ips, vcpus, gpus, ram, storage, bandwidth, type);
+                selectedUser.addVmTemplate(vm);
+                vmList.add(vm);
+            }
+
+            // Reset instance count to 1 after adding
+            vmInstanceCountSpinner.getValueFactory().setValue(1);
+
         } catch (NumberFormatException e) {
             showError("Please enter valid numeric values for VM");
         }
