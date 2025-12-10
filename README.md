@@ -1235,7 +1235,8 @@ All 10 simulation steps are implemented and tested:
 - [x] TaskAssignmentStepTest: Verifies all 3 basic strategies + NSGA-II multi-objective optimization
 - [x] ExecutionStepsTest: Verifies VMExecutionStep and TaskExecutionStep with full pipeline test
 - [x] ReportingStepTest: Verifies ReportingStep with selective reports, custom prefix, and full pipeline
-- [ ] Unit tests for all model classes
+- [x] CloudDatacenterTest: Verifies CloudDatacenter class with 22 unit tests (constructors, host/customer management, power limits, energy tracking, host filtering)
+- [ ] Unit tests for remaining model classes (Host, VM, Task, User)
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
 - [ ] Performance benchmarks
