@@ -42,6 +42,9 @@ public class Host {
     private double otherComponentsPowerDraw; // Watts
     private PowerModel powerModel;
 
+    // Measurement-based power model (optional, takes precedence when set)
+    private MeasurementBasedPowerModel measurementBasedPowerModel;
+
     // Utilization history tracking
     private List<HostUtilizationRecord> utilizationHistory;
     private Map<Long, Long> vmOpenSecondsMap;  // VM ID -> seconds kept open
@@ -242,8 +245,21 @@ public class Host {
 
     /**
      * Updates power consumption based on current VM utilization.
+     * If a MeasurementBasedPowerModel is set, uses workload-aware calculation.
+     * Otherwise, falls back to utilization-based PowerModel.
      */
     public void updatePowerConsumption() {
+        if (measurementBasedPowerModel != null) {
+            updatePowerConsumptionWorkloadAware();
+        } else {
+            updatePowerConsumptionUtilizationBased();
+        }
+    }
+
+    /**
+     * Updates power consumption using the traditional utilization-based model.
+     */
+    private void updatePowerConsumptionUtilizationBased() {
         // Calculate current CPU and GPU utilization from all VMs
         double totalCpuUtil = 0.0;
         double totalGpuUtil = 0.0;
@@ -265,6 +281,70 @@ public class Host {
         this.currentGpuPowerDraw = powerModel.calculateGpuPower(avgGpuUtil);
         this.otherComponentsPowerDraw = powerModel.getOtherComponentsPower();
         this.currentTotalPowerDraw = currentCpuPowerDraw + currentGpuPowerDraw + otherComponentsPowerDraw;
+    }
+
+    /**
+     * Updates power consumption using the workload-aware measurement-based model.
+     * This method calculates power based on the specific workload types being executed
+     * by each VM, using empirical power measurements.
+     *
+     * Power Calculation:
+     * - Base idle power from MeasurementBasedPowerModel
+     * - For each active VM: adds incremental power based on workload type and utilization
+     * - Total power = idle + sum of all VM incremental powers
+     */
+    private void updatePowerConsumptionWorkloadAware() {
+        if (assignedVMs.isEmpty()) {
+            // No VMs - host is at idle power
+            this.currentTotalPowerDraw = measurementBasedPowerModel.getScaledIdlePower();
+            this.currentCpuPowerDraw = 0.0;
+            this.currentGpuPowerDraw = 0.0;
+            this.otherComponentsPowerDraw = measurementBasedPowerModel.getScaledIdlePower();
+            return;
+        }
+
+        // Start with base idle power
+        double baseIdlePower = measurementBasedPowerModel.getScaledIdlePower();
+        double totalIncrementalPower = 0.0;
+        double cpuIncrementalPower = 0.0;
+        double gpuIncrementalPower = 0.0;
+
+        // Calculate incremental power for each VM based on its workload
+        for (VM vm : assignedVMs) {
+            WorkloadType workloadType = vm.getCurrentWorkloadType();
+            double cpuUtil = 0.0;
+            double gpuUtil = 0.0;
+
+            if (vm.getCurrentUtilization() != null) {
+                cpuUtil = vm.getCurrentUtilization().getCpuUtilization();
+                gpuUtil = vm.getCurrentUtilization().getGpuUtilization();
+            }
+
+            // Get incremental power for this workload
+            double vmIncrementalPower = measurementBasedPowerModel.calculateIncrementalPower(
+                workloadType, cpuUtil, gpuUtil);
+
+            totalIncrementalPower += vmIncrementalPower;
+
+            // Classify power as CPU or GPU based on workload profile
+            EmpiricalWorkloadProfile profile = measurementBasedPowerModel.getWorkloadProfile(workloadType);
+            if (profile != null) {
+                if (profile.isGpuIntensive()) {
+                    gpuIncrementalPower += vmIncrementalPower;
+                } else {
+                    cpuIncrementalPower += vmIncrementalPower;
+                }
+            } else {
+                // Fallback: assume CPU workload
+                cpuIncrementalPower += vmIncrementalPower;
+            }
+        }
+
+        // Set power components
+        this.currentCpuPowerDraw = cpuIncrementalPower;
+        this.currentGpuPowerDraw = gpuIncrementalPower;
+        this.otherComponentsPowerDraw = baseIdlePower;
+        this.currentTotalPowerDraw = baseIdlePower + totalIncrementalPower;
     }
 
     /**
@@ -478,6 +558,29 @@ public class Host {
 
     public void setPowerModel(PowerModel powerModel) {
         this.powerModel = powerModel;
+    }
+
+    public MeasurementBasedPowerModel getMeasurementBasedPowerModel() {
+        return measurementBasedPowerModel;
+    }
+
+    /**
+     * Sets the measurement-based power model for workload-aware power calculation.
+     * When set, this model takes precedence over the traditional utilization-based PowerModel.
+     *
+     * @param measurementBasedPowerModel The empirical power model to use
+     */
+    public void setMeasurementBasedPowerModel(MeasurementBasedPowerModel measurementBasedPowerModel) {
+        this.measurementBasedPowerModel = measurementBasedPowerModel;
+    }
+
+    /**
+     * Checks if this host is using the measurement-based power model.
+     *
+     * @return true if using measurement-based model, false if using utilization-based
+     */
+    public boolean isUsingMeasurementBasedPowerModel() {
+        return measurementBasedPowerModel != null;
     }
 
     public List<HostUtilizationRecord> getUtilizationHistory() {

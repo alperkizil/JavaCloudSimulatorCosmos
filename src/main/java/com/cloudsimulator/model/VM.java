@@ -3,6 +3,7 @@ package com.cloudsimulator.model;
 import com.cloudsimulator.enums.ComputeType;
 import com.cloudsimulator.enums.VmState;
 import com.cloudsimulator.enums.WorkloadType;
+// Note: MeasurementBasedPowerModel is in the same package, no import needed
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -327,14 +328,56 @@ public class VM {
         }
     }
 
+    // Optional measurement-based power model for workload-aware calculations
+    private MeasurementBasedPowerModel measurementBasedPowerModel;
+
     /**
-     * Calculate power draw (simplified).
+     * Calculate power draw based on utilization.
+     * If a MeasurementBasedPowerModel is set, uses workload-aware calculation.
+     * Otherwise, uses the simplified utilization-based calculation.
      */
     private double calculatePowerDraw(double cpuUtil, double gpuUtil) {
+        if (measurementBasedPowerModel != null && currentExecutingTask != null) {
+            return calculatePowerDrawMeasurementBased(cpuUtil, gpuUtil);
+        }
+        return calculatePowerDrawSimplified(cpuUtil, gpuUtil);
+    }
+
+    /**
+     * Simplified power calculation based on utilization and VM resources.
+     */
+    private double calculatePowerDrawSimplified(double cpuUtil, double gpuUtil) {
         double basePower = 50.0;
         double cpuPower = cpuUtil * requestedVcpuCount * 30.0;
         double gpuPower = gpuUtil * requestedGpuCount * 200.0;
         return basePower + cpuPower + gpuPower;
+    }
+
+    /**
+     * Workload-aware power calculation using empirical measurements.
+     * Returns only the VM's incremental power (not including host idle power).
+     */
+    private double calculatePowerDrawMeasurementBased(double cpuUtil, double gpuUtil) {
+        WorkloadType workloadType = getCurrentWorkloadType();
+        return measurementBasedPowerModel.calculateIncrementalPower(workloadType, cpuUtil, gpuUtil);
+    }
+
+    /**
+     * Sets the measurement-based power model for workload-aware power calculation.
+     *
+     * @param model The empirical power model to use
+     */
+    public void setMeasurementBasedPowerModel(MeasurementBasedPowerModel model) {
+        this.measurementBasedPowerModel = model;
+    }
+
+    /**
+     * Gets the measurement-based power model if set.
+     *
+     * @return The power model, or null if not set
+     */
+    public MeasurementBasedPowerModel getMeasurementBasedPowerModel() {
+        return measurementBasedPowerModel;
     }
 
     /**
@@ -368,6 +411,28 @@ public class VM {
      */
     public boolean hasEverHadTasks() {
         return !assignedTasks.isEmpty() || !finishedTasks.isEmpty();
+    }
+
+    /**
+     * Gets the workload type of the currently executing task.
+     * Returns IDLE if no task is currently executing.
+     *
+     * @return The current workload type
+     */
+    public WorkloadType getCurrentWorkloadType() {
+        if (currentExecutingTask != null) {
+            return currentExecutingTask.getWorkloadType();
+        }
+        return WorkloadType.IDLE;
+    }
+
+    /**
+     * Gets the currently executing task, if any.
+     *
+     * @return The current task, or null if idle
+     */
+    public Task getCurrentExecutingTask() {
+        return currentExecutingTask;
     }
 
     /**
