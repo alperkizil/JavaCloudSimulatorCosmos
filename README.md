@@ -1225,7 +1225,7 @@ All 10 simulation steps are implemented and tested:
 - FirstAvailableTaskAssignmentStrategy, ShortestQueueTaskAssignmentStrategy
 - WorkloadAwareTaskAssignmentStrategy, NSGA2TaskSchedulingStrategy
 
-## Testing & Validation (~80% complete)
+## Testing & Validation (~85% complete)
 
 - [x] ConfigTest: Basic configuration loading
 - [x] InitializationStepTest: Verifies entity creation from configuration
@@ -1238,7 +1238,8 @@ All 10 simulation steps are implemented and tested:
 - [x] CloudDatacenterTest: Verifies CloudDatacenter class with 22 unit tests (constructors, host/customer management, power limits, energy tracking, host filtering)
 - [x] HostTest: Verifies Host class with 26 unit tests (constructors, capacity management, VM assignment, resource allocation, power/energy tracking, utilization history)
 - [x] VMTest: Verifies VM class with 29 unit tests (constructors, task assignment/execution, state management, compute type compatibility, utilization tracking, completion tracking)
-- [ ] Unit tests for remaining model classes (Task, User)
+- [x] UserTest: Verifies User class with 29 unit tests (constructors, datacenter selection, VM/task management, session timing, completion tracking)
+- [x] TaskTest: Verifies Task class with 27 unit tests (constructors, VM assignment, execution lifecycle, instruction execution, time calculations, reset functionality)
 - [ ] Integration tests for simulation steps
 - [ ] End-to-end simulation tests
 - [ ] Performance benchmarks
@@ -1299,6 +1300,12 @@ java -cp out com.cloudsimulator.HostTest
 
 # Run VM test
 java -cp out com.cloudsimulator.VMTest
+
+# Run User test
+java -cp out com.cloudsimulator.UserTest
+
+# Run Task test
+java -cp out com.cloudsimulator.TaskTest
 
 # Run simulation example
 java -cp out com.cloudsimulator.SimulationExample
