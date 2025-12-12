@@ -41,7 +41,9 @@ public class DatacenterReporter extends AbstractCSVReporter {
             "allocated_ram_mb",
             "max_power_watts",
             "current_power_watts",
-            "energy_consumed_kwh",
+            "it_energy_kwh",
+            "facility_energy_kwh",
+            "pue",
             "avg_cpu_utilization",
             "avg_gpu_utilization"
         };
@@ -53,6 +55,10 @@ public class DatacenterReporter extends AbstractCSVReporter {
         if (datacenters == null || datacenters.isEmpty()) {
             return;
         }
+
+        // Get PUE from context (set by EnergyCalculationStep)
+        Object pueObj = context.getMetric("energy.pue");
+        double pue = pueObj != null ? ((Number) pueObj).doubleValue() : 1.0;
 
         for (CloudDatacenter dc : datacenters) {
             List<Host> hosts = dc.getHosts();
@@ -90,6 +96,10 @@ public class DatacenterReporter extends AbstractCSVReporter {
             double avgCpuUtil = activeHosts > 0 ? totalCpuUtil / activeHosts : 0;
             double avgGpuUtil = activeHosts > 0 ? totalGpuUtil / activeHosts : 0;
 
+            // Calculate IT and facility energy
+            double itEnergyKwh = dc.getTotalEnergyConsumedKWh();
+            double facilityEnergyKwh = itEnergyKwh * pue;
+
             writer.writeRow(
                 dc.getId(),
                 dc.getName(),
@@ -106,7 +116,9 @@ public class DatacenterReporter extends AbstractCSVReporter {
                 allocatedRamMB,
                 formatDouble(dc.getTotalMaxPowerDraw(), 2),
                 formatDouble(dc.getTotalMomentaryPowerDraw(), 2),
-                formatDouble(dc.getTotalEnergyConsumedKWh(), 6),
+                formatDouble(itEnergyKwh, 6),
+                formatDouble(facilityEnergyKwh, 6),
+                formatDouble(pue, 2),
                 formatDouble(avgCpuUtil, 4),
                 formatDouble(avgGpuUtil, 4)
             );
