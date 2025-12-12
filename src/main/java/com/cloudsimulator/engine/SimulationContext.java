@@ -1,6 +1,7 @@
 package com.cloudsimulator.engine;
 
 import com.cloudsimulator.model.*;
+import com.cloudsimulator.model.SimulationSummary;
 import com.cloudsimulator.utils.SimulationClock;
 
 import java.util.ArrayList;
@@ -26,6 +27,9 @@ public class SimulationContext {
 
     // Metrics and statistics
     private Map<String, Object> metrics;
+
+    // Simulation summary (populated by MetricsCollectionStep)
+    private SimulationSummary simulationSummary;
 
     // Name lookups for convenience
     private Map<String, CloudDatacenter> datacentersByName;
@@ -120,6 +124,15 @@ public class SimulationContext {
 
     public Map<String, Object> getAllMetrics() {
         return metrics;
+    }
+
+    // Simulation Summary
+    public void setSimulationSummary(SimulationSummary summary) {
+        this.simulationSummary = summary;
+    }
+
+    public SimulationSummary getSimulationSummary() {
+        return simulationSummary;
     }
 
     // Statistics
