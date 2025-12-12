@@ -22,17 +22,21 @@ All 10 simulation steps are complete: InitializationStep, HostPlacementStep (5 s
 
 ```
 com.cloudsimulator
-├── model/          # Domain models (CloudDatacenter, Host, VM, Task, User)
-├── enums/          # Enumerations (ComputeType, VmState, WorkloadType, etc.)
-├── engine/         # Core simulation engine (SimulationEngine, SimulationContext)
-├── utils/          # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
-├── factory/        # Factories (PowerModelFactory)
-├── config/         # Configuration system - COMPLETE ✓
-├── steps/          # Simulation step implementations - COMPLETE ✓ (10/10)
-├── strategy/       # Placement & assignment strategies (Host: 5, VM: 4, Task: 3 + NSGA-II) - COMPLETE ✓
-├── calculator/     # Energy calculators (integrated into EnergyCalculationStep) ✓
-├── reporter/       # CSV report generators - COMPLETE ✓
-└── gui/            # JavaFX Configuration Generator GUI ✓
+├── model/              # Domain models (CloudDatacenter, Host, VM, Task, User)
+├── enums/              # Enumerations (ComputeType, VmState, WorkloadType, etc.)
+├── engine/             # Core simulation engine (SimulationEngine, SimulationContext)
+├── utils/              # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
+├── factory/            # Factories (PowerModelFactory)
+├── config/             # Configuration system ✓
+├── steps/              # Simulation step implementations (10/10) ✓
+├── PlacementStrategy/  # Placement & assignment strategies ✓
+│   ├── hostPlacement/  # Host placement strategies (5 strategies)
+│   ├── VMPlacement/    # VM placement strategies (4 strategies)
+│   └── task/           # Task assignment strategies (3 + NSGA-II)
+│       └── metaheuristic/  # NSGA-II multi-objective optimization framework
+├── calculator/         # Energy calculators (integrated into EnergyCalculationStep) ✓
+├── reporter/           # CSV report generators ✓
+└── gui/                # JavaFX Configuration Generator GUI ✓
 ```
 
 ## Features
@@ -1265,8 +1269,11 @@ All 10 simulation steps are implemented and tested:
 # Clean build
 rm -rf out
 
-# Compile all sources (excluding GUI which requires JavaFX)
-find src/main/java -name "*.java" ! -path "*/gui/*" | xargs javac -d out
+# Compile all main sources (excluding GUI which requires JavaFX)
+find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -d out
+
+# Compile test sources (after compiling main sources)
+find src/test/java -name "*.java" | xargs javac -cp out -d out
 
 # Run configuration test
 java -cp out com.cloudsimulator.ConfigTest
@@ -1315,83 +1322,95 @@ java -cp out com.cloudsimulator.SimulationExample
 
 ```
 JavaCloudSimulatorCosmos/
-├── src/main/java/com/cloudsimulator/
-│   ├── model/              # Domain models
-│   ├── enums/              # Enumerations
-│   ├── engine/             # Simulation engine
-│   ├── utils/              # Utilities
-│   ├── factory/            # Factories
-│   ├── config/             # Configuration system ✓
-│   ├── steps/              # Simulation steps (10/10 complete) ✓
-│   │   ├── InitializationStep.java        # Entity creation from config ✓
-│   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
-│   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
-│   │   ├── VMPlacementStep.java           # VM-to-host assignment ✓
-│   │   ├── TaskAssignmentStep.java        # Task-to-VM assignment ✓
-│   │   ├── VMExecutionStep.java           # Time-stepped simulation loop ✓
-│   │   ├── TaskExecutionStep.java         # Post-simulation analysis ✓
-│   │   ├── EnergyCalculationStep.java     # Energy/carbon/cost metrics ✓
-│   │   ├── MetricsCollectionStep.java     # SLA compliance, percentiles ✓
-│   │   └── ReportingStep.java             # CSV report generation ✓
-│   ├── strategy/           # Placement & assignment strategies ✓
-│   │   ├── HostPlacementStrategy.java                    # Host strategy interface
-│   │   ├── FirstFitHostPlacementStrategy.java            # First Fit algorithm
-│   │   ├── PowerBasedBestFitHostPlacementStrategy.java   # Power-based Best Fit
-│   │   ├── SlotBasedBestFitHostPlacementStrategy.java    # Slot-based Best Fit
-│   │   ├── PowerAwareConsolidatingHostPlacementStrategy.java  # Consolidating
-│   │   ├── PowerAwareLoadBalancingHostPlacementStrategy.java  # Load Balancing
-│   │   ├── VMPlacementStrategy.java                      # VM strategy interface
-│   │   ├── FirstFitVMPlacementStrategy.java              # First Fit for VMs
-│   │   ├── BestFitVMPlacementStrategy.java               # Best Fit for VMs
-│   │   ├── LoadBalancingVMPlacementStrategy.java         # Load Balancing for VMs
-│   │   ├── PowerAwareVMPlacementStrategy.java            # Power Aware for VMs
-│   │   └── task/                                         # Task assignment strategies ✓
-│   │       ├── TaskAssignmentStrategy.java               # Task strategy interface
-│   │       ├── FirstAvailableTaskAssignmentStrategy.java # First Available
-│   │       ├── ShortestQueueTaskAssignmentStrategy.java  # Shortest Queue
-│   │       ├── WorkloadAwareTaskAssignmentStrategy.java  # Workload Aware
-│   │       └── metaheuristic/                            # NSGA-II framework ✓
-│   │           ├── SchedulingSolution.java               # Solution chromosome
-│   │           ├── SchedulingObjective.java              # Objective interface
-│   │           ├── NSGA2Configuration.java               # Algorithm config
-│   │           ├── NSGA2Algorithm.java                   # Core NSGA-II
-│   │           ├── NSGA2TaskSchedulingStrategy.java      # Strategy wrapper
-│   │           ├── ParetoFront.java                      # Pareto front container
-│   │           ├── objectives/                           # Objective implementations
-│   │           │   ├── MakespanObjective.java            # Minimize makespan
-│   │           │   └── EnergyObjective.java              # Minimize energy
-│   │           ├── termination/                          # Termination conditions
-│   │           │   ├── TerminationCondition.java         # Condition interface
-│   │           │   ├── AlgorithmStatistics.java          # Runtime statistics
-│   │           │   ├── GenerationCountTermination.java   # Stop after N gens
-│   │           │   ├── FitnessEvaluationsTermination.java # Stop after N evals
-│   │           │   ├── TimeLimitTermination.java         # Stop after time
-│   │           │   ├── TargetFitnessTermination.java     # Stop at target
-│   │           │   └── CompositeTermination.java         # AND/OR logic
-│   │           └── operators/                            # Genetic operators
-│   │               ├── RepairOperator.java               # Solution repair
-│   │               ├── CrossoverOperator.java            # Recombination
-│   │               └── MutationOperator.java             # Mutation
-│   ├── calculator/         # Calculators (integrated into steps) ✓
-│   ├── reporter/           # CSV report generators ✓
-│   │   ├── CSVReporter.java              # Interface for CSV generation
-│   │   ├── AbstractCSVReporter.java      # Base class with streaming writes
-│   │   ├── SummaryReporter.java          # Simulation overview report
-│   │   ├── DatacenterReporter.java       # Per-datacenter report
-│   │   ├── HostReporter.java             # Per-host report
-│   │   ├── VMReporter.java               # Per-VM report
-│   │   ├── TaskReporter.java             # Per-task report
-│   │   └── UserReporter.java             # Per-user report
-│   ├── gui/                # JavaFX Configuration Generator ✓
-│   ├── ConfigTest.java                  # Config system test
-│   ├── InitializationStepTest.java      # InitializationStep test ✓
-│   ├── HostPlacementStepTest.java       # HostPlacementStep test ✓
-│   ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
-│   ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
-│   ├── TaskAssignmentStepTest.java      # TaskAssignmentStep test ✓
-│   ├── ExecutionStepsTest.java          # VMExecutionStep + TaskExecutionStep test ✓
-│   ├── ReportingStepTest.java           # ReportingStep test ✓
-│   └── SimulationExample.java           # Basic example
+├── src/
+│   ├── main/java/com/cloudsimulator/
+│   │   ├── model/              # Domain models
+│   │   ├── enums/              # Enumerations
+│   │   ├── engine/             # Simulation engine
+│   │   ├── utils/              # Utilities
+│   │   ├── factory/            # Factories
+│   │   ├── config/             # Configuration system ✓
+│   │   ├── steps/              # Simulation steps (10/10 complete) ✓
+│   │   │   ├── InitializationStep.java        # Entity creation from config ✓
+│   │   │   ├── HostPlacementStep.java         # Host-to-datacenter assignment ✓
+│   │   │   ├── UserDatacenterMappingStep.java # User-datacenter validation ✓
+│   │   │   ├── VMPlacementStep.java           # VM-to-host assignment ✓
+│   │   │   ├── TaskAssignmentStep.java        # Task-to-VM assignment ✓
+│   │   │   ├── VMExecutionStep.java           # Time-stepped simulation loop ✓
+│   │   │   ├── TaskExecutionStep.java         # Post-simulation analysis ✓
+│   │   │   ├── EnergyCalculationStep.java     # Energy/carbon/cost metrics ✓
+│   │   │   ├── MetricsCollectionStep.java     # SLA compliance, percentiles ✓
+│   │   │   └── ReportingStep.java             # CSV report generation ✓
+│   │   ├── PlacementStrategy/  # Placement & assignment strategies ✓
+│   │   │   ├── hostPlacement/                            # Host placement strategies
+│   │   │   │   ├── HostPlacementStrategy.java            # Host strategy interface
+│   │   │   │   ├── FirstFitHostPlacementStrategy.java    # First Fit algorithm
+│   │   │   │   ├── PowerBasedBestFitHostPlacementStrategy.java   # Power-based Best Fit
+│   │   │   │   ├── SlotBasedBestFitHostPlacementStrategy.java    # Slot-based Best Fit
+│   │   │   │   ├── PowerAwareConsolidatingHostPlacementStrategy.java  # Consolidating
+│   │   │   │   └── PowerAwareLoadBalancingHostPlacementStrategy.java  # Load Balancing
+│   │   │   ├── VMPlacement/                              # VM placement strategies
+│   │   │   │   ├── VMPlacementStrategy.java              # VM strategy interface
+│   │   │   │   ├── FirstFitVMPlacementStrategy.java      # First Fit for VMs
+│   │   │   │   ├── BestFitVMPlacementStrategy.java       # Best Fit for VMs
+│   │   │   │   ├── LoadBalancingVMPlacementStrategy.java # Load Balancing for VMs
+│   │   │   │   └── PowerAwareVMPlacementStrategy.java    # Power Aware for VMs
+│   │   │   └── task/                                     # Task assignment strategies ✓
+│   │   │       ├── TaskAssignmentStrategy.java           # Task strategy interface
+│   │   │       ├── FirstAvailableTaskAssignmentStrategy.java # First Available
+│   │   │       ├── ShortestQueueTaskAssignmentStrategy.java  # Shortest Queue
+│   │   │       ├── WorkloadAwareTaskAssignmentStrategy.java  # Workload Aware
+│   │   │       └── metaheuristic/                        # NSGA-II framework ✓
+│   │   │           ├── SchedulingSolution.java           # Solution chromosome
+│   │   │           ├── SchedulingObjective.java          # Objective interface
+│   │   │           ├── NSGA2Configuration.java           # Algorithm config
+│   │   │           ├── NSGA2Algorithm.java               # Core NSGA-II
+│   │   │           ├── NSGA2TaskSchedulingStrategy.java  # Strategy wrapper
+│   │   │           ├── ParetoFront.java                  # Pareto front container
+│   │   │           ├── objectives/                       # Objective implementations
+│   │   │           │   ├── MakespanObjective.java        # Minimize makespan
+│   │   │           │   └── EnergyObjective.java          # Minimize energy
+│   │   │           ├── termination/                      # Termination conditions
+│   │   │           │   ├── TerminationCondition.java     # Condition interface
+│   │   │           │   ├── AlgorithmStatistics.java      # Runtime statistics
+│   │   │           │   ├── GenerationCountTermination.java   # Stop after N gens
+│   │   │           │   ├── FitnessEvaluationsTermination.java # Stop after N evals
+│   │   │           │   ├── TimeLimitTermination.java     # Stop after time
+│   │   │           │   ├── TargetFitnessTermination.java # Stop at target
+│   │   │           │   └── CompositeTermination.java     # AND/OR logic
+│   │   │           └── operators/                        # Genetic operators
+│   │   │               ├── RepairOperator.java           # Solution repair
+│   │   │               ├── CrossoverOperator.java        # Recombination
+│   │   │               └── MutationOperator.java         # Mutation
+│   │   ├── calculator/         # Calculators (integrated into steps) ✓
+│   │   ├── reporter/           # CSV report generators ✓
+│   │   │   ├── CSVReporter.java              # Interface for CSV generation
+│   │   │   ├── AbstractCSVReporter.java      # Base class with streaming writes
+│   │   │   ├── SummaryReporter.java          # Simulation overview report
+│   │   │   ├── DatacenterReporter.java       # Per-datacenter report
+│   │   │   ├── HostReporter.java             # Per-host report
+│   │   │   ├── VMReporter.java               # Per-VM report
+│   │   │   ├── TaskReporter.java             # Per-task report
+│   │   │   └── UserReporter.java             # Per-user report
+│   │   ├── gui/                # JavaFX Configuration Generator ✓
+│   │   └── SimulationExample.java           # Basic example
+│   └── test/java/com/cloudsimulator/        # Test classes
+│       ├── ConfigTest.java                  # Config system test
+│       ├── InitializationStepTest.java      # InitializationStep test ✓
+│       ├── HostPlacementStepTest.java       # HostPlacementStep test ✓
+│       ├── HostPlacementConstrainedTest.java # Constrained host placement test ✓
+│       ├── UserDatacenterMappingStepTest.java  # UserDatacenterMappingStep test ✓
+│       ├── VMPlacementStepTest.java         # VMPlacementStep test ✓
+│       ├── TaskAssignmentStepTest.java      # TaskAssignmentStep test ✓
+│       ├── ExecutionStepsTest.java          # VMExecutionStep + TaskExecutionStep test ✓
+│       ├── EnergyMetricsStepTest.java       # Energy metrics test ✓
+│       ├── ReportingStepTest.java           # ReportingStep test ✓
+│       ├── CloudDatacenterTest.java         # CloudDatacenter unit tests ✓
+│       ├── HostTest.java                    # Host unit tests ✓
+│       ├── VMTest.java                      # VM unit tests ✓
+│       ├── UserTest.java                    # User unit tests ✓
+│       ├── TaskTest.java                    # Task unit tests ✓
+│       └── MeasurementBasedPowerModelTest.java # Power model test ✓
 ├── configs/
 │   └── sample-experiment.cosc  # Example configuration
 ├── out/                    # Compiled classes
