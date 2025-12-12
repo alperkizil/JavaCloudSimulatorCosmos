@@ -239,18 +239,8 @@ public class ReportingStep implements SimulationStep {
      * Gets SimulationSummary from context if MetricsCollectionStep was executed.
      */
     private SimulationSummary getSimulationSummary(SimulationContext context) {
-        // Try to get summary from raw metrics (if MetricsCollectionStep stored it)
-        Object summaryGenerated = context.getMetric("metricsCollection.summaryGenerated");
-        if (summaryGenerated != null && (Boolean) summaryGenerated) {
-            // MetricsCollectionStep was executed, but we need to get the actual summary
-            // For now, we'll construct what we can from context metrics
-            // A better approach would be to store the summary object in context
-
-            // Return null to let reporters use context directly
-            // In a real implementation, MetricsCollectionStep should store the summary
-            return null;
-        }
-        return null;
+        // Get the summary object stored by MetricsCollectionStep
+        return context.getSimulationSummary();
     }
 
     /**

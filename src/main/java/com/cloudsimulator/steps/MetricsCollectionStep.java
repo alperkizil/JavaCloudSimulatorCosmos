@@ -610,6 +610,9 @@ public class MetricsCollectionStep implements SimulationStep {
 
         context.recordMetric("metricsCollection.stepDurationMs", stepEndTimeMs - stepStartTimeMs);
         context.recordMetric("metricsCollection.summaryGenerated", true);
+
+        // Store the summary object in context for ReportingStep to access
+        context.setSimulationSummary(summary);
     }
 
     /**
