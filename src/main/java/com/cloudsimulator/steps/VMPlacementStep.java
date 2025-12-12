@@ -7,8 +7,8 @@ import com.cloudsimulator.model.CloudDatacenter;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.User;
 import com.cloudsimulator.model.VM;
-import com.cloudsimulator.strategy.VMPlacementStrategy;
-import com.cloudsimulator.strategy.FirstFitVMPlacementStrategy;
+import com.cloudsimulator.PlacementStrategy.VMPlacement.VMPlacementStrategy;
+import com.cloudsimulator.PlacementStrategy.VMPlacement.FirstFitVMPlacementStrategy;
 
 import java.util.ArrayList;
 import java.util.HashMap;

@@ -5,8 +5,8 @@ import com.cloudsimulator.engine.SimulationStep;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.User;
 import com.cloudsimulator.model.VM;
-import com.cloudsimulator.strategy.task.TaskAssignmentStrategy;
-import com.cloudsimulator.strategy.task.FirstAvailableTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
 
 import java.util.ArrayList;
 import java.util.HashMap;

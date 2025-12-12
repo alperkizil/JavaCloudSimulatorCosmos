@@ -7,8 +7,9 @@ import com.cloudsimulator.engine.SimulationEngine;
 import com.cloudsimulator.model.SimulationSummary;
 import com.cloudsimulator.steps.*;
 import com.cloudsimulator.steps.EnergyCalculationStep.CarbonIntensityRegion;
-import com.cloudsimulator.strategy.*;
-import com.cloudsimulator.strategy.task.*;
+import com.cloudsimulator.PlacementStrategy.hostPlacement.*;
+import com.cloudsimulator.PlacementStrategy.VMPlacement.*;
+import com.cloudsimulator.PlacementStrategy.task.*;
 
 import java.io.File;
 import java.io.FileWriter;
