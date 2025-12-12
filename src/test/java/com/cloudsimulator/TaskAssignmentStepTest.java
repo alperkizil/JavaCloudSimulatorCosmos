@@ -459,16 +459,16 @@ public class TaskAssignmentStepTest {
         if (!front.isEmpty()) {
             double[][] ranges = front.getObjectiveRanges();
             System.out.printf("  Makespan range: [%.2f, %.2f] seconds%n", ranges[0][0], ranges[0][1]);
-            System.out.printf("  Energy range: [%.2f, %.2f] joules%n", ranges[1][0], ranges[1][1]);
+            System.out.printf("  Energy range: [%.6f, %.6f] kWh%n", ranges[1][0], ranges[1][1]);
 
             SchedulingSolution kneePoint = front.getKneePoint();
-            System.out.printf("  Knee point: Makespan=%.2f, Energy=%.2f%n",
+            System.out.printf("  Knee point: Makespan=%.2f s, Energy=%.6f kWh%n",
                 kneePoint.getObjectiveValue(0), kneePoint.getObjectiveValue(1));
 
             SchedulingSolution bestMakespan = front.getBestForObjective(0);
             SchedulingSolution bestEnergy = front.getBestForObjective(1);
             System.out.printf("  Best makespan solution: %.2f seconds%n", bestMakespan.getObjectiveValue(0));
-            System.out.printf("  Best energy solution: %.2f joules%n", bestEnergy.getObjectiveValue(1));
+            System.out.printf("  Best energy solution: %.6f kWh%n", bestEnergy.getObjectiveValue(1));
         }
 
         boolean passed = front.size() >= 1;
