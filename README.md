@@ -819,7 +819,7 @@ SchedulingSolution kneePoint = front.getKneePoint();  // Balanced trade-off
 | Objective | Description | Unit |
 |-----------|-------------|------|
 | `MakespanObjective` | Minimizes time for all tasks to complete | seconds |
-| `EnergyObjective` | Minimizes total energy consumption | joules |
+| `EnergyObjective` | Minimizes total energy consumption | kWh |
 
 *Future objectives (easily addable): WaitingTimeObjective, LoadBalanceObjective, ThroughputObjective*
 

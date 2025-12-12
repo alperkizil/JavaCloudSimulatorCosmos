@@ -17,16 +17,16 @@ import java.util.List;
  * - CPU utilization based on workload type
  * - GPU utilization based on workload type
  *
- * Energy (Joules) = Power (Watts) × Time (seconds)
+ * Energy (kWh) = Power (Watts) × Time (seconds) / 3,600,000
  *
  * Calculation:
  * For each VM j:
  *   For each task assigned to VM j:
  *     executionTime = task.instructionLength / vm.totalIPS
  *     power = calculatePowerForWorkload(task.workloadType, vm)
- *     energy += power × executionTime
+ *     energy += power × executionTime / 3,600,000
  *
- * Total Energy = sum of energy for all VMs
+ * Total Energy = sum of energy for all VMs (in kWh)
  *
  * This objective encourages:
  * - Assigning tasks to more power-efficient VMs
@@ -64,13 +64,16 @@ public class EnergyObjective implements SchedulingObjective {
         return "Energy";
     }
 
+    // Conversion factor: 1 kWh = 3,600,000 Joules (3600 seconds * 1000 watts)
+    private static final double JOULES_TO_KWH = 3_600_000.0;
+
     @Override
     public double evaluate(SchedulingSolution solution, List<Task> tasks, List<VM> vms) {
         if (tasks.isEmpty() || vms.isEmpty()) {
             return 0.0;
         }
 
-        double totalEnergy = 0.0;
+        double totalEnergyJoules = 0.0;
 
         // Calculate energy for each VM
         for (int vmIdx = 0; vmIdx < vms.size(); vmIdx++) {
@@ -96,12 +99,13 @@ public class EnergyObjective implements SchedulingObjective {
                 // Calculate power draw based on workload type
                 double power = calculatePowerForWorkload(task.getWorkloadType(), vm);
 
-                // Energy = Power × Time
-                totalEnergy += power * executionTime;
+                // Energy (Joules) = Power (Watts) × Time (seconds)
+                totalEnergyJoules += power * executionTime;
             }
         }
 
-        return totalEnergy;
+        // Convert Joules to kWh
+        return totalEnergyJoules / JOULES_TO_KWH;
     }
 
     /**
@@ -172,7 +176,7 @@ public class EnergyObjective implements SchedulingObjective {
 
     @Override
     public String getUnit() {
-        return "joules";
+        return "kWh";
     }
 
     // Getters and setters for power model parameters
