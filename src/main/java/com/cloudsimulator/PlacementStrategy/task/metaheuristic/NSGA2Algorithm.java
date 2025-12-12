@@ -133,7 +133,15 @@ public class NSGA2Algorithm {
             statistics.incrementGeneration();
             updateBestValues();
 
-            // Logging
+            // Display generation output
+            SchedulingSolution bestCandidate = getBestCandidateFromFront(fronts.get(0));
+            String candidateStr = formatCandidate(bestCandidate);
+            String fitnessStr = formatFitness(bestCandidate);
+            System.out.println("GenerationNumber : " + statistics.getCurrentGeneration() +
+                ", Best Candidate : " + candidateStr +
+                " , Fitness Value : " + fitnessStr);
+
+            // Additional verbose logging
             if (config.isVerboseLogging() &&
                 statistics.getCurrentGeneration() % config.getLogInterval() == 0) {
                 System.out.println("[NSGA-II] Generation " + statistics.getCurrentGeneration() +
@@ -441,5 +449,77 @@ public class NSGA2Algorithm {
      */
     public List<SchedulingSolution> getPopulation() {
         return population;
+    }
+
+    /**
+     * Gets the best candidate from the Pareto front based on the first objective.
+     *
+     * @param front The Pareto front (non-dominated solutions)
+     * @return Best solution for the first objective
+     */
+    private SchedulingSolution getBestCandidateFromFront(List<SchedulingSolution> front) {
+        if (front.isEmpty()) {
+            return null;
+        }
+
+        SchedulingSolution best = front.get(0);
+        boolean minimize = isMinimization[0];
+
+        for (SchedulingSolution sol : front) {
+            double currentBest = best.getObjectiveValue(0);
+            double candidate = sol.getObjectiveValue(0);
+
+            if (minimize) {
+                if (candidate < currentBest) {
+                    best = sol;
+                }
+            } else {
+                if (candidate > currentBest) {
+                    best = sol;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    /**
+     * Formats a candidate solution as a string representation.
+     *
+     * @param solution The solution to format
+     * @return String representation of task assignments
+     */
+    private String formatCandidate(SchedulingSolution solution) {
+        if (solution == null) {
+            return "null";
+        }
+        int[] assignment = solution.getTaskAssignment();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < assignment.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(assignment[i]);
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * Formats the fitness values of a solution.
+     *
+     * @param solution The solution to format
+     * @return String representation of fitness values
+     */
+    private String formatFitness(SchedulingSolution solution) {
+        if (solution == null) {
+            return "null";
+        }
+        double[] values = solution.getObjectiveValues();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(String.format("%.4f", values[i]));
+        }
+        sb.append("]");
+        return sb.toString();
     }
 }
