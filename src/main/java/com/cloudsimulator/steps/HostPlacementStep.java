@@ -4,8 +4,8 @@ import com.cloudsimulator.engine.SimulationContext;
 import com.cloudsimulator.engine.SimulationStep;
 import com.cloudsimulator.model.CloudDatacenter;
 import com.cloudsimulator.model.Host;
-import com.cloudsimulator.strategy.HostPlacementStrategy;
-import com.cloudsimulator.strategy.FirstFitHostPlacementStrategy;
+import com.cloudsimulator.PlacementStrategy.hostPlacement.HostPlacementStrategy;
+import com.cloudsimulator.PlacementStrategy.hostPlacement.FirstFitHostPlacementStrategy;
 
 import java.util.List;
 import java.util.Optional;
