@@ -4,7 +4,9 @@ import com.cloudsimulator.config.*;
 import com.cloudsimulator.engine.SimulationEngine;
 import com.cloudsimulator.enums.ComputeType;
 import com.cloudsimulator.enums.WorkloadType;
+import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
+import com.cloudsimulator.steps.UserDatacenterMappingStep;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -131,8 +133,14 @@ public class BatchExperimentMain {
         // Create a new SimulationEngine for this run
         SimulationEngine engine = new SimulationEngine();
 
-        // Add InitializationStep as the first step
+        // Step 1: Initialize all simulation entities from configuration
         engine.addStep(new InitializationStep(configCopy));
+
+        // Step 2: Assign hosts to datacenters using placement strategy
+        engine.addStep(new HostPlacementStep());
+
+        // Step 3: Validate and finalize user-datacenter relationships
+        engine.addStep(new UserDatacenterMappingStep());
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
