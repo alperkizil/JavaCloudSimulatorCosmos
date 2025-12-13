@@ -2,7 +2,11 @@ package com.cloudsimulator;
 
 import com.cloudsimulator.config.*;
 import com.cloudsimulator.engine.SimulationEngine;
+import com.cloudsimulator.engine.SimulationContext;
 import com.cloudsimulator.enums.ComputeType;
+import com.cloudsimulator.model.CloudDatacenter;
+import com.cloudsimulator.model.Host;
+import com.cloudsimulator.model.VM;
 import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
@@ -170,6 +174,53 @@ public class BatchExperimentMain {
 
         // Run the simulation
         engine.run();
+
+        // Print VM assignments after Step 4
+        printVMAssignments(engine.getContext());
+    }
+
+    /**
+     * Prints VM assignments for each host after VM placement.
+     */
+    private void printVMAssignments(SimulationContext context) {
+        System.out.println();
+        System.out.println("VM ASSIGNMENTS BY HOST");
+        System.out.println("----------------------------------------");
+
+        int totalVMsAssigned = 0;
+        int activeHosts = 0;
+
+        for (CloudDatacenter dc : context.getDatacenters()) {
+            System.out.println("Datacenter: " + dc.getName());
+
+            for (Host host : dc.getHosts()) {
+                List<VM> assignedVMs = host.getAssignedVMs();
+                if (!assignedVMs.isEmpty()) {
+                    activeHosts++;
+                    totalVMsAssigned += assignedVMs.size();
+
+                    System.out.printf("  Host %d [%s, %d cores, %d GPUs, %s RAM]: %d VMs%n",
+                            host.getId(),
+                            host.getComputeType(),
+                            host.getNumberOfCpuCores(),
+                            host.getNumberOfGpus(),
+                            formatNumber(host.getRamCapacityMB()) + "MB",
+                            assignedVMs.size());
+
+                    for (VM vm : assignedVMs) {
+                        System.out.printf("    -> VM %d [%s, %d vCPUs, %d GPUs, Owner: %s]%n",
+                                vm.getId(),
+                                vm.getComputeType(),
+                                vm.getRequestedVcpuCount(),
+                                vm.getRequestedGpuCount(),
+                                vm.getUserId());
+                    }
+                }
+            }
+        }
+
+        System.out.println("----------------------------------------");
+        System.out.printf("Total: %d VMs assigned to %d active hosts%n", totalVMsAssigned, activeHosts);
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
