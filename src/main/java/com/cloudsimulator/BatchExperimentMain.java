@@ -1,8 +1,10 @@
 package com.cloudsimulator;
 
 import com.cloudsimulator.config.*;
+import com.cloudsimulator.engine.SimulationEngine;
 import com.cloudsimulator.enums.ComputeType;
 import com.cloudsimulator.enums.WorkloadType;
+import com.cloudsimulator.steps.InitializationStep;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -15,6 +17,9 @@ import java.util.stream.Collectors;
  * Provides a Swing-based folder selector for .cosc configuration files.
  */
 public class BatchExperimentMain {
+
+    // List of original configurations to be passed to experiment runs
+    private List<ExperimentConfiguration> experimentConfigurations = new ArrayList<>();
 
     public static void main(String[] args) {
         // Set look and feel to system default
@@ -102,12 +107,32 @@ public class BatchExperimentMain {
             return;
         }
 
+        // Store configurations for later experiment runs
+        this.experimentConfigurations = configurations;
+
         // Display seeds for each file
         printFileSeeds(fileSeedMap);
 
         // Display shared configuration (using first file as reference)
         ExperimentConfiguration referenceConfig = configurations.get(0);
         printSharedConfiguration(referenceConfig);
+    }
+
+    /**
+     * Runs a single simulation experiment with the given configuration.
+     * Uses a deep copy of the configuration to ensure isolation between runs.
+     *
+     * @param config The experiment configuration for this run
+     */
+    private void singleRun(ExperimentConfiguration config) {
+        // Create a deep copy of the configuration to ensure isolation
+        ExperimentConfiguration configCopy = config.clone();
+
+        // Create a new SimulationEngine for this run
+        SimulationEngine engine = new SimulationEngine();
+
+        // Add InitializationStep as the first step
+        engine.addStep(new InitializationStep(configCopy));
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
