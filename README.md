@@ -14,6 +14,7 @@ JavaCloudSimulatorCosmos enables researchers and practitioners to simulate cloud
 - **Energy and carbon footprint** tracking with regional carbon intensity
 - **SLA compliance** monitoring with percentile metrics
 - **Multi-objective optimization** using NSGA-II algorithm
+- **Single/weighted-sum optimization** using Generational GA with Elitism
 - **Comprehensive reporting** with CSV export
 
 ---
@@ -59,8 +60,12 @@ com.cloudsimulator
 ├── PlacementStrategy/  # Placement and assignment strategies
 │   ├── hostPlacement/  # 5 host placement strategies
 │   ├── VMPlacement/    # 4 VM placement strategies
-│   └── task/           # 3 task assignment strategies + NSGA-II
-│       └── metaheuristic/  # NSGA-II multi-objective optimization framework
+│   └── task/           # 3 task assignment strategies + metaheuristics
+│       └── metaheuristic/  # Evolutionary optimization framework
+│           ├── objectives/    # Scheduling objectives (Makespan, Energy)
+│           ├── operators/     # Genetic operators (Crossover, Mutation, Repair)
+│           ├── selection/     # Selection operators (Tournament)
+│           └── termination/   # Termination conditions
 ├── calculator/         # Energy calculators
 ├── reporter/           # CSV report generators (6 report types)
 └── gui/                # JavaFX Configuration Generator
@@ -586,6 +591,7 @@ Example: my_experiment_20241209_143025_a1b2c3/
 | `ShortestQueueTaskAssignmentStrategy` | Assigns to VM with fewest tasks | Balance task count |
 | `WorkloadAwareTaskAssignmentStrategy` | Minimizes estimated completion time | Heterogeneous workloads |
 | `NSGA2TaskSchedulingStrategy` | Multi-objective Pareto optimization | Research, trade-off analysis |
+| `GenerationalGATaskSchedulingStrategy` | Single/weighted-sum optimization with elitism | Fast convergence, single best solution |
 
 ### NSGA-II Multi-Objective Optimization
 
@@ -625,6 +631,101 @@ SchedulingSolution kneePoint = front.getKneePoint();
 - `TimeLimitTermination`: Stop after specified time
 - `TargetFitnessTermination`: Stop when target reached
 - `CompositeTermination`: Combine with AND/OR logic
+
+### Generational GA with Elitism
+
+The Generational GA strategy provides single-objective or weighted-sum optimization with guaranteed reproducibility:
+
+```java
+// Single objective optimization (minimize makespan)
+GAConfiguration config = GAConfiguration.builder()
+    .populationSize(100)
+    .crossoverRate(0.9)
+    .mutationRate(0.1)
+    .elitePercentage(0.1)              // Keep top 10% unchanged
+    .tournamentSize(3)                  // Tournament selection
+    .objective(new MakespanObjective()) // Single objective
+    .terminationCondition(new GenerationCountTermination(200))
+    .verboseLogging(true)
+    .build();
+
+GenerationalGATaskSchedulingStrategy strategy =
+    new GenerationalGATaskSchedulingStrategy(config);
+SchedulingSolution best = strategy.optimize(tasks, vms);
+
+// Access statistics
+GAStatistics stats = strategy.getLastStatistics();
+System.out.println("Best fitness: " + stats.getGlobalBestFitness());
+System.out.println("Found at generation: " + stats.getBestSolutionGeneration());
+```
+
+**Weighted-Sum Multi-Objective:**
+
+```java
+// Combine objectives with weights (normalized automatically)
+GAConfiguration config = GAConfiguration.builder()
+    .populationSize(100)
+    .eliteCount(10)                     // Absolute elitism: keep top 10
+    .tournamentSize(2)
+    .addWeightedObjective(new MakespanObjective(), 0.7)  // 70% weight
+    .addWeightedObjective(new EnergyObjective(), 0.3)    // 30% weight
+    .terminationCondition(new GenerationCountTermination(200))
+    .build();
+```
+
+**Key Features:**
+- **Single objective** (default): Optimize one metric (Makespan or Energy)
+- **Weighted-sum**: Combine multiple objectives with configurable weights
+- **Elitism**: Preserve best solutions (absolute count or percentage)
+- **Tournament selection**: Configurable tournament size (k=2 to k=N)
+- **Reproducibility**: Uses simulator's `RandomGenerator` for identical results with same seed
+
+**Elitism Configuration:**
+
+| Method | Description | Example |
+|--------|-------------|---------|
+| `.eliteCount(N)` | Keep exactly N best individuals | `.eliteCount(10)` |
+| `.elitePercentage(P)` | Keep top P% of population | `.elitePercentage(0.1)` |
+
+**Statistics Output:**
+
+The algorithm tracks comprehensive metrics per generation:
+
+```
+Generation: X, Best Candidate: [task assignments], Fitness Value: Y
+```
+
+Additional metrics available via `GAStatistics`:
+- `getBestFitness()`: Best fitness in current generation
+- `getAverageFitness()`: Average fitness in current generation
+- `getWorstFitness()`: Worst fitness in current generation
+- `getStandardDeviation()`: Fitness standard deviation
+- `getNoImprovementGenerations()`: Generations since last improvement
+- `getGlobalBestFitness()`: Best fitness found across all generations
+- `getBestSolutionGeneration()`: Generation where best was found
+
+**Output Formats:**
+
+```java
+// Configure output format
+statistics.setOutputFormat(GAStatistics.OutputFormat.DETAILED);
+
+// Available formats:
+// MINIMAL:  "Generation: X, Best: Y"
+// DEFAULT:  "Generation: X, Best Candidate: [...], Fitness Value: Y"
+// DETAILED: Full metrics including avg, worst, std dev
+// CSV:      "generation,best,avg,worst,stddev,no_improvement"
+```
+
+**Comparison: NSGA-II vs Generational GA:**
+
+| Feature | NSGA-II | Generational GA |
+|---------|---------|-----------------|
+| Output | Pareto front (multiple solutions) | Single best solution |
+| Objectives | True multi-objective | Single or weighted-sum |
+| Selection | Crowded tournament | Standard tournament |
+| Use case | Trade-off analysis | Fast, focused optimization |
+| Complexity | Higher | Lower |
 
 ---
 
@@ -847,6 +948,8 @@ java -cp out com.cloudsimulator.VMPlacementStepTest
 java -cp out com.cloudsimulator.TaskAssignmentStepTest
 java -cp out com.cloudsimulator.ExecutionStepsTest
 java -cp out com.cloudsimulator.ReportingStepTest
+java -cp out com.cloudsimulator.NSGA2VerificationTest
+java -cp out com.cloudsimulator.GenerationalGAVerificationTest
 ```
 
 ---
@@ -882,7 +985,9 @@ JavaCloudSimulatorCosmos/
 │       ├── HostTest.java
 │       ├── VMTest.java
 │       ├── UserTest.java
-│       └── TaskTest.java
+│       ├── TaskTest.java
+│       ├── NSGA2VerificationTest.java
+│       └── GenerationalGAVerificationTest.java
 ├── configs/
 │   └── sample-experiment.cosc
 ├── pom.xml
