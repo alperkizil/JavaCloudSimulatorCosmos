@@ -135,6 +135,9 @@ public class BatchExperimentMain {
         // Create a new SimulationEngine for this run
         SimulationEngine engine = new SimulationEngine();
 
+        // Configure engine with the experiment configuration (sets seed, initializes RandomGenerator)
+        engine.configure(configCopy);
+
         // Step 1: Initialize all simulation entities from configuration
         engine.addStep(new InitializationStep(configCopy));
 
