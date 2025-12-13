@@ -120,6 +120,24 @@ public class BatchExperimentMain {
         // Display shared configuration (using first file as reference)
         ExperimentConfiguration referenceConfig = configurations.get(0);
         printSharedConfiguration(referenceConfig);
+
+        // Run experiments for each configuration
+        System.out.println("========================================");
+        System.out.println("RUNNING EXPERIMENTS");
+        System.out.println("========================================");
+
+        for (int i = 0; i < experimentConfigurations.size(); i++) {
+            ExperimentConfiguration config = experimentConfigurations.get(i);
+            System.out.printf("%nExperiment %d/%d (Seed: %d)%n",
+                    i + 1, experimentConfigurations.size(), config.getRandomSeed());
+            System.out.println("----------------------------------------");
+            singleRun(config);
+        }
+
+        System.out.println();
+        System.out.println("========================================");
+        System.out.println("ALL EXPERIMENTS COMPLETED");
+        System.out.println("========================================");
     }
 
     /**
