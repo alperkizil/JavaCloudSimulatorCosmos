@@ -20,67 +20,41 @@
     </properties>
 
     <dependencies>
-        <!-- JavaFX Base (from local lib folder) -->
+        <!-- JavaFX dependencies (installed from lib/ via install-javafx-local.sh) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-base</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.base.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX Graphics (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-graphics</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.graphics.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX Controls (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-controls</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.controls.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX FXML (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.fxml.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX Web (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-web</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.web.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX Media (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-media</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.media.jar</systemPath>
         </dependency>
-
-        <!-- JavaFX Swing (from local lib folder) -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-swing</artifactId>
             <version>${javafx.version}</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/javafx.swing.jar</systemPath>
         </dependency>
     </dependencies>
 
