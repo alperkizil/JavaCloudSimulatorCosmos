@@ -58,9 +58,9 @@ public class PowerModelFactory {
                         System.err.println("Invalid scale factor in model name: " + modelName);
                     }
                 }
-                // If unknown model name, return standard model
-                System.err.println("Unknown power model: " + modelName + ". Using StandardPowerModel.");
-                return new PowerModel("StandardPowerModel", 300.0, 250.0, 50.0, 30.0, 100.0);
+                // If unknown model name, return MeasurementBasedPowerModel as default
+                System.err.println("Unknown power model: " + modelName + ". Using MeasurementBasedPowerModel.");
+                return createMeasurementBasedWrapper(1.0);
         }
     }
 

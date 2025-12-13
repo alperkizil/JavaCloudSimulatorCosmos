@@ -1,6 +1,7 @@
 package com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives;
 
 import com.cloudsimulator.enums.WorkloadType;
+import com.cloudsimulator.model.MeasurementBasedPowerModel;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
@@ -35,28 +36,58 @@ import java.util.List;
  */
 public class EnergyObjective implements SchedulingObjective {
 
-    // Default power model parameters (can be customized)
+    // Measurement-based power model for accurate workload-specific power calculation
+    private final MeasurementBasedPowerModel powerModel;
+
+    // Legacy power model parameters (used as fallback)
     private double basePowerWatts = 50.0;      // Idle power per VM
     private double cpuPowerPerCoreWatts = 30.0; // Additional power per vCPU at 100% utilization
     private double gpuPowerPerUnitWatts = 200.0; // Additional power per GPU at 100% utilization
 
+    // Flag to use measurement-based model
+    private boolean useMeasurementBasedModel = true;
+
     /**
-     * Creates an EnergyObjective with default power model parameters.
+     * Creates an EnergyObjective with MeasurementBasedPowerModel (default).
+     * Uses empirical power measurements for accurate energy estimation.
      */
     public EnergyObjective() {
+        this.powerModel = new MeasurementBasedPowerModel();
     }
 
     /**
-     * Creates an EnergyObjective with custom power model parameters.
+     * Creates an EnergyObjective with a custom MeasurementBasedPowerModel.
+     *
+     * @param powerModel The measurement-based power model to use
+     */
+    public EnergyObjective(MeasurementBasedPowerModel powerModel) {
+        this.powerModel = powerModel;
+    }
+
+    /**
+     * Creates an EnergyObjective with a hardware scale factor for the MeasurementBasedPowerModel.
+     *
+     * @param hardwareScaleFactor Scale factor for different hardware (1.0 = reference system)
+     */
+    public EnergyObjective(double hardwareScaleFactor) {
+        this.powerModel = new MeasurementBasedPowerModel(hardwareScaleFactor);
+    }
+
+    /**
+     * Creates an EnergyObjective with legacy power model parameters.
+     * Use this constructor for backward compatibility or custom linear power models.
      *
      * @param basePowerWatts        Base idle power per VM
      * @param cpuPowerPerCoreWatts  Power per vCPU core at 100% utilization
      * @param gpuPowerPerUnitWatts  Power per GPU at 100% utilization
+     * @param useLegacyModel        Set to true to use legacy linear model instead of measurement-based
      */
-    public EnergyObjective(double basePowerWatts, double cpuPowerPerCoreWatts, double gpuPowerPerUnitWatts) {
+    public EnergyObjective(double basePowerWatts, double cpuPowerPerCoreWatts, double gpuPowerPerUnitWatts, boolean useLegacyModel) {
+        this.powerModel = new MeasurementBasedPowerModel();
         this.basePowerWatts = basePowerWatts;
         this.cpuPowerPerCoreWatts = cpuPowerPerCoreWatts;
         this.gpuPowerPerUnitWatts = gpuPowerPerUnitWatts;
+        this.useMeasurementBasedModel = !useLegacyModel;
     }
 
     @Override
@@ -110,19 +141,54 @@ public class EnergyObjective implements SchedulingObjective {
 
     /**
      * Calculates power consumption for a specific workload type on a VM.
-     * Uses workload-specific CPU/GPU utilization profiles.
+     * Uses MeasurementBasedPowerModel by default for accurate empirical power estimation.
+     * Falls back to legacy linear model if configured.
      *
      * @param workloadType The workload being executed
      * @param vm           The VM executing the workload
      * @return Power consumption in Watts
      */
     private double calculatePowerForWorkload(WorkloadType workloadType, VM vm) {
+        if (useMeasurementBasedModel) {
+            return calculatePowerMeasurementBased(workloadType, vm);
+        } else {
+            return calculatePowerLegacy(workloadType, vm);
+        }
+    }
+
+    /**
+     * Calculates power using the MeasurementBasedPowerModel.
+     * Uses empirical measurements for accurate workload-specific power estimation.
+     *
+     * @param workloadType The workload being executed
+     * @param vm           The VM executing the workload
+     * @return Power consumption in Watts
+     */
+    private double calculatePowerMeasurementBased(WorkloadType workloadType, VM vm) {
+        // Get typical utilization for this workload from the empirical profile
+        double[] utilization = getUtilizationProfile(workloadType);
+        double cpuUtil = utilization[0];
+        double gpuUtil = utilization[1];
+
+        // Use the measurement-based power model for accurate calculation
+        return powerModel.calculateTotalPower(workloadType, cpuUtil, gpuUtil);
+    }
+
+    /**
+     * Calculates power using the legacy linear model.
+     * Provided for backward compatibility.
+     *
+     * @param workloadType The workload being executed
+     * @param vm           The VM executing the workload
+     * @return Power consumption in Watts
+     */
+    private double calculatePowerLegacy(WorkloadType workloadType, VM vm) {
         // Get utilization profile for workload type
         double[] utilization = getUtilizationProfile(workloadType);
         double cpuUtil = utilization[0];
         double gpuUtil = utilization[1];
 
-        // Calculate power components
+        // Calculate power components using legacy linear model
         double cpuPower = cpuUtil * vm.getRequestedVcpuCount() * cpuPowerPerCoreWatts;
         double gpuPower = gpuUtil * vm.getRequestedGpuCount() * gpuPowerPerUnitWatts;
 
@@ -131,33 +197,41 @@ public class EnergyObjective implements SchedulingObjective {
 
     /**
      * Returns the CPU and GPU utilization profile for a workload type.
-     * These values are consistent with the VM.calculateUtilization() method.
+     * These values are consistent with the VM.calculateUtilization() method
+     * and the empirical measurements in MeasurementBasedPowerModel.
      *
      * @param workloadType The workload type
      * @return Array of [cpuUtilization, gpuUtilization] (0.0 to 1.0)
      */
     private double[] getUtilizationProfile(WorkloadType workloadType) {
+        // First try to get utilization from the measurement-based model
+        if (powerModel != null && powerModel.hasProfile(workloadType)) {
+            var profile = powerModel.getWorkloadProfile(workloadType);
+            return new double[]{profile.getTypicalCpuUtilization(), profile.getTypicalGpuUtilization()};
+        }
+
+        // Fallback to hardcoded values
         switch (workloadType) {
             case SEVEN_ZIP:
-                return new double[]{0.8, 0.0};
+                return new double[]{1.0, 0.0};  // 100% CPU from empirical data
             case DATABASE:
-                return new double[]{0.6, 0.0};
+                return new double[]{0.12, 0.0}; // 12% CPU from empirical data
             case FURMARK:
-                return new double[]{0.1, 1.0};
+                return new double[]{0.08, 1.0}; // 8% CPU, 100% GPU from empirical data
             case IMAGE_GEN_CPU:
-                return new double[]{0.9, 0.0};
+                return new double[]{0.80, 0.0}; // 80% CPU from empirical data
             case IMAGE_GEN_GPU:
-                return new double[]{0.2, 0.9};
+                return new double[]{0.30, 0.10}; // 30% CPU, 10% GPU from empirical data
             case LLM_CPU:
-                return new double[]{0.95, 0.0};
+                return new double[]{0.55, 0.0}; // 55% CPU from empirical data
             case LLM_GPU:
-                return new double[]{0.3, 0.95};
+                return new double[]{0.12, 0.12}; // 12% CPU, 12% GPU from empirical data
             case CINEBENCH:
-                return new double[]{1.0, 0.0};
+                return new double[]{1.0, 0.0};  // 100% CPU from empirical data
             case PRIME95SmallFFT:
-                return new double[]{1.0, 0.0};
+                return new double[]{1.0, 0.0};  // 100% CPU from empirical data
             case VERACRYPT:
-                return new double[]{0.85, 0.0};
+                return new double[]{0.03, 0.0}; // 3% CPU (disk-bound) from empirical data
             case IDLE:
             default:
                 return new double[]{0.0, 0.0};
@@ -171,7 +245,8 @@ public class EnergyObjective implements SchedulingObjective {
 
     @Override
     public String getDescription() {
-        return "Minimizes total energy consumption across all VMs executing tasks";
+        String modelType = useMeasurementBasedModel ? "MeasurementBasedPowerModel" : "Legacy Linear Model";
+        return "Minimizes total energy consumption across all VMs executing tasks (using " + modelType + ")";
     }
 
     @Override
@@ -203,5 +278,32 @@ public class EnergyObjective implements SchedulingObjective {
 
     public void setGpuPowerPerUnitWatts(double gpuPowerPerUnitWatts) {
         this.gpuPowerPerUnitWatts = gpuPowerPerUnitWatts;
+    }
+
+    /**
+     * Gets the MeasurementBasedPowerModel used for energy calculation.
+     *
+     * @return The power model
+     */
+    public MeasurementBasedPowerModel getPowerModel() {
+        return powerModel;
+    }
+
+    /**
+     * Checks if the measurement-based power model is being used.
+     *
+     * @return true if using MeasurementBasedPowerModel, false if using legacy model
+     */
+    public boolean isUsingMeasurementBasedModel() {
+        return useMeasurementBasedModel;
+    }
+
+    /**
+     * Sets whether to use the measurement-based power model.
+     *
+     * @param useMeasurementBasedModel true to use MeasurementBasedPowerModel, false for legacy
+     */
+    public void setUseMeasurementBasedModel(boolean useMeasurementBasedModel) {
+        this.useMeasurementBasedModel = useMeasurementBasedModel;
     }
 }

@@ -94,6 +94,7 @@ public class Host {
         this.otherComponentsPowerDraw = 0.0;
 
         this.powerModel = new PowerModel();
+        this.measurementBasedPowerModel = new MeasurementBasedPowerModel(); // Default to measurement-based model
         this.utilizationHistory = new ArrayList<>();
         this.vmOpenSecondsMap = new HashMap<>();
         this.vmWorkloadSecondsMap = new HashMap<>();
