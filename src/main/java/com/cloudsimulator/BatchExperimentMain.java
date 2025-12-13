@@ -7,17 +7,24 @@ import com.cloudsimulator.enums.ComputeType;
 import com.cloudsimulator.model.CloudDatacenter;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.VM;
+import com.cloudsimulator.model.Task;
 import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
 import com.cloudsimulator.steps.UserDatacenterMappingStep;
 import com.cloudsimulator.steps.VMPlacementStep;
+import com.cloudsimulator.steps.TaskAssignmentStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.File;
 import java.util.*;
+import java.util.Queue;
 import java.util.stream.Collectors;
 
 /**
@@ -172,11 +179,22 @@ public class BatchExperimentMain {
         // Step 4: Assign VMs to hosts using Best Fit strategy
         engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
 
+        // Step 5: Assign tasks to VMs using NSGA-II multi-objective optimization
+        NSGA2Configuration nsga2Config = NSGA2Configuration.builder()
+                .populationSize(100)
+                .addObjective(new MakespanObjective())
+                .addObjective(new EnergyObjective())
+                .build();
+        engine.addStep(new TaskAssignmentStep(new NSGA2TaskSchedulingStrategy(nsga2Config)));
+
         // Run the simulation
         engine.run();
 
         // Print VM assignments after Step 4
         printVMAssignments(engine.getContext());
+
+        // Print task assignments after Step 5
+        printTaskAssignments(engine.getContext());
     }
 
     /**
@@ -221,6 +239,60 @@ public class BatchExperimentMain {
 
         System.out.println("----------------------------------------");
         System.out.printf("Total: %d VMs assigned to %d active hosts%n", totalVMsAssigned, activeHosts);
+    }
+
+    /**
+     * Prints task assignments for each VM after task assignment.
+     */
+    private void printTaskAssignments(SimulationContext context) {
+        System.out.println();
+        System.out.println("TASK ASSIGNMENTS BY VM");
+        System.out.println("----------------------------------------");
+
+        int totalTasksAssigned = 0;
+        int totalCpuTasks = 0;
+        int totalGpuTasks = 0;
+
+        for (VM vm : context.getVms()) {
+            Queue<Task> assignedTasks = vm.getAssignedTasks();
+
+            System.out.printf("VM %d [%s, Owner: %s]:%n", vm.getId(), vm.getComputeType(), vm.getUserId());
+
+            if (assignedTasks.isEmpty()) {
+                System.out.println("  Queue: EMPTY");
+            } else {
+                int cpuTasks = 0;
+                int gpuTasks = 0;
+
+                for (Task task : assignedTasks) {
+                    if (isGpuWorkload(task.getWorkloadType())) {
+                        gpuTasks++;
+                    } else {
+                        cpuTasks++;
+                    }
+                }
+
+                totalTasksAssigned += assignedTasks.size();
+                totalCpuTasks += cpuTasks;
+                totalGpuTasks += gpuTasks;
+
+                System.out.printf("  CPU Tasks: %d, GPU Tasks: %d, Total: %d%n",
+                        cpuTasks, gpuTasks, assignedTasks.size());
+            }
+        }
+
+        System.out.println("----------------------------------------");
+        System.out.printf("Total: %d tasks assigned (CPU: %d, GPU: %d)%n",
+                totalTasksAssigned, totalCpuTasks, totalGpuTasks);
+    }
+
+    /**
+     * Determines if a workload type uses GPU.
+     */
+    private boolean isGpuWorkload(WorkloadType type) {
+        return type == WorkloadType.FURMARK ||
+               type == WorkloadType.IMAGE_GEN_GPU ||
+               type == WorkloadType.LLM_GPU;
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
