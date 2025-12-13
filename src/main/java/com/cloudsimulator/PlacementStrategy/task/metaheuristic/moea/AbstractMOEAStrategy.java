@@ -8,6 +8,7 @@ import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.utils.SimulationLogger;
 
+import org.moeaframework.algorithm.AbstractEvolutionaryAlgorithm;
 import org.moeaframework.core.Algorithm;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;

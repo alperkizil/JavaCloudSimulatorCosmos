@@ -2,6 +2,21 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 
 import org.moeaframework.algorithm.NSGAII;
 import org.moeaframework.core.Algorithm;
+import org.moeaframework.core.Initialization;
+import org.moeaframework.core.NondominatedSortingPopulation;
+import org.moeaframework.core.Population;
+import org.moeaframework.core.Selection;
+import org.moeaframework.core.Solution;
+import org.moeaframework.core.Variation;
+import org.moeaframework.core.initialization.RandomInitialization;
+import org.moeaframework.core.operator.TournamentSelection;
+import org.moeaframework.core.operator.real.PM;
+import org.moeaframework.core.operator.real.SBX;
+import org.moeaframework.core.operator.integer.PM as IntegerPM;
+import org.moeaframework.core.operator.integer.SBX as IntegerSBX;
+import org.moeaframework.core.comparator.ChainedComparator;
+import org.moeaframework.core.comparator.CrowdingComparator;
+import org.moeaframework.core.comparator.ParetoDominanceComparator;
 
 /**
  * MOEA Framework NSGA-II implementation for task scheduling.
@@ -51,12 +66,34 @@ public class MOEA_NSGAII extends AbstractMOEAStrategy {
 
     @Override
     protected Algorithm createAlgorithm(TaskSchedulingProblem problem) {
-        // Use simple constructor - MOEA Framework auto-selects appropriate
-        // operators based on the variable types in the problem
-        NSGAII algorithm = new NSGAII(problem);
+        // Create selection operator
+        // Uses Pareto dominance comparator followed by crowding distance
+        Selection selection = new TournamentSelection(2,
+            new ChainedComparator(
+                new ParetoDominanceComparator(),
+                new CrowdingComparator()
+            ));
 
-        // Configure population size via the algorithm's configuration
-        algorithm.setInitialPopulationSize(config.getPopulationSize());
+        // Create variation operators for integer variables
+        // SBX crossover and polynomial mutation adapted for integers
+        Variation variation = new org.moeaframework.core.operator.CompoundVariation(
+            new IntegerSBX(config.getCrossoverRate(), 15.0),
+            new IntegerPM(config.getMutationRate(), 20.0)
+        );
+
+        // Create initialization
+        Initialization initialization = new RandomInitialization(problem);
+
+        // Create NSGA-II algorithm
+        NSGAII algorithm = new NSGAII(
+            problem,
+            config.getPopulationSize(),
+            new NondominatedSortingPopulation(),
+            null, // Use default archive
+            selection,
+            variation,
+            initialization
+        );
 
         return algorithm;
     }
