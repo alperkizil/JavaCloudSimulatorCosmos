@@ -7,6 +7,8 @@ import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
 import com.cloudsimulator.steps.UserDatacenterMappingStep;
+import com.cloudsimulator.steps.VMPlacementStep;
+import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -118,6 +120,24 @@ public class BatchExperimentMain {
         // Display shared configuration (using first file as reference)
         ExperimentConfiguration referenceConfig = configurations.get(0);
         printSharedConfiguration(referenceConfig);
+
+        // Run experiments for each configuration
+        System.out.println("========================================");
+        System.out.println("RUNNING EXPERIMENTS");
+        System.out.println("========================================");
+
+        for (int i = 0; i < experimentConfigurations.size(); i++) {
+            ExperimentConfiguration config = experimentConfigurations.get(i);
+            System.out.printf("%nExperiment %d/%d (Seed: %d)%n",
+                    i + 1, experimentConfigurations.size(), config.getRandomSeed());
+            System.out.println("----------------------------------------");
+            singleRun(config);
+        }
+
+        System.out.println();
+        System.out.println("========================================");
+        System.out.println("ALL EXPERIMENTS COMPLETED");
+        System.out.println("========================================");
     }
 
     /**
@@ -133,6 +153,9 @@ public class BatchExperimentMain {
         // Create a new SimulationEngine for this run
         SimulationEngine engine = new SimulationEngine();
 
+        // Configure engine with the experiment configuration (sets seed, initializes RandomGenerator)
+        engine.configure(configCopy);
+
         // Step 1: Initialize all simulation entities from configuration
         engine.addStep(new InitializationStep(configCopy));
 
@@ -141,6 +164,12 @@ public class BatchExperimentMain {
 
         // Step 3: Validate and finalize user-datacenter relationships
         engine.addStep(new UserDatacenterMappingStep());
+
+        // Step 4: Assign VMs to hosts using Best Fit strategy
+        engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
+
+        // Run the simulation
+        engine.run();
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
