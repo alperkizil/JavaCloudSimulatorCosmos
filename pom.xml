@@ -33,13 +33,6 @@
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
         </dependency>
-
-        <!-- MOEA Framework for multi-objective optimization algorithms -->
-        <dependency>
-            <groupId>org.moeaframework</groupId>
-            <artifactId>moeaframework</artifactId>
-            <version>5.1</version>
-        </dependency>
     </dependencies>
 
     <build>
