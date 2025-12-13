@@ -27,18 +27,37 @@
         </properties>
     </action>
 
-    <!-- Run Single File (Shift+F6) - uses default exec:java for non-JavaFX classes -->
+    <!-- Run Single File (Shift+F6) - runs any class with main method -->
+    <!-- Uses test classpath to include both main and test classes -->
     <action>
         <actionName>run.single.main</actionName>
         <packagings>
             <packaging>jar</packaging>
         </packagings>
         <goals>
-            <goal>process-classes</goal>
+            <goal>process-test-classes</goal>
             <goal>org.codehaus.mojo:exec-maven-plugin:3.1.0:java</goal>
         </goals>
         <properties>
             <exec.mainClass>${packageClassName}</exec.mainClass>
+            <exec.classpathScope>test</exec.classpathScope>
+        </properties>
+    </action>
+
+    <!-- Debug Single File - debug any class with main method -->
+    <action>
+        <actionName>debug.single.main</actionName>
+        <packagings>
+            <packaging>jar</packaging>
+        </packagings>
+        <goals>
+            <goal>process-test-classes</goal>
+            <goal>org.codehaus.mojo:exec-maven-plugin:3.1.0:java</goal>
+        </goals>
+        <properties>
+            <exec.mainClass>${packageClassName}</exec.mainClass>
+            <exec.classpathScope>test</exec.classpathScope>
+            <jpda.listen>true</jpda.listen>
         </properties>
     </action>
 </actions>
