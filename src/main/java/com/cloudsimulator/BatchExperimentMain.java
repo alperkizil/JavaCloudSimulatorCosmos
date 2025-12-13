@@ -16,7 +16,7 @@ import com.cloudsimulator.steps.VMPlacementStep;
 import com.cloudsimulator.steps.TaskAssignmentStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
 
@@ -185,7 +185,7 @@ public class BatchExperimentMain {
                 .addObjective(new MakespanObjective())
                 .addObjective(new EnergyObjective())
                 .build();
-        engine.addStep(new TaskAssignmentStep(new NSGA2TaskSchedulingStrategy(nsga2Config)));
+        engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
 
         // Run the simulation
         engine.run();
