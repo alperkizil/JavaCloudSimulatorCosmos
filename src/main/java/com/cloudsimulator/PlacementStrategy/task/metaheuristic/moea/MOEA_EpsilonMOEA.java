@@ -2,6 +2,16 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 
 import org.moeaframework.algorithm.EpsilonMOEA;
 import org.moeaframework.core.Algorithm;
+import org.moeaframework.core.EpsilonBoxDominanceArchive;
+import org.moeaframework.core.Initialization;
+import org.moeaframework.core.Population;
+import org.moeaframework.core.Selection;
+import org.moeaframework.core.Variation;
+import org.moeaframework.core.initialization.RandomInitialization;
+import org.moeaframework.core.operator.TournamentSelection;
+import org.moeaframework.core.operator.integer.PM as IntegerPM;
+import org.moeaframework.core.operator.integer.SBX as IntegerSBX;
+import org.moeaframework.core.comparator.ParetoDominanceComparator;
 
 /**
  * MOEA Framework ε-MOEA implementation for task scheduling.
@@ -77,16 +87,41 @@ public class MOEA_EpsilonMOEA extends AbstractMOEAStrategy {
             // Create default epsilons if not properly configured
             epsilons = new double[problem.getNumberOfObjectives()];
             for (int i = 0; i < epsilons.length; i++) {
-                // Default: Makespan in seconds, Energy in kWh
-                epsilons[i] = i == 0 ? 10.0 : 0.001;
+                // Default: 1% of expected range for each objective
+                epsilons[i] = i == 0 ? 10.0 : 0.001; // Makespan in seconds, Energy in kWh
             }
         }
 
-        // Create ε-MOEA algorithm with epsilon archive
-        EpsilonMOEA algorithm = new EpsilonMOEA(problem, epsilons);
+        // Create ε-box dominance archive
+        EpsilonBoxDominanceArchive archive = new EpsilonBoxDominanceArchive(epsilons);
 
-        // Configure population size
-        algorithm.setInitialPopulationSize(config.getPopulationSize());
+        // Create selection operator
+        Selection selection = new TournamentSelection(2, new ParetoDominanceComparator());
+
+        // Create variation operators for integer variables
+        Variation variation = new org.moeaframework.core.operator.CompoundVariation(
+            new IntegerSBX(config.getCrossoverRate(), 15.0),
+            new IntegerPM(config.getMutationRate(), 20.0)
+        );
+
+        // Create initialization
+        Initialization initialization = new RandomInitialization(problem);
+
+        // Create initial population
+        Population population = new Population();
+        for (int i = 0; i < config.getPopulationSize(); i++) {
+            population.add(problem.newSolution());
+        }
+
+        // Create ε-MOEA algorithm
+        EpsilonMOEA algorithm = new EpsilonMOEA(
+            problem,
+            population,
+            archive,
+            selection,
+            variation,
+            initialization
+        );
 
         return algorithm;
     }
