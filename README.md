@@ -727,6 +727,92 @@ statistics.setOutputFormat(GAStatistics.OutputFormat.DETAILED);
 | Use case | Trade-off analysis | Fast, focused optimization |
 | Complexity | Higher | Lower |
 
+### MOEA Framework Integration
+
+The simulator integrates with [MOEA Framework 5.1](https://github.com/MOEAFramework/MOEAFramework) by David Hadka, providing access to well-tested, production-quality multi-objective optimization algorithms.
+
+**Available MOEA Framework Strategies:**
+
+| Strategy | Algorithm | Description |
+|----------|-----------|-------------|
+| `MOEA_NSGAII` | NSGA-II | Non-dominated Sorting GA with crowding distance |
+| `MOEA_SPEA2` | SPEA2 | Strength Pareto EA with k-th nearest neighbor density |
+| `MOEA_EpsilonMOEA` | ε-MOEA | Epsilon-dominance for controlled Pareto resolution |
+| `MOEA_AMOSA` | AMOSA | Archived Multi-Objective Simulated Annealing |
+
+**Example: Using MOEA_SPEA2:**
+
+```java
+MOEAConfiguration config = MOEAConfiguration.builder()
+    .algorithm(MOEAConfiguration.Algorithm.SPEA2)
+    .populationSize(100)
+    .maxEvaluations(10000)
+    .archiveSize(100)
+    .crossoverRate(0.9)
+    .mutationRate(0.1)
+    .addObjective(new MakespanObjective())
+    .addObjective(new EnergyObjective())
+    .solutionSelection(MOEAConfiguration.SolutionSelection.KNEE_POINT)
+    .verboseLogging(true)
+    .build();
+
+MOEA_SPEA2 strategy = new MOEA_SPEA2(config);
+
+// Use in TaskAssignmentStep
+TaskAssignmentStep step = new TaskAssignmentStep(strategy);
+```
+
+**Example: Using ε-MOEA with Custom Epsilons:**
+
+```java
+MOEAConfiguration config = MOEAConfiguration.builder()
+    .algorithm(MOEAConfiguration.Algorithm.EPSILON_MOEA)
+    .populationSize(100)
+    .maxEvaluations(10000)
+    .epsilons(10.0, 0.001)  // 10 seconds for Makespan, 0.001 kWh for Energy
+    .solutionSelection(MOEAConfiguration.SolutionSelection.KNEE_POINT)
+    .build();
+
+MOEA_EpsilonMOEA strategy = new MOEA_EpsilonMOEA(config);
+```
+
+**Example: Using AMOSA:**
+
+```java
+MOEAConfiguration config = MOEAConfiguration.builder()
+    .algorithm(MOEAConfiguration.Algorithm.AMOSA)
+    .maxEvaluations(10000)
+    .initialTemperature(1000.0)
+    .finalTemperature(0.01)
+    .coolingRate(0.9)
+    .archiveSize(100)
+    .iterationsPerTemperature(100)
+    .solutionSelection(MOEAConfiguration.SolutionSelection.KNEE_POINT)
+    .build();
+
+MOEA_AMOSA strategy = new MOEA_AMOSA(config);
+```
+
+**Key Features:**
+
+- **Experiment Reproducibility**: All MOEA Framework algorithms use the simulator's `RandomGenerator` seed via `PRNG.setSeed()`, ensuring identical results with the same seed
+- **Constraint Handling**: User ownership and compute type compatibility are enforced as MOEA Framework constraints
+- **Solution Selection**: Multiple methods for selecting from Pareto front:
+  - `KNEE_POINT`: Balanced trade-off solution
+  - `BEST_FIRST_OBJECTIVE`: Best makespan
+  - `BEST_SECOND_OBJECTIVE`: Best energy
+  - `WEIGHTED_SUM`: Weighted combination
+  - `FIRST`: First solution in front
+
+**Algorithm Comparison:**
+
+| Algorithm | Diversity Method | Archive | Best For |
+|-----------|------------------|---------|----------|
+| NSGA-II | Crowding distance | No | General multi-objective |
+| SPEA2 | k-th nearest neighbor | Yes | Better diversity |
+| ε-MOEA | ε-boxes | Yes | Controlled Pareto resolution |
+| AMOSA | Simulated annealing | Yes | Expensive objectives |
+
 ---
 
 ## Configuration System
