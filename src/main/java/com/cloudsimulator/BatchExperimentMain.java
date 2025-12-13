@@ -7,6 +7,8 @@ import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
 import com.cloudsimulator.steps.UserDatacenterMappingStep;
+import com.cloudsimulator.steps.VMPlacementStep;
+import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -141,6 +143,9 @@ public class BatchExperimentMain {
 
         // Step 3: Validate and finalize user-datacenter relationships
         engine.addStep(new UserDatacenterMappingStep());
+
+        // Step 4: Assign VMs to hosts using Best Fit strategy
+        engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
