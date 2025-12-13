@@ -1,0 +1,21 @@
+# Configure the platform-specific settings
+ifeq ($(OS),Windows_NT)
+    SEPARATOR := ;
+else
+    SEPARATOR := :
+endif
+
+CLASSPATH := ${java.class.path}
+
+# Compile the shared library
+build:
+	mkdir -p bin/
+	cp -r META-INF bin
+	javac -classpath "$(CLASSPATH)" -d bin src/${packagePath}/*.java
+	jar -cf ${problemName}.jar -C bin META-INF/ -C bin ${packagePath}
+
+clean:
+	rm -rf bin/ ${problemName}.jar
+	
+run:
+	java -classpath "$(CLASSPATH)" ${packageName}.Example

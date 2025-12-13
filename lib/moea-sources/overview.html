@@ -1,0 +1,323 @@
+<html>
+<body>
+<p>
+This document is the API specification for the MOEA Framework.  The MOEA Framework is a free and open source Java
+library for developing and experimenting with multiobjective evolutionary algorithms (MOEAs) and other general-purpose
+optimization algorithms and metaheuristics.  It supports genetic algorithms, differential evolution, particle swarm
+optimization, genetic programming, grammatical evolution, and more.  Problems can be defined using real or
+integer-valued decision variables, permutations, binary arrays (bit strings), expression trees (programs), grammars,
+and any combination thereof.  This makes the MOEA Framework one of the most comprehensive evolutionary algorithm
+libraries available.
+<p>
+The following table lists the algorithms provided by the MOEA Framework natively:
+
+<table id="listOfAlgorithms" style="width: 100%; border-collapse: collapse">
+  <caption>List of algorithms</caption>
+  <tr>
+    <th style="width: 11%; text-align: left">Algorithm</th>
+    <th style="width: 17%; text-align: left">Type</th>
+    <th style="width: 9%; text-align: center">Real</th>
+    <th style="width: 9%; text-align: center">Binary</th>
+    <th style="width: 9%; text-align: center">Permutation</th>
+    <th style="width: 9%; text-align: center">Subset</th>
+    <th style="width: 9%; text-align: center">Grammar</th>
+    <th style="width: 9%; text-align: center">Program</th>
+    <th style="width: 9%; text-align: center">Constraints</th>
+  </tr>
+  <tr>
+    <td>AGE-MOEA-II</td>
+    <td>Genetic Algorithm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>AMOSA</td>
+    <td>Simulated Annealing</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>CMA-ES</td>
+    <td>Evolutionary Strategy</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>DBEA</td>
+    <td>Decomposition</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>DE</td>
+    <td>Single Objective</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>eMOEA</td>
+    <td>&epsilon;-Dominance</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>eNSGAII</td>
+    <td>&epsilon;-Dominance</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>ES</td>
+    <td>Single Objective</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>GA</td>
+    <td>Single Objective</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>GDE3</td>
+    <td>Differential Evolution</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>IBEA</td>
+    <td>Indicator-Based</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+  </tr>
+  <tr>
+    <td>MOEAD</td>
+    <td>Decomposition</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>MSOPS</td>
+    <td>Differential Evolution</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>NSGAII</td>
+    <td>Genetic Algorithm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>NSGAIII</td>
+    <td>Reference Points</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>OMOPSO</td>
+    <td>Particle Swarm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>PAES</td>
+    <td>Evolutionary Strategy</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>PESA2</td>
+    <td>Genetic Algorithm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>RSO</td>
+    <td>Single Objective</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>RVEA</td>
+    <td>Reference Vectors</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>SA</td>
+    <td>Simulated Annealing</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>SMPSO</td>
+    <td>Particle Swarm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>SMSEMOA</td>
+    <td>Indicator-Based</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>SPEA2</td>
+    <td>Genetic Algorithm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>UNSGAIII</td>
+    <td>Reference Points</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+  </tr>
+  <tr>
+    <td>VEGA</td>
+    <td>Genetic Algorithm</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #90FF90">Yes</td>
+    <td style="text-align: center; background: #FF9090">No</td>
+  </tr>
+</table>
+<p>
+Furthermore, extensions are available to integrate with other popular libraries, including
+<a href="https://github.com/MOEAFramework/JMetal-Plugin">JMetal-Plugin</a> and
+<a href="https://github.com/MOEAFramework/PISA-Plugin">PISA-Plugin</a>.
+<p>
+As this project is academic in nature, every effort is taking to ensure the correctness, quality, and openness of this
+software.  Please open an issue on our <a href="https://github.com/MOEAFramework/MOEAFramework">GitHub repository</a>
+if you encounter any issues.
+</body>
+</html>

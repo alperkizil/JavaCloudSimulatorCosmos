@@ -270,11 +270,11 @@ public class ParetoFront {
 
     /**
      * Adds a solution to the Pareto front.
-     * Internal method - solutions should be validated as non-dominated first.
+     * Solutions should be validated as non-dominated before adding.
      *
      * @param solution Solution to add
      */
-    void addSolution(SchedulingSolution solution) {
+    public void addSolution(SchedulingSolution solution) {
         solutions.add(solution);
     }
 
