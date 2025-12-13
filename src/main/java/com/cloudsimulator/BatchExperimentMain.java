@@ -167,6 +167,9 @@ public class BatchExperimentMain {
 
         // Step 4: Assign VMs to hosts using Best Fit strategy
         engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
+
+        // Run the simulation
+        engine.run();
     }
 
     private void printFileSeeds(Map<String, Long> fileSeedMap) {
