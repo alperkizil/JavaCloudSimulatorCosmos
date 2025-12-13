@@ -1,0 +1,29 @@
+# Edit the following to configure the compiler and required libraries
+CC = gcc
+LIBS =
+CLFAGS = -O3
+
+# Configure the platform-specific settings
+ifeq ($(OS),Windows_NT)
+    SEPARATOR := ;
+    LIBS += -lwsock32 -lWs2_32
+else
+    SEPARATOR := :
+endif
+
+CLASSPATH := ${java.class.path}
+
+# Compile the external program
+build:
+	mkdir -p bin/
+	$(CC) $(CFLAGS) -o bin/${problemName}.exe ${problemName}.c moeaframework.c $(LIBS)
+	cp -r META-INF bin
+	javac -classpath "$(CLASSPATH)" -d bin src/${packagePath}/*.java
+	mv bin/${problemName}.exe bin/${packagePath}
+	jar -cf ${problemName}.jar -C bin META-INF/ -C bin ${packagePath}
+
+clean:
+	rm -rf bin/ ${problemName}.jar
+	
+run:
+	java -classpath "$(CLASSPATH)" ${packageName}.Example
