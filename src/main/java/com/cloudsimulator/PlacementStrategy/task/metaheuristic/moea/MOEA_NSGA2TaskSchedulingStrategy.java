@@ -199,8 +199,10 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             System.out.println("[MOEA-NSGA-II] Pareto front contains " + lastParetoFront.size() + " solutions");
         }
 
-        // Clean up
-        algorithm.terminate();
+        // Clean up (only if not already terminated)
+        if (!algorithm.isTerminated()) {
+            algorithm.terminate();
+        }
 
         return lastParetoFront;
     }
