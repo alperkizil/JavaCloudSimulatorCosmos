@@ -2,11 +2,6 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 
 import org.moeaframework.algorithm.SPEA2;
 import org.moeaframework.core.Algorithm;
-import org.moeaframework.core.Initialization;
-import org.moeaframework.core.Variation;
-import org.moeaframework.core.initialization.RandomInitialization;
-import org.moeaframework.core.operator.integer.PM as IntegerPM;
-import org.moeaframework.core.operator.integer.SBX as IntegerSBX;
 
 /**
  * MOEA Framework SPEA2 implementation for task scheduling.
@@ -61,30 +56,12 @@ public class MOEA_SPEA2 extends AbstractMOEAStrategy {
 
     @Override
     protected Algorithm createAlgorithm(TaskSchedulingProblem problem) {
-        // Create variation operators for integer variables
-        Variation variation = new org.moeaframework.core.operator.CompoundVariation(
-            new IntegerSBX(config.getCrossoverRate(), 15.0),
-            new IntegerPM(config.getMutationRate(), 20.0)
-        );
+        // Use simple constructor - MOEA Framework auto-selects appropriate
+        // operators based on the variable types in the problem
+        SPEA2 algorithm = new SPEA2(problem);
 
-        // Create initialization
-        Initialization initialization = new RandomInitialization(problem);
-
-        // Calculate offspring size (typically equal to population size)
-        int offspringSize = config.getPopulationSize();
-
-        // Determine k for k-th nearest neighbor (sqrt of archive size is common)
-        int k = (int) Math.sqrt(config.getSpea2ArchiveSize());
-        if (k < 1) k = 1;
-
-        // Create SPEA2 algorithm
-        SPEA2 algorithm = new SPEA2(
-            problem,
-            initialization,
-            variation,
-            offspringSize,
-            config.getSpea2ArchiveSize()
-        );
+        // Configure population size
+        algorithm.setInitialPopulationSize(config.getPopulationSize());
 
         return algorithm;
     }
