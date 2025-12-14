@@ -201,9 +201,10 @@ public class TaskExecutionStep implements SimulationStep {
             }
         }
 
-        // Calculate makespan
+        // Calculate makespan (includes the starting tick)
+        // A task that starts at tick 0 and ends at tick N actually ran for N+1 ticks
         if (firstTaskStartTime != null && lastTaskEndTime != null) {
-            makespan = lastTaskEndTime - firstTaskStartTime;
+            makespan = lastTaskEndTime - firstTaskStartTime + 1;
         }
 
         // Calculate averages
