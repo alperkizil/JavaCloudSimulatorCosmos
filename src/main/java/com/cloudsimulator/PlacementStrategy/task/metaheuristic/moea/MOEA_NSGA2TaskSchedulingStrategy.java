@@ -4,7 +4,9 @@ import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
@@ -58,7 +60,7 @@ import java.util.Optional;
  * @see Executor
  * @see Analyzer
  */
-public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy {
+public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy, MultiObjectiveSchedulingStrategy {
 
     /**
      * Selection method for choosing a single solution from the Pareto front.
@@ -607,5 +609,43 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
      */
     public NSGA2Configuration getConfiguration() {
         return config;
+    }
+
+    // ============================================================
+    // MultiObjectiveSchedulingStrategy interface implementation
+    // ============================================================
+
+    /**
+     * Gets the Pareto front from the last optimization run.
+     * Required by MultiObjectiveSchedulingStrategy interface.
+     */
+    @Override
+    public ParetoFront getParetoFront() {
+        return lastParetoFront;
+    }
+
+    /**
+     * Gets the list of objectives used by this strategy.
+     * Required by MultiObjectiveSchedulingStrategy interface.
+     */
+    @Override
+    public List<SchedulingObjective> getObjectives() {
+        return config.getObjectives();
+    }
+
+    /**
+     * Gets the random seed used for optimization reproducibility.
+     * Required by MultiObjectiveSchedulingStrategy interface.
+     */
+    @Override
+    public long getRandomSeed() {
+        if (config.hasRandomSeed()) {
+            return config.getRandomSeed();
+        }
+        try {
+            return RandomGenerator.getInstance().getSeed();
+        } catch (IllegalStateException e) {
+            return System.currentTimeMillis();
+        }
     }
 }
