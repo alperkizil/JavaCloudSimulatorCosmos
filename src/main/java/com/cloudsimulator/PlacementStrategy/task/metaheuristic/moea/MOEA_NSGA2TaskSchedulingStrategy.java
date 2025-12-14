@@ -462,6 +462,12 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             throw new IOException("No Pareto front available to save");
         }
 
+        // Create parent directories if they don't exist
+        File parentDir = file.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            parentDir.mkdirs();
+        }
+
         String xLabel = config.getObjectiveNames().size() > 0 ? config.getObjectiveNames().get(0) : "Objective 1";
         String yLabel = config.getObjectiveNames().size() > 1 ? config.getObjectiveNames().get(1) : "Objective 2";
 
