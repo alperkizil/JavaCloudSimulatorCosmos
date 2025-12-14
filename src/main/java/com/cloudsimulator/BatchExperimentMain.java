@@ -188,17 +188,20 @@ public class BatchExperimentMain {
                 .build();
         engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
 
-        // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
-        engine.addStep(new VMExecutionStep());
-
-        // Run the simulation
+        // Run steps 1-5 (before execution)
         engine.run();
 
         // Print VM assignments after Step 4
         printVMAssignments(engine.getContext());
 
-        // Print task assignments after Step 5
+        // Print task assignments after Step 5 (before execution empties the queues)
         printTaskAssignments(engine.getContext());
+
+        // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
+        engine.addStep(new VMExecutionStep());
+
+        // Run step 6
+        engine.run();
     }
 
     /**
