@@ -74,7 +74,14 @@ public class MakespanObjective implements SchedulingObjective {
             if (vmCompletionTicks > maxCompletionTicks) {
                 maxCompletionTicks = vmCompletionTicks;
             }
+
+            // DEBUG: Print per-VM completion ticks
+            System.out.println("[MakespanObjective] VM " + vmIdx + " (ID=" + vm.getId() +
+                ", IPS=" + vmIps + "): " + vmCompletionTicks + " ticks, " +
+                taskOrder.size() + " tasks");
         }
+
+        System.out.println("[MakespanObjective] Final makespan: " + maxCompletionTicks + " seconds");
 
         return (double) maxCompletionTicks;
     }
