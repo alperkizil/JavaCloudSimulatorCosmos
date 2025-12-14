@@ -198,10 +198,9 @@ public class BatchExperimentMain {
         printTaskAssignments(engine.getContext());
 
         // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
-        engine.addStep(new VMExecutionStep());
-
-        // Run step 6
-        engine.run();
+        // Execute directly on context to avoid re-running steps 1-5
+        VMExecutionStep vmExecutionStep = new VMExecutionStep();
+        vmExecutionStep.execute(engine.getContext());
     }
 
     /**
