@@ -1,6 +1,5 @@
 package com.cloudsimulator.PlacementStrategy.task.metaheuristic;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -11,8 +10,7 @@ import java.util.List;
  * A solution is non-dominated if no other solution is better in all objectives.
  * The Pareto front represents the trade-off surface between objectives.
  */
-public class ParetoFront implements Serializable {
-    private static final long serialVersionUID = 1L;
+public class ParetoFront {
 
     private final List<SchedulingSolution> solutions;
     private final List<String> objectiveNames;

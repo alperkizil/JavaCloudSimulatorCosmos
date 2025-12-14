@@ -617,35 +617,6 @@ public class VM {
         return utilizationHistory;
     }
 
-    /**
-     * Resets VM for a new simulation run (used in Pareto front simulation).
-     * Clears all execution state while preserving host assignment and configuration.
-     */
-    public void resetForNewSimulation() {
-        // Task management - clear queues
-        this.assignedTasks.clear();
-        this.finishedTasks.clear();
-        this.currentExecutingTask = null;
-        this.currentTaskProgress = 0;
-
-        // Timing - reset all counters
-        this.activeSeconds = 0;
-        this.secondsIDLE = 0;
-        this.secondsExecuting = 0;
-        this.totalOpenSeconds = 0;
-        this.totalIDLESeconds = 0;
-        this.totalActiveWorkloadSeconds = 0;
-
-        // Utilization tracking - clear history
-        this.utilizationHistory.clear();
-        this.taskRunningSecondsMap.clear();
-        this.taskWorkloadSecondsMap.clear();
-        this.currentUtilization = new VMUtilization();
-
-        // State - set to RUNNING (VMs are already placed on hosts)
-        this.vmState = VmState.RUNNING;
-    }
-
     @Override
     public String toString() {
         return "VM{" +
