@@ -193,12 +193,6 @@ public class ParetoFrontSimulationStep implements SimulationStep {
             Files.deleteIfExists(Paths.get(snapshotFile));
             Files.deleteIfExists(Paths.get(tempDir));
 
-            // Cleanup result files
-            for (int i = 0; i < solutions.size(); i++) {
-                String resultFile = outputDirectory + "/result_" + i + ".ser";
-                Files.deleteIfExists(Paths.get(resultFile));
-            }
-
         } catch (Exception e) {
             throw new RuntimeException("Pareto front simulation failed", e);
         }
