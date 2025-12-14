@@ -103,8 +103,12 @@ public class EnergyObjective implements SchedulingObjective {
 
         double incrementalEnergyJoules = 0.0;
         long makespan = 0;
+        int activeVmCount = 0;
+        long totalVmTicks = 0;  // Sum of all VM completion times (for idle calculation)
 
-        // Calculate incremental energy for each VM and track makespan
+        // First pass: calculate makespan and incremental energy
+        long[] vmCompletionTicks = new long[vms.size()];
+
         for (int vmIdx = 0; vmIdx < vms.size(); vmIdx++) {
             VM vm = vms.get(vmIdx);
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
@@ -113,12 +117,11 @@ public class EnergyObjective implements SchedulingObjective {
                 continue; // VM is not used
             }
 
+            activeVmCount++;
             long vmIps = vm.getTotalRequestedIps();
             if (vmIps == 0) {
                 continue; // Invalid VM
             }
-
-            long vmCompletionTicks = 0;
 
             // Calculate incremental energy for each task on this VM
             for (int taskIdx : taskOrder) {
@@ -127,7 +130,7 @@ public class EnergyObjective implements SchedulingObjective {
                 // Calculate execution ticks using ceiling division
                 // This models the discrete 1-second time steps in simulation
                 long executionTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
-                vmCompletionTicks += executionTicks;
+                vmCompletionTicks[vmIdx] += executionTicks;
 
                 // Calculate INCREMENTAL power (above idle) for this workload
                 double incrementalPower = calculateIncrementalPowerForWorkload(task.getWorkloadType(), vm);
@@ -136,18 +139,26 @@ public class EnergyObjective implements SchedulingObjective {
                 incrementalEnergyJoules += incrementalPower * executionTicks;
             }
 
+            totalVmTicks += vmCompletionTicks[vmIdx];
+
             // Track makespan (max completion time across all VMs)
-            if (vmCompletionTicks > makespan) {
-                makespan = vmCompletionTicks;
+            if (vmCompletionTicks[vmIdx] > makespan) {
+                makespan = vmCompletionTicks[vmIdx];
             }
         }
 
-        // Add base idle energy for the entire simulation duration
+        // Add base idle energy for the entire simulation duration (host idle power)
         // This matches simulation's tick-by-tick calculation: each tick includes baseIdlePower
         double baseIdlePower = powerModel.getScaledIdlePower();
-        double idleEnergyJoules = baseIdlePower * makespan;
+        double hostIdleEnergyJoules = baseIdlePower * makespan;
 
-        double totalEnergyJoules = idleEnergyJoules + incrementalEnergyJoules;
+        // Add VM idle energy: when VMs finish before makespan, they still consume some power
+        // Each active VM runs for 'makespan' ticks total, but only executes tasks for vmCompletionTicks
+        // The idle time (makespan - vmCompletionTicks) still consumes base VM power
+        // Approximation: use IDLE workload incremental power (which is 0 for measurement-based model)
+        // The simulation counts host idle during VM idle, which we already count in hostIdleEnergyJoules
+
+        double totalEnergyJoules = hostIdleEnergyJoules + incrementalEnergyJoules;
 
         // Convert Joules to kWh
         return totalEnergyJoules / JOULES_TO_KWH;
