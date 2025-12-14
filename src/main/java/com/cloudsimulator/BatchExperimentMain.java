@@ -15,6 +15,7 @@ import com.cloudsimulator.steps.UserDatacenterMappingStep;
 import com.cloudsimulator.steps.VMPlacementStep;
 import com.cloudsimulator.steps.TaskAssignmentStep;
 import com.cloudsimulator.steps.VMExecutionStep;
+import com.cloudsimulator.steps.TaskExecutionStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
@@ -188,20 +189,20 @@ public class BatchExperimentMain {
                 .build();
         engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
 
-        // Run steps 1-5 (before execution)
-        engine.run();
-
-        // Print VM assignments after Step 4
-        printVMAssignments(engine.getContext());
-
-        // Print task assignments after Step 5 (before execution empties the queues)
-        printTaskAssignments(engine.getContext());
-
         // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
         engine.addStep(new VMExecutionStep());
 
-        // Run step 6
+        // Step 7: Analyze task execution results (makespan, turnaround time, throughput, etc.)
+        engine.addStep(new TaskExecutionStep());
+
+        // Run all steps
         engine.run();
+
+        // Print VM assignments (uses Host -> VM relationships)
+        printVMAssignments(engine.getContext());
+
+        // Print task assignments (uses Task.assignedVmId which persists after execution)
+        printTaskAssignments(engine.getContext());
     }
 
     /**
@@ -250,23 +251,33 @@ public class BatchExperimentMain {
 
     /**
      * Prints task assignments for each VM after task assignment.
+     * Uses Task.assignedVmId which persists even after execution completes.
      */
     private void printTaskAssignments(SimulationContext context) {
         System.out.println();
         System.out.println("TASK ASSIGNMENTS BY VM");
         System.out.println("----------------------------------------");
 
+        // Group tasks by assigned VM ID
+        Map<Long, List<Task>> tasksByVmId = new HashMap<>();
+        for (Task task : context.getTasks()) {
+            Long vmId = task.getAssignedVmId();
+            if (vmId != null) {
+                tasksByVmId.computeIfAbsent(vmId, k -> new ArrayList<>()).add(task);
+            }
+        }
+
         int totalTasksAssigned = 0;
         int totalCpuTasks = 0;
         int totalGpuTasks = 0;
 
         for (VM vm : context.getVms()) {
-            Queue<Task> assignedTasks = vm.getAssignedTasks();
+            List<Task> assignedTasks = tasksByVmId.getOrDefault(vm.getId(), Collections.emptyList());
 
             System.out.printf("VM %d [%s, Owner: %s]:%n", vm.getId(), vm.getComputeType(), vm.getUserId());
 
             if (assignedTasks.isEmpty()) {
-                System.out.println("  Queue: EMPTY");
+                System.out.println("  Tasks: NONE");
             } else {
                 int cpuTasks = 0;
                 int gpuTasks = 0;
