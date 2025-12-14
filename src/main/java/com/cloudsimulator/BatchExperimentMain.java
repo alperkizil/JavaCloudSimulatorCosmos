@@ -14,6 +14,7 @@ import com.cloudsimulator.steps.InitializationStep;
 import com.cloudsimulator.steps.UserDatacenterMappingStep;
 import com.cloudsimulator.steps.VMPlacementStep;
 import com.cloudsimulator.steps.TaskAssignmentStep;
+import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
@@ -186,6 +187,9 @@ public class BatchExperimentMain {
                 .addObjective(new EnergyObjective())
                 .build();
         engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
+
+        // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
+        engine.addStep(new VMExecutionStep());
 
         // Run the simulation
         engine.run();
