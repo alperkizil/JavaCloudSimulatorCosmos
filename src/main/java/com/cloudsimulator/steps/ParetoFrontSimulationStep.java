@@ -3,7 +3,6 @@ package com.cloudsimulator.steps;
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.engine.SimulationContext;
 import com.cloudsimulator.engine.SimulationSnapshot;
-import com.cloudsimulator.engine.SimulationStep;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;

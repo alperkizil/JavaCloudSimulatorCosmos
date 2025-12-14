@@ -42,8 +42,8 @@ public class SimulationSnapshot implements Serializable {
     // Maps VM ID -> host ID
     private final Map<Long, Long> vmHostMapping;
 
-    // Maps user name -> set of datacenter IDs
-    private final Map<String, Set<Long>> userDatacenterMapping;
+    // Maps user name -> set of datacenter names
+    private final Map<String, Set<String>> userDatacenterMapping;
 
     // Maps VM ID -> user name (for ownership tracking)
     private final Map<Long, String> vmUserMapping;
@@ -93,10 +93,10 @@ public class SimulationSnapshot implements Serializable {
         return mapping;
     }
 
-    private Map<String, Set<Long>> captureUserMappings(SimulationContext context) {
-        Map<String, Set<Long>> mapping = new HashMap<>();
+    private Map<String, Set<String>> captureUserMappings(SimulationContext context) {
+        Map<String, Set<String>> mapping = new HashMap<>();
         for (User user : context.getUsers()) {
-            mapping.put(user.getName(), new HashSet<>(user.getUserSelectedDatacenters()));
+            mapping.put(user.getName(), new HashSet<>(user.getSelectedDatacenterNames()));
         }
         return mapping;
     }
@@ -162,10 +162,14 @@ public class SimulationSnapshot implements Serializable {
 
         // Step 3: Restore user mappings
         for (User user : context.getUsers()) {
-            Set<Long> dcIds = userDatacenterMapping.get(user.getName());
-            if (dcIds != null) {
-                for (Long dcId : dcIds) {
-                    user.addSelectedDatacenter(dcId);
+            Set<String> dcNames = userDatacenterMapping.get(user.getName());
+            if (dcNames != null) {
+                for (String dcName : dcNames) {
+                    user.selectDatacenter(dcName);
+                    CloudDatacenter dc = datacenterByName.get(dcName);
+                    if (dc != null) {
+                        user.resolveDatacenterId(dcName, (int) dc.getId());
+                    }
                 }
             }
             user.startSession(0);
