@@ -6,7 +6,7 @@ Simulate **all solutions** in a Pareto front from multi-objective algorithms (NS
 ---
 
 ## Problem Statement
-Currently, NSGA-II produces a Pareto front with estimated makespan/energy values (e.g., 21-32 seconds), but actual simulation yields significantly different results (e.g., 88 seconds). This is due to:
+Currently, NSGA-II and MOEA Task Scheduling Strategiese produce a Pareto front with estimated makespan/energy values (e.g., 21-32 seconds), but actual simulation yields significantly different results (e.g., 88 seconds). This is due to:
 - Time-step discretization (1-second ticks waste remaining IPS when task completes mid-tick)
 - Only one solution from the front is selected and executed
 - No way to validate all Pareto solutions against actual simulation
@@ -234,3 +234,4 @@ Index    Est.Makespan    Act.Makespan    Est.Energy      Act.Energy      MS Erro
 - Allows researchers to see full Pareto front with actual metrics
 - Helps tune optimization objectives to better match reality
 - Supports any multi-objective algorithm via interface
+
