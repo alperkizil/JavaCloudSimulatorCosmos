@@ -10,13 +10,9 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolutio
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Simulation step that runs all solutions in a Pareto front through the full simulation pipeline.
@@ -206,7 +202,7 @@ public class ParetoFrontSimulationStep implements SimulationStep {
                                            String outputDir) throws IOException {
         String javaHome = System.getProperty("java.home");
         String javaBin = javaHome + File.separator + "bin" + File.separator + "java";
-        String classpath = buildClasspath();
+        String classpath = System.getProperty("java.class.path");
 
         ProcessBuilder pb = new ProcessBuilder(
             javaBin,
@@ -222,45 +218,6 @@ public class ParetoFrontSimulationStep implements SimulationStep {
         pb.inheritIO();
 
         return pb.start();
-    }
-
-    /**
-     * Builds a comprehensive classpath for subprocess execution.
-     * Tries multiple methods to ensure all dependencies are included.
-     */
-    private String buildClasspath() {
-        Set<String> classpathEntries = new LinkedHashSet<>();
-
-        // Method 1: Use RuntimeMXBean classpath (works with mvn exec:java)
-        String runtimeClasspath = ManagementFactory.getRuntimeMXBean().getClassPath();
-        if (runtimeClasspath != null && !runtimeClasspath.isEmpty()) {
-            Collections.addAll(classpathEntries, runtimeClasspath.split(File.pathSeparator));
-        }
-
-        // Method 2: Use system property (fallback)
-        String sysClasspath = System.getProperty("java.class.path");
-        if (sysClasspath != null && !sysClasspath.isEmpty()) {
-            Collections.addAll(classpathEntries, sysClasspath.split(File.pathSeparator));
-        }
-
-        // Method 3: Try URLClassLoader if available (for IDE environments)
-        ClassLoader classLoader = getClass().getClassLoader();
-        if (classLoader instanceof URLClassLoader) {
-            URL[] urls = ((URLClassLoader) classLoader).getURLs();
-            for (URL url : urls) {
-                String path = url.getPath();
-                // Handle URL encoding (e.g., %20 for spaces)
-                try {
-                    path = java.net.URLDecoder.decode(path, "UTF-8");
-                } catch (Exception e) {
-                    // Use path as-is
-                }
-                classpathEntries.add(path);
-            }
-        }
-
-        // Build the final classpath string
-        return String.join(File.pathSeparator, classpathEntries);
     }
 
     /**
