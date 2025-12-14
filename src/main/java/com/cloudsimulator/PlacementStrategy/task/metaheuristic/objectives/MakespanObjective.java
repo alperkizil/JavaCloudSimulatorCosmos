@@ -65,10 +65,17 @@ public class MakespanObjective implements SchedulingObjective {
             long vmCompletionTicks = 0;
             for (int taskIdx : taskOrder) {
                 Task task = tasks.get(taskIdx);
+                long instrLen = task.getInstructionLength();
                 // Ceiling division: ceil(instructionLength / vmIps)
                 // When a task finishes mid-tick, remaining IPS is wasted
-                long ticksForTask = (task.getInstructionLength() + vmIps - 1) / vmIps;
+                long ticksForTask = (instrLen + vmIps - 1) / vmIps;
                 vmCompletionTicks += ticksForTask;
+
+                // DEBUG: Print tasks that take 0 ticks or have unusual instruction length
+                if (ticksForTask == 0 || instrLen == 0 || instrLen == vmIps) {
+                    System.out.println("  [DEBUG] Task " + taskIdx + " (ID=" + task.getId() +
+                        "): instrLen=" + instrLen + ", ticks=" + ticksForTask);
+                }
             }
 
             if (vmCompletionTicks > maxCompletionTicks) {
