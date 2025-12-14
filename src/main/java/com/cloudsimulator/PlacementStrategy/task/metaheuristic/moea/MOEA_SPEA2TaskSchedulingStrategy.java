@@ -7,25 +7,29 @@ import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 
-import org.moeaframework.algorithm.SPEA2;
+import org.moeaframework.Analyzer;
+import org.moeaframework.Executor;
+import org.moeaframework.Instrumenter;
+import org.moeaframework.analysis.collector.Observations;
+import org.moeaframework.analysis.plot.Plot;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
-import org.moeaframework.core.initialization.RandomInitialization;
+
+import javax.swing.JFrame;
+import java.io.File;
+import java.io.IOException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Random;
 
 /**
- * Task scheduling strategy using MOEA Framework's SPEA2 implementation.
+ * Task scheduling strategy using MOEA Framework's Executor to run SPEA2.
  *
  * SPEA2 (Strength Pareto Evolutionary Algorithm 2) uses a novel strength-based
  * measure of fitness for handling multiple objectives. Key features:
@@ -33,14 +37,17 @@ import java.util.Random;
  * - Fine-grained fitness based on distance to k-th nearest neighbor
  * - Environmental selection with truncation
  *
- * The strategy uses our existing:
- * - CrossoverOperator (uniform, two-point, or order-based)
- * - MutationOperator (reassign, swap, combined)
- * - RepairOperator (ensures valid task-to-VM assignments)
- * - SchedulingObjective (Makespan, Energy, etc.)
+ * This strategy uses the MOEA Framework's Executor class for a cleaner, more
+ * declarative approach to running evolutionary algorithms. Benefits include:
+ * - Fluent API for configuration
+ * - Built-in support for progress tracking via Instrumenter
+ * - Easy algorithm switching (just change the algorithm name)
+ * - Optional multi-threaded evaluation with distributeOnAllCores()
+ * - Checkpointing support for long-running optimizations
  *
- * IMPORTANT: Seeds from the simulator's RandomGenerator are propagated to
- * MOEA Framework's PRNG for reproducibility.
+ * The strategy can optionally use the Analyzer class for computing quality
+ * indicators (hypervolume, generational distance, etc.) on the results,
+ * and for comparing SPEA2 against other algorithms.
  *
  * Usage:
  * <pre>
@@ -52,8 +59,11 @@ import java.util.Random;
  *     .build();
  *
  * MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
- * Map<Task, VM> assignments = strategy.assignAll(tasks, vms, currentTime);
+ * Map&lt;Task, VM&gt; assignments = strategy.assignAll(tasks, vms, currentTime);
  * </pre>
+ *
+ * @see Executor
+ * @see Analyzer
  */
 public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy {
 
@@ -71,34 +81,41 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
     private final NSGA2Configuration config;
     private SolutionSelectionMethod selectionMethod;
     private double[] selectionWeights;
-    private int kParameter;  // SPEA2's k parameter for niching
+    private boolean useDistributedEvaluation;
+    private boolean collectRuntimeData;
 
     // Cached results
     private ParetoFront lastParetoFront;
+    private NondominatedPopulation lastMoeaResult;
     private SchedulingSolution selectedSolution;
     private int lastEvaluationCount;
+    private Observations lastObservations;
 
     /**
-     * Creates a MOEA Framework SPEA2 task scheduling strategy with default k=1.
+     * Creates a MOEA Framework SPEA2 task scheduling strategy using Executor.
      *
-     * @param config NSGA-II configuration (shared configuration format)
+     * @param config Configuration (shared format with NSGA-II)
      */
     public MOEA_SPEA2TaskSchedulingStrategy(NSGA2Configuration config) {
-        this(config, 1);  // k=1 is recommended for performance
+        this.config = config;
+        this.selectionMethod = SolutionSelectionMethod.KNEE_POINT;
+        this.selectionWeights = new double[]{0.5, 0.5};
+        this.useDistributedEvaluation = false;
+        this.collectRuntimeData = false;
     }
 
     /**
-     * Creates a MOEA Framework SPEA2 task scheduling strategy.
+     * Creates a MOEA Framework SPEA2 task scheduling strategy using Executor.
+     * Note: The kParameter is not needed when using Executor as SPEA2 uses
+     * MOEA Framework's default configuration.
      *
-     * @param config NSGA-II configuration (shared configuration format)
-     * @param kParameter niching parameter specifying that crowding is computed
-     *                   using the k-th nearest neighbor (recommend k=1)
+     * @param config     Configuration (shared format with NSGA-II)
+     * @param kParameter Ignored - included for backward compatibility
+     * @deprecated Use {@link #MOEA_SPEA2TaskSchedulingStrategy(NSGA2Configuration)} instead
      */
+    @Deprecated
     public MOEA_SPEA2TaskSchedulingStrategy(NSGA2Configuration config, int kParameter) {
-        this.config = config;
-        this.kParameter = kParameter;
-        this.selectionMethod = SolutionSelectionMethod.KNEE_POINT;
-        this.selectionWeights = new double[]{0.5, 0.5};
+        this(config);
     }
 
     /**
@@ -118,16 +135,48 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
     }
 
     /**
-     * Sets the k parameter for SPEA2's niching mechanism.
-     * Higher values consider more neighbors, k=1 is recommended for performance.
+     * Enables distributed evaluation across all CPU cores.
+     * Useful for expensive objective function evaluations.
      */
-    public MOEA_SPEA2TaskSchedulingStrategy setKParameter(int k) {
-        this.kParameter = k;
+    public MOEA_SPEA2TaskSchedulingStrategy enableDistributedEvaluation() {
+        this.useDistributedEvaluation = true;
         return this;
     }
 
     /**
-     * Runs MOEA Framework's SPEA2 and returns the Pareto front.
+     * Enables collection of runtime data via Instrumenter.
+     * This allows tracking convergence, hypervolume over time, etc.
+     */
+    public MOEA_SPEA2TaskSchedulingStrategy enableRuntimeDataCollection() {
+        this.collectRuntimeData = true;
+        return this;
+    }
+
+    /**
+     * Sets the k parameter for SPEA2's niching mechanism.
+     * Note: When using Executor, this setting is ignored as SPEA2 uses defaults.
+     *
+     * @deprecated Not applicable when using Executor
+     */
+    @Deprecated
+    public MOEA_SPEA2TaskSchedulingStrategy setKParameter(int k) {
+        // Ignored when using Executor
+        return this;
+    }
+
+    /**
+     * Gets the k parameter used for SPEA2's niching.
+     * Note: Returns default value as Executor uses MOEA Framework defaults.
+     *
+     * @deprecated Not applicable when using Executor
+     */
+    @Deprecated
+    public int getKParameter() {
+        return 1; // MOEA Framework default
+    }
+
+    /**
+     * Runs MOEA Framework's SPEA2 using the Executor and returns the Pareto front.
      *
      * @param tasks Tasks to schedule
      * @param vms   Available VMs
@@ -138,79 +187,74 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             return new ParetoFront(config.getObjectiveNames(), config.getMinimizationArray());
         }
 
-        // CRITICAL: Propagate seed from simulator's RandomGenerator to MOEA Framework
+        // Propagate seed for reproducibility
         propagateSeed();
 
-        // Create our operators using MOEA's PRNG-backed Random
-        Random moeaRandom = PRNG.getRandom();
-
-        RepairOperator repairOperator = new RepairOperator(tasks, vms, moeaRandom);
+        // Create repair operator for feasibility checking
+        RepairOperator repairOperator = new RepairOperator(tasks, vms, PRNG.getRandom());
 
         if (!repairOperator.isProblemFeasible()) {
             System.err.println("[MOEA-SPEA2] Problem is infeasible: some tasks have no valid VMs");
             return new ParetoFront(config.getObjectiveNames(), config.getMinimizationArray());
         }
 
-        CrossoverOperator crossoverOperator = new CrossoverOperator(
-            config.getCrossoverType(),
-            config.getNumObjectives(),
-            moeaRandom
-        );
-
-        MutationOperator mutationOperator = new MutationOperator(
-            vms.size(),
-            repairOperator,
-            moeaRandom
-        );
-
         // Create MOEA Framework problem adapter
         TaskSchedulingProblem problem = new TaskSchedulingProblem(
             tasks, vms, config.getObjectives(), repairOperator
         );
 
-        // Create our custom variation operator
-        TaskSchedulingVariation variation = new TaskSchedulingVariation(
-            crossoverOperator,
-            mutationOperator,
-            repairOperator,
-            config.getCrossoverRate(),
-            config.getMutationRate(),
-            tasks.size(),
-            vms.size(),
-            config.getNumObjectives()
-        );
-
-        // Create and configure MOEA Framework's SPEA2
-        SPEA2 algorithm = new SPEA2(
-            problem,
-            config.getPopulationSize(),
-            new RandomInitialization(problem),
-            variation,
-            config.getPopulationSize(),  // numberOfOffspring = populationSize
-            kParameter
-        );
-
-        // Calculate max evaluations from termination condition
+        // Calculate max evaluations
         int maxEvaluations = calculateMaxEvaluations();
 
-        // Run the algorithm
         if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Starting optimization with " + maxEvaluations + " evaluations");
+            System.out.println("[MOEA-SPEA2] Starting optimization with Executor");
+            System.out.println("[MOEA-SPEA2] Algorithm: SPEA2, Evaluations: " + maxEvaluations);
             System.out.println("[MOEA-SPEA2] Population: " + config.getPopulationSize() +
-                ", k=" + kParameter +
                 ", Crossover: " + config.getCrossoverRate() +
                 ", Mutation: " + config.getMutationRate());
         }
 
-        algorithm.run(maxEvaluations);
-        lastEvaluationCount = algorithm.getNumberOfEvaluations();
+        // Build and configure the Executor using SPEA2 algorithm
+        Executor executor = new Executor()
+            .withProblem(problem)
+            .withAlgorithm("SPEA2")
+            .withMaxEvaluations(maxEvaluations)
+            .withProperty("populationSize", config.getPopulationSize())
+            .withProperty("sbx.rate", config.getCrossoverRate())
+            .withProperty("sbx.distributionIndex", 15.0)
+            .withProperty("pm.rate", config.getMutationRate())
+            .withProperty("pm.distributionIndex", 20.0);
 
-        if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Completed " + lastEvaluationCount + " evaluations");
+        // Optional: distribute evaluation across cores
+        if (useDistributedEvaluation) {
+            executor.distributeOnAllCores();
         }
 
-        // Extract the non-dominated population (Pareto front)
-        NondominatedPopulation result = algorithm.getResult();
+        // Optional: collect runtime data
+        Instrumenter instrumenter = null;
+        if (collectRuntimeData) {
+            instrumenter = new Instrumenter()
+                .withProblem(problem)
+                .withFrequency(config.getPopulationSize())
+                .attachElapsedTimeCollector()
+                .attachGenerationalDistanceCollector()
+                .attachHypervolumeCollector();
+            executor.withInstrumenter(instrumenter);
+        }
+
+        // Run the optimization
+        NondominatedPopulation result = executor.run();
+        lastMoeaResult = result;  // Store MOEA result for plotting
+        lastEvaluationCount = maxEvaluations;
+
+        // Store runtime observations if collected
+        if (instrumenter != null) {
+            lastObservations = instrumenter.getObservations();
+        }
+
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-SPEA2] Optimization completed");
+        }
 
         // Convert to our ParetoFront format
         lastParetoFront = convertToParetoFront(result, problem);
@@ -219,17 +263,125 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             System.out.println("[MOEA-SPEA2] Pareto front contains " + lastParetoFront.size() + " solutions");
         }
 
-        // Clean up (only if not already terminated)
-        if (!algorithm.isTerminated()) {
-            algorithm.terminate();
-        }
-
         return lastParetoFront;
     }
 
     /**
+     * Runs the algorithm multiple times with different seeds and uses Analyzer
+     * to compare results with quality indicators.
+     *
+     * @param tasks      Tasks to schedule
+     * @param vms        Available VMs
+     * @param numSeeds   Number of independent runs
+     * @return Analyzer results with quality metrics
+     */
+    public Analyzer.AnalyzerResults runWithAnalyzer(List<Task> tasks, List<VM> vms, int numSeeds) {
+        if (tasks.isEmpty() || vms.isEmpty()) {
+            return null;
+        }
+
+        RepairOperator repairOperator = new RepairOperator(tasks, vms, PRNG.getRandom());
+        if (!repairOperator.isProblemFeasible()) {
+            System.err.println("[MOEA-SPEA2] Problem is infeasible");
+            return null;
+        }
+
+        TaskSchedulingProblem problem = new TaskSchedulingProblem(
+            tasks, vms, config.getObjectives(), repairOperator
+        );
+
+        int maxEvaluations = calculateMaxEvaluations();
+
+        // Configure Executor for multiple seeds
+        Executor executor = new Executor()
+            .withProblem(problem)
+            .withAlgorithm("SPEA2")
+            .withMaxEvaluations(maxEvaluations)
+            .withProperty("populationSize", config.getPopulationSize())
+            .withProperty("sbx.rate", config.getCrossoverRate())
+            .withProperty("pm.rate", config.getMutationRate());
+
+        // Run multiple seeds
+        List<NondominatedPopulation> results = executor.runSeeds(numSeeds);
+
+        // Analyze results
+        Analyzer analyzer = new Analyzer()
+            .withProblem(problem)
+            .includeHypervolume()
+            .includeGenerationalDistance()
+            .includeInvertedGenerationalDistance()
+            .includeSpacing()
+            .showStatisticalSignificance();
+
+        analyzer.addAll("SPEA2", results);
+
+        return analyzer.getAnalysis();
+    }
+
+    /**
+     * Compares SPEA2 with NSGA-II using the Analyzer.
+     * Runs both algorithms with multiple seeds and produces comparative metrics.
+     *
+     * @param tasks      Tasks to schedule
+     * @param vms        Available VMs
+     * @param numSeeds   Number of independent runs per algorithm
+     * @return Analyzer results comparing both algorithms
+     */
+    public Analyzer.AnalyzerResults compareWithNSGAII(List<Task> tasks, List<VM> vms, int numSeeds) {
+        if (tasks.isEmpty() || vms.isEmpty()) {
+            return null;
+        }
+
+        RepairOperator repairOperator = new RepairOperator(tasks, vms, PRNG.getRandom());
+        if (!repairOperator.isProblemFeasible()) {
+            System.err.println("[MOEA-SPEA2] Problem is infeasible");
+            return null;
+        }
+
+        TaskSchedulingProblem problem = new TaskSchedulingProblem(
+            tasks, vms, config.getObjectives(), repairOperator
+        );
+
+        int maxEvaluations = calculateMaxEvaluations();
+
+        // Run SPEA2
+        Executor spea2Executor = new Executor()
+            .withProblem(problem)
+            .withAlgorithm("SPEA2")
+            .withMaxEvaluations(maxEvaluations)
+            .withProperty("populationSize", config.getPopulationSize())
+            .withProperty("sbx.rate", config.getCrossoverRate())
+            .withProperty("pm.rate", config.getMutationRate());
+
+        // Run NSGA-II
+        Executor nsgaiiExecutor = new Executor()
+            .withProblem(problem)
+            .withAlgorithm("NSGAII")
+            .withMaxEvaluations(maxEvaluations)
+            .withProperty("populationSize", config.getPopulationSize())
+            .withProperty("sbx.rate", config.getCrossoverRate())
+            .withProperty("pm.rate", config.getMutationRate());
+
+        List<NondominatedPopulation> spea2Results = spea2Executor.runSeeds(numSeeds);
+        List<NondominatedPopulation> nsgaiiResults = nsgaiiExecutor.runSeeds(numSeeds);
+
+        // Analyze and compare
+        Analyzer analyzer = new Analyzer()
+            .withProblem(problem)
+            .includeHypervolume()
+            .includeGenerationalDistance()
+            .includeInvertedGenerationalDistance()
+            .includeSpacing()
+            .showStatisticalSignificance();
+
+        analyzer.addAll("SPEA2", spea2Results);
+        analyzer.addAll("NSGAII", nsgaiiResults);
+
+        return analyzer.getAnalysis();
+    }
+
+    /**
      * Propagates the seed from our RandomGenerator to MOEA Framework's PRNG.
-     * This ensures reproducibility across runs with the same seed.
      */
     private void propagateSeed() {
         try {
@@ -237,7 +389,6 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             if (config.hasRandomSeed()) {
                 seed = config.getRandomSeed();
             } else {
-                // Use the simulator's RandomGenerator seed
                 seed = RandomGenerator.getInstance().getSeed();
             }
             PRNG.setSeed(seed);
@@ -246,11 +397,9 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
                 System.out.println("[MOEA-SPEA2] Using seed: " + seed);
             }
         } catch (IllegalStateException e) {
-            // RandomGenerator not initialized - use config seed or system time
             if (config.hasRandomSeed()) {
                 PRNG.setSeed(config.getRandomSeed());
             }
-            // Otherwise PRNG uses its default initialization
         }
     }
 
@@ -258,12 +407,9 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
      * Calculates maximum evaluations from the termination condition.
      */
     private int calculateMaxEvaluations() {
-        // Parse from termination condition description or use default
-        // GenerationCountTermination(N) -> N * populationSize evaluations
         String desc = config.getTerminationCondition().getDescription();
 
         if (desc.contains("generation")) {
-            // Extract number from description like "100 generations"
             String[] parts = desc.split(" ");
             try {
                 int generations = Integer.parseInt(parts[0]);
@@ -273,7 +419,6 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             }
         }
 
-        // Default: 100 generations worth
         return 100 * config.getPopulationSize();
     }
 
@@ -289,13 +434,12 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
         for (Solution solution : population) {
             SchedulingSolution schedulingSolution = problem.decode(solution);
 
-            // Copy objective values
             double[] objectives = new double[config.getNumObjectives()];
             for (int i = 0; i < objectives.length; i++) {
                 objectives[i] = solution.getObjective(i);
             }
             schedulingSolution.setObjectiveValues(objectives);
-            schedulingSolution.setRank(0); // All are on front 0
+            schedulingSolution.setRank(0);
 
             front.addSolution(schedulingSolution);
         }
@@ -325,16 +469,118 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
     }
 
     /**
-     * Gets the k parameter used for SPEA2's niching.
+     * Gets the runtime observations from the last run (if collectRuntimeData was enabled).
      */
-    public int getKParameter() {
-        return kParameter;
+    public Observations getLastObservations() {
+        return lastObservations;
+    }
+
+    /**
+     * Gets the MOEA Framework's NondominatedPopulation from the last optimization run.
+     * This can be used directly with MOEA Framework's Plot class for visualization.
+     *
+     * @return the last MOEA result, or null if no optimization has been run
+     */
+    public NondominatedPopulation getLastMoeaResult() {
+        return lastMoeaResult;
+    }
+
+    /**
+     * Displays the last Pareto front in an X-Y scatter plot using MOEA Framework's Plot.
+     * For bi-objective problems, automatically uses objective 0 for X and objective 1 for Y.
+     *
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot() {
+        return showParetoFrontPlot("SPEA2 Pareto Front");
+    }
+
+    /**
+     * Displays the last Pareto front in an X-Y scatter plot with a custom title.
+     *
+     * @param title the title for the plot window
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot(String title) {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            System.err.println("[MOEA-SPEA2] No Pareto front available to plot");
+            return null;
+        }
+
+        String xLabel = config.getObjectiveNames().size() > 0 ? config.getObjectiveNames().get(0) : "Objective 1";
+        String yLabel = config.getObjectiveNames().size() > 1 ? config.getObjectiveNames().get(1) : "Objective 2";
+
+        Plot plot = new Plot()
+            .add("SPEA2", lastMoeaResult)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel);
+
+        return plot.show();
+    }
+
+    /**
+     * Displays the last Pareto front with custom axis selection for many-objective problems.
+     *
+     * @param title the title for the plot window
+     * @param xObjective the objective index for X axis (0-based)
+     * @param yObjective the objective index for Y axis (0-based)
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot(String title, int xObjective, int yObjective) {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            System.err.println("[MOEA-SPEA2] No Pareto front available to plot");
+            return null;
+        }
+
+        List<String> names = config.getObjectiveNames();
+        String xLabel = xObjective < names.size() ? names.get(xObjective) : "Objective " + (xObjective + 1);
+        String yLabel = yObjective < names.size() ? names.get(yObjective) : "Objective " + (yObjective + 1);
+
+        Plot plot = new Plot()
+            .add("SPEA2", lastMoeaResult, xObjective, yObjective)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel);
+
+        return plot.show();
+    }
+
+    /**
+     * Saves the last Pareto front plot to a file (PNG, JPG, or SVG).
+     *
+     * @param filename the output filename (extension determines format)
+     * @throws IOException if the file cannot be written
+     */
+    public void saveParetoFrontPlot(String filename) throws IOException {
+        saveParetoFrontPlot(new File(filename), "SPEA2 Pareto Front");
+    }
+
+    /**
+     * Saves the last Pareto front plot to a file with a custom title.
+     *
+     * @param file the output file
+     * @param title the title for the plot
+     * @throws IOException if the file cannot be written
+     */
+    public void saveParetoFrontPlot(File file, String title) throws IOException {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            throw new IOException("No Pareto front available to save");
+        }
+
+        String xLabel = config.getObjectiveNames().size() > 0 ? config.getObjectiveNames().get(0) : "Objective 1";
+        String yLabel = config.getObjectiveNames().size() > 1 ? config.getObjectiveNames().get(1) : "Objective 2";
+
+        new Plot()
+            .add("SPEA2", lastMoeaResult)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel)
+            .save(file);
     }
 
     @Override
     public Optional<VM> selectVM(Task task, List<VM> candidateVMs) {
-        // For single-task selection, return first candidate
-        // This strategy is designed for batch optimization
         if (candidateVMs == null || candidateVMs.isEmpty()) {
             return Optional.empty();
         }
@@ -349,7 +595,6 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             return assignments;
         }
 
-        // Build lookup maps
         List<Task> taskList = new ArrayList<>(tasks);
         List<VM> vmList = new ArrayList<>(vms);
 
@@ -363,7 +608,7 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
             vmByIndex.put(i, vmList.get(i));
         }
 
-        // Run optimization
+        // Run optimization using Executor
         ParetoFront front = optimize(taskList, vmList);
 
         if (front.isEmpty()) {
@@ -383,7 +628,6 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
         int[] taskAssignment = selectedSolution.getTaskAssignment();
         List<List<Integer>> vmTaskOrder = selectedSolution.getVmTaskOrder();
 
-        // Assign tasks according to the solution
         for (int vmIdx = 0; vmIdx < vmTaskOrder.size(); vmIdx++) {
             VM vm = vmByIndex.get(vmIdx);
             if (vm == null) continue;
@@ -394,7 +638,7 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
                 if (task == null) continue;
 
                 if (taskAssignment[taskIdx] != vmIdx) {
-                    continue; // Skip inconsistent assignments
+                    continue;
                 }
 
                 task.assignToVM(vm.getId(), currentTime);
@@ -434,19 +678,22 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
 
     @Override
     public String getStrategyName() {
-        return "MOEA-SPEA2";
+        return "MOEA-SPEA2 (Executor)";
     }
 
     @Override
     public String getDescription() {
         StringBuilder sb = new StringBuilder();
-        sb.append("MOEA Framework SPEA2 implementation (k=").append(kParameter).append("). ");
+        sb.append("MOEA Framework SPEA2 using Executor API. ");
         sb.append("Objectives: ");
         for (int i = 0; i < config.getObjectives().size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append(config.getObjectives().get(i).getName());
         }
         sb.append(". Selection: ").append(selectionMethod);
+        if (useDistributedEvaluation) {
+            sb.append(" (distributed)");
+        }
         return sb.toString();
     }
 
@@ -456,7 +703,7 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
     }
 
     /**
-     * Gets the NSGA-II configuration (shared configuration format).
+     * Gets the configuration.
      */
     public NSGA2Configuration getConfiguration() {
         return config;
