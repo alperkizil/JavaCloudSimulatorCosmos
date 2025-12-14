@@ -186,16 +186,6 @@ public class Task {
     }
 
     /**
-     * Resets task for a new simulation run (used in Pareto front simulation).
-     * Clears all execution state including VM assignment.
-     */
-    public void resetForNewSimulation() {
-        reset();
-        this.assignedVmId = null;
-        this.taskAssignmentTime = null;
-    }
-
-    /**
      * Gets the waiting time (time between creation and start of execution).
      */
     public Long getWaitingTime() {

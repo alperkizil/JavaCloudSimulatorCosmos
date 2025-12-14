@@ -604,41 +604,6 @@ public class Host {
         return totalNumberOfSecondsIdle;
     }
 
-    /**
-     * Resets Host for a new simulation run (used in Pareto front simulation).
-     * Clears all execution and energy state while preserving VM assignments and datacenter assignment.
-     */
-    public void resetForNewSimulation() {
-        // Energy tracking - CRITICAL for Pareto comparison
-        this.totalEnergyConsumedJoules = 0.0;
-
-        // Power draw - reset current values
-        this.currentTotalPowerDraw = 0.0;
-        this.currentCpuPowerDraw = 0.0;
-        this.currentGpuPowerDraw = 0.0;
-        this.otherComponentsPowerDraw = 0.0;
-
-        // Timing - reset all counters
-        this.activeSeconds = 0;
-        this.secondsIDLE = 0;
-        this.secondsExecuting = 0;
-        this.totalNumberOfSecondsWorking = 0;
-        this.totalNumberOfSecondsIdle = 0;
-
-        // Utilization tracking - clear history
-        this.utilizationHistory.clear();
-        this.vmOpenSecondsMap.clear();
-        this.vmWorkloadSecondsMap.clear();
-
-        // Re-initialize VM tracking maps for assigned VMs
-        for (VM vm : assignedVMs) {
-            this.vmOpenSecondsMap.put(vm.getId(), 0L);
-            this.vmWorkloadSecondsMap.put(vm.getId(), new HashMap<>());
-        }
-
-        // Keep: assignedVMs (VM placement stays), allocated resources, datacenter assignment
-    }
-
     @Override
     public String toString() {
         return "Host{" +

@@ -246,20 +246,6 @@ public class CloudDatacenter {
         return getTotalEnergyConsumed() / 3_600_000.0;
     }
 
-    /**
-     * Resets CloudDatacenter for a new simulation run (used in Pareto front simulation).
-     * Clears execution state while preserving hosts list and configuration.
-     */
-    public void resetForNewSimulation() {
-        // Reset timing
-        this.activeSeconds = 0;
-
-        // Reset power tracking
-        this.totalMomentaryPowerDraw = 0.0;
-
-        // Keep: hosts list (host placement stays), customers, maxHostCapacity, totalMaxPowerDraw
-    }
-
     @Override
     public String toString() {
         return "CloudDatacenter{" +

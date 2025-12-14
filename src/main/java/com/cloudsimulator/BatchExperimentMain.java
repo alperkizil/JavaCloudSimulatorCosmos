@@ -17,15 +17,10 @@ import com.cloudsimulator.steps.TaskAssignmentStep;
 import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.steps.TaskExecutionStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
-import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
-import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
-import com.cloudsimulator.steps.ParetoFrontSimulationStep;
-import com.cloudsimulator.steps.ParetoSimulationResult;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -162,9 +157,6 @@ public class BatchExperimentMain {
      * Runs a single simulation experiment with the given configuration.
      * Uses a deep copy of the configuration to ensure isolation between runs.
      *
-     * For multi-objective strategies (NSGA-II), this will simulate ALL solutions
-     * in the Pareto front using separate processes for complete isolation.
-     *
      * @param config The experiment configuration for this run
      */
     private void singleRun(ExperimentConfiguration config) {
@@ -189,71 +181,28 @@ public class BatchExperimentMain {
         // Step 4: Assign VMs to hosts using Best Fit strategy
         engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
 
-        // Step 5: Create task assignment strategy
+        // Step 5: Assign tasks to VMs using NSGA-II multi-objective optimization
         NSGA2Configuration nsga2Config = NSGA2Configuration.builder()
                 .populationSize(100)
                 .addObjective(new MakespanObjective())
                 .addObjective(new EnergyObjective())
                 .build();
-        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config);
-        engine.addStep(new TaskAssignmentStep(strategy));
+        engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
 
-        // Run steps 1-5
+        // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
+        engine.addStep(new VMExecutionStep());
+
+        // Step 7: Analyze task execution results (makespan, turnaround time, throughput, etc.)
+        engine.addStep(new TaskExecutionStep());
+
+        // Run all steps
         engine.run();
-
-        // Check if strategy is multi-objective
-        if (strategy instanceof MultiObjectiveSchedulingStrategy) {
-            MultiObjectiveSchedulingStrategy moStrategy = (MultiObjectiveSchedulingStrategy) strategy;
-            ParetoFront paretoFront = moStrategy.getParetoFront();
-
-            if (paretoFront != null && !paretoFront.isEmpty()) {
-                System.out.println();
-                System.out.println("Multi-objective strategy detected with " + paretoFront.size() + " Pareto solutions");
-                System.out.println("Running full simulation for ALL solutions...");
-
-                // Run steps 6-10 for ALL Pareto solutions using separate processes
-                ParetoFrontSimulationStep paretoStep = new ParetoFrontSimulationStep(
-                    paretoFront,
-                    moStrategy.getObjectives(),
-                    configCopy,
-                    moStrategy.getRandomSeed(),
-                    Runtime.getRuntime().availableProcessors(),
-                    "./reports"
-                );
-                paretoStep.execute(engine.getContext());
-
-                // Print summary
-                List<ParetoSimulationResult> results = paretoStep.getResults();
-                System.out.println();
-                System.out.println("Successfully simulated " + results.size() + "/" + paretoFront.size() + " solutions");
-                System.out.println("Reports saved to: " + paretoStep.getOutputDirectory());
-            } else {
-                System.out.println("Warning: Multi-objective strategy returned empty Pareto front");
-                runSingleObjectiveSteps(engine);
-            }
-        } else {
-            // Single-objective: run steps 6-7 normally
-            runSingleObjectiveSteps(engine);
-        }
 
         // Print VM assignments (uses Host -> VM relationships)
         printVMAssignments(engine.getContext());
 
         // Print task assignments (uses Task.assignedVmId which persists after execution)
         printTaskAssignments(engine.getContext());
-    }
-
-    /**
-     * Runs steps 6-7 for single-objective strategies.
-     */
-    private void runSingleObjectiveSteps(SimulationEngine engine) {
-        // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
-        VMExecutionStep vmStep = new VMExecutionStep();
-        vmStep.execute(engine.getContext());
-
-        // Step 7: Analyze task execution results (makespan, turnaround time, throughput, etc.)
-        TaskExecutionStep taskStep = new TaskExecutionStep();
-        taskStep.execute(engine.getContext());
     }
 
     /**
