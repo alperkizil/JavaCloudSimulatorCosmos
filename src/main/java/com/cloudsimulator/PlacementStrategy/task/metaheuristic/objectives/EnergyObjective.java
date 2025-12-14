@@ -12,31 +12,24 @@ import java.util.List;
 /**
  * Energy objective: Minimizes total energy consumption.
  *
- * Energy is calculated as the sum of power consumption over time for each VM.
- * The power model considers:
- * - Base power (idle power for running VM)
- * - CPU utilization based on workload type
- * - GPU utilization based on workload type
+ * Energy is calculated to match the simulation's tick-by-tick power model:
+ * - Base idle power is consumed for the entire simulation duration (makespan)
+ * - Incremental workload power is consumed for each task's execution ticks
  *
- * Energy (kWh) = Power (Watts) × Time (seconds) / 3,600,000
+ * Energy (kWh) = (idlePower × makespan + sum(incrementalPower × taskTicks)) / 3,600,000
  *
  * Calculation (Discrete Simulation Model):
- * The simulation executes in 1-second ticks. When a task completes mid-tick,
- * the remaining IPS is wasted but power is still consumed for the full tick.
- * This uses ceiling division to accurately model discrete time-step behavior:
+ * The simulation executes in 1-second ticks. Power calculation per tick:
+ *   tickPower = baseIdlePower + sum(activeVM_incrementalPower)
  *
- * For each VM j:
- *   For each task assigned to VM j:
- *     executionTicks = ceil(task.instructionLength / vm.totalIPS)
- *     power = calculatePowerForWorkload(task.workloadType, vm)
- *     energy += power × executionTicks / 3,600,000
- *
- * Total Energy = sum of energy for all VMs (in kWh)
+ * This is equivalent to:
+ *   totalEnergy = baseIdlePower × makespan + sum(incrementalPower × taskTicks)
  *
  * This objective encourages:
  * - Assigning tasks to more power-efficient VMs
  * - Consolidating tasks on fewer VMs (reducing idle power waste)
  * - Matching workloads to appropriate hardware (GPU tasks on GPU VMs)
+ * - Minimizing makespan (reduces idle power duration)
  */
 public class EnergyObjective implements SchedulingObjective {
 
@@ -108,15 +101,16 @@ public class EnergyObjective implements SchedulingObjective {
             return 0.0;
         }
 
-        double totalEnergyJoules = 0.0;
+        double incrementalEnergyJoules = 0.0;
+        long makespan = 0;
 
-        // Calculate energy for each VM using discrete simulation model
+        // Calculate incremental energy for each VM and track makespan
         for (int vmIdx = 0; vmIdx < vms.size(); vmIdx++) {
             VM vm = vms.get(vmIdx);
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
 
             if (taskOrder.isEmpty()) {
-                continue; // VM is not used, no energy consumed
+                continue; // VM is not used
             }
 
             long vmIps = vm.getTotalRequestedIps();
@@ -124,41 +118,73 @@ public class EnergyObjective implements SchedulingObjective {
                 continue; // Invalid VM
             }
 
-            // Calculate energy for each task on this VM
+            long vmCompletionTicks = 0;
+
+            // Calculate incremental energy for each task on this VM
             for (int taskIdx : taskOrder) {
                 Task task = tasks.get(taskIdx);
 
                 // Calculate execution ticks using ceiling division
                 // This models the discrete 1-second time steps in simulation
-                // When a task finishes mid-tick, power is consumed for the full tick
                 long executionTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
+                vmCompletionTicks += executionTicks;
 
-                // Calculate power draw based on workload type
-                double power = calculatePowerForWorkload(task.getWorkloadType(), vm);
+                // Calculate INCREMENTAL power (above idle) for this workload
+                double incrementalPower = calculateIncrementalPowerForWorkload(task.getWorkloadType(), vm);
 
-                // Energy (Joules) = Power (Watts) × Time (seconds/ticks)
-                totalEnergyJoules += power * executionTicks;
+                // Incremental Energy (Joules) = Incremental Power (Watts) × Time (seconds)
+                incrementalEnergyJoules += incrementalPower * executionTicks;
+            }
+
+            // Track makespan (max completion time across all VMs)
+            if (vmCompletionTicks > makespan) {
+                makespan = vmCompletionTicks;
             }
         }
+
+        // Add base idle energy for the entire simulation duration
+        // This matches simulation's tick-by-tick calculation: each tick includes baseIdlePower
+        double baseIdlePower = powerModel.getScaledIdlePower();
+        double idleEnergyJoules = baseIdlePower * makespan;
+
+        double totalEnergyJoules = idleEnergyJoules + incrementalEnergyJoules;
 
         // Convert Joules to kWh
         return totalEnergyJoules / JOULES_TO_KWH;
     }
 
     /**
-     * Calculates power consumption for a specific workload type on a VM.
+     * Calculates total power consumption for a specific workload type on a VM.
      * Uses MeasurementBasedPowerModel by default for accurate empirical power estimation.
      * Falls back to legacy linear model if configured.
      *
      * @param workloadType The workload being executed
      * @param vm           The VM executing the workload
-     * @return Power consumption in Watts
+     * @return Total power consumption in Watts (including idle)
      */
     private double calculatePowerForWorkload(WorkloadType workloadType, VM vm) {
         if (useMeasurementBasedModel) {
             return calculatePowerMeasurementBased(workloadType, vm);
         } else {
             return calculatePowerLegacy(workloadType, vm);
+        }
+    }
+
+    /**
+     * Calculates INCREMENTAL power (above idle) for a specific workload type.
+     * This is the additional power consumed by the workload beyond base idle power.
+     *
+     * @param workloadType The workload being executed
+     * @param vm           The VM executing the workload
+     * @return Incremental power consumption in Watts (NOT including idle)
+     */
+    private double calculateIncrementalPowerForWorkload(WorkloadType workloadType, VM vm) {
+        if (useMeasurementBasedModel) {
+            double[] utilization = getUtilizationProfile(workloadType);
+            return powerModel.calculateIncrementalPower(workloadType, utilization[0], utilization[1]);
+        } else {
+            // Legacy model: total power minus base power
+            return calculatePowerLegacy(workloadType, vm) - basePowerWatts;
         }
     }
 
