@@ -13,9 +13,14 @@ import org.moeaframework.Analyzer;
 import org.moeaframework.Executor;
 import org.moeaframework.Instrumenter;
 import org.moeaframework.analysis.collector.Observations;
+import org.moeaframework.analysis.plot.Plot;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
+
+import javax.swing.JFrame;
+import java.io.File;
+import java.io.IOException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -74,6 +79,7 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
 
     // Cached results
     private ParetoFront lastParetoFront;
+    private NondominatedPopulation lastMoeaResult;
     private SchedulingSolution selectedSolution;
     private int lastEvaluationCount;
     private Observations lastObservations;
@@ -194,6 +200,7 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
 
         // Run the optimization
         NondominatedPopulation result = executor.run();
+        lastMoeaResult = result;  // Store MOEA result for plotting
         lastEvaluationCount = maxEvaluations;
 
         // Store runtime observations if collected
@@ -360,6 +367,110 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
      */
     public Observations getLastObservations() {
         return lastObservations;
+    }
+
+    /**
+     * Gets the MOEA Framework's NondominatedPopulation from the last optimization run.
+     * This can be used directly with MOEA Framework's Plot class for visualization.
+     *
+     * @return the last MOEA result, or null if no optimization has been run
+     */
+    public NondominatedPopulation getLastMoeaResult() {
+        return lastMoeaResult;
+    }
+
+    /**
+     * Displays the last Pareto front in an X-Y scatter plot using MOEA Framework's Plot.
+     * For bi-objective problems, automatically uses objective 0 for X and objective 1 for Y.
+     *
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot() {
+        return showParetoFrontPlot("NSGA-II Pareto Front");
+    }
+
+    /**
+     * Displays the last Pareto front in an X-Y scatter plot with a custom title.
+     *
+     * @param title the title for the plot window
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot(String title) {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            System.err.println("[MOEA-NSGA-II] No Pareto front available to plot");
+            return null;
+        }
+
+        String xLabel = config.getObjectiveNames().size() > 0 ? config.getObjectiveNames().get(0) : "Objective 1";
+        String yLabel = config.getObjectiveNames().size() > 1 ? config.getObjectiveNames().get(1) : "Objective 2";
+
+        Plot plot = new Plot()
+            .add("NSGA-II", lastMoeaResult)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel);
+
+        return plot.show();
+    }
+
+    /**
+     * Displays the last Pareto front with custom axis selection for many-objective problems.
+     *
+     * @param title the title for the plot window
+     * @param xObjective the objective index for X axis (0-based)
+     * @param yObjective the objective index for Y axis (0-based)
+     * @return the JFrame window displaying the plot, or null if no results available
+     */
+    public JFrame showParetoFrontPlot(String title, int xObjective, int yObjective) {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            System.err.println("[MOEA-NSGA-II] No Pareto front available to plot");
+            return null;
+        }
+
+        List<String> names = config.getObjectiveNames();
+        String xLabel = xObjective < names.size() ? names.get(xObjective) : "Objective " + (xObjective + 1);
+        String yLabel = yObjective < names.size() ? names.get(yObjective) : "Objective " + (yObjective + 1);
+
+        Plot plot = new Plot()
+            .add("NSGA-II", lastMoeaResult, xObjective, yObjective)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel);
+
+        return plot.show();
+    }
+
+    /**
+     * Saves the last Pareto front plot to a file (PNG, JPG, or SVG).
+     *
+     * @param filename the output filename (extension determines format)
+     * @throws IOException if the file cannot be written
+     */
+    public void saveParetoFrontPlot(String filename) throws IOException {
+        saveParetoFrontPlot(new File(filename), "NSGA-II Pareto Front");
+    }
+
+    /**
+     * Saves the last Pareto front plot to a file with a custom title.
+     *
+     * @param file the output file
+     * @param title the title for the plot
+     * @throws IOException if the file cannot be written
+     */
+    public void saveParetoFrontPlot(File file, String title) throws IOException {
+        if (lastMoeaResult == null || lastMoeaResult.isEmpty()) {
+            throw new IOException("No Pareto front available to save");
+        }
+
+        String xLabel = config.getObjectiveNames().size() > 0 ? config.getObjectiveNames().get(0) : "Objective 1";
+        String yLabel = config.getObjectiveNames().size() > 1 ? config.getObjectiveNames().get(1) : "Objective 2";
+
+        new Plot()
+            .add("NSGA-II", lastMoeaResult)
+            .setTitle(title)
+            .setXLabel(xLabel)
+            .setYLabel(yLabel)
+            .save(file);
     }
 
     @Override
