@@ -1,5 +1,6 @@
 package com.cloudsimulator.PlacementStrategy.task.metaheuristic;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -13,7 +14,8 @@ import java.util.List;
  *
  * This is the "chromosome" used by metaheuristic algorithms like NSGA-II.
  */
-public class SchedulingSolution implements Comparable<SchedulingSolution> {
+public class SchedulingSolution implements Comparable<SchedulingSolution>, Serializable {
+    private static final long serialVersionUID = 1L;
 
     /**
      * Task assignment array.
