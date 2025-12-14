@@ -20,12 +20,16 @@ import java.util.List;
  *
  * Energy (kWh) = Power (Watts) × Time (seconds) / 3,600,000
  *
- * Calculation:
+ * Calculation (Discrete Simulation Model):
+ * The simulation executes in 1-second ticks. When a task completes mid-tick,
+ * the remaining IPS is wasted but power is still consumed for the full tick.
+ * This uses ceiling division to accurately model discrete time-step behavior:
+ *
  * For each VM j:
  *   For each task assigned to VM j:
- *     executionTime = task.instructionLength / vm.totalIPS
+ *     executionTicks = ceil(task.instructionLength / vm.totalIPS)
  *     power = calculatePowerForWorkload(task.workloadType, vm)
- *     energy += power × executionTime / 3,600,000
+ *     energy += power × executionTicks / 3,600,000
  *
  * Total Energy = sum of energy for all VMs (in kWh)
  *
@@ -106,7 +110,7 @@ public class EnergyObjective implements SchedulingObjective {
 
         double totalEnergyJoules = 0.0;
 
-        // Calculate energy for each VM
+        // Calculate energy for each VM using discrete simulation model
         for (int vmIdx = 0; vmIdx < vms.size(); vmIdx++) {
             VM vm = vms.get(vmIdx);
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
@@ -124,14 +128,16 @@ public class EnergyObjective implements SchedulingObjective {
             for (int taskIdx : taskOrder) {
                 Task task = tasks.get(taskIdx);
 
-                // Calculate execution time for this task
-                double executionTime = (double) task.getInstructionLength() / vmIps;
+                // Calculate execution ticks using ceiling division
+                // This models the discrete 1-second time steps in simulation
+                // When a task finishes mid-tick, power is consumed for the full tick
+                long executionTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
 
                 // Calculate power draw based on workload type
                 double power = calculatePowerForWorkload(task.getWorkloadType(), vm);
 
-                // Energy (Joules) = Power (Watts) × Time (seconds)
-                totalEnergyJoules += power * executionTime;
+                // Energy (Joules) = Power (Watts) × Time (seconds/ticks)
+                totalEnergyJoules += power * executionTicks;
             }
         }
 

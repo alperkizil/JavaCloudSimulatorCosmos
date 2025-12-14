@@ -14,9 +14,15 @@ import java.util.List;
  * This is calculated by finding the VM that takes the longest to complete
  * all its assigned tasks.
  *
- * Calculation:
+ * Calculation (Discrete Simulation Model):
+ * The simulation executes in 1-second ticks. When a task completes mid-tick,
+ * the remaining IPS for that tick is wasted (not used for the next task).
+ * This uses ceiling division to accurately model discrete time-step behavior:
+ *
  * For each VM j:
- *   completionTime[j] = sum of (task.instructionLength / vm.totalIPS) for all tasks assigned to VM j
+ *   For each task assigned to VM j:
+ *     ticksForTask = ceil(task.instructionLength / vm.totalIPS)
+ *   completionTime[j] = sum of ticksForTask
  *
  * Makespan = max(completionTime[j]) for all VMs j
  *
@@ -36,9 +42,9 @@ public class MakespanObjective implements SchedulingObjective {
             return 0.0;
         }
 
-        double maxCompletionTime = 0.0;
+        long maxCompletionTicks = 0;
 
-        // Calculate completion time for each VM
+        // Calculate completion time for each VM using discrete simulation model
         for (int vmIdx = 0; vmIdx < vms.size(); vmIdx++) {
             VM vm = vms.get(vmIdx);
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
@@ -47,27 +53,30 @@ public class MakespanObjective implements SchedulingObjective {
                 continue;
             }
 
-            // Calculate total execution time for this VM
-            double vmCompletionTime = 0.0;
             long vmIps = vm.getTotalRequestedIps();
 
             if (vmIps == 0) {
                 // VM has no processing power - assign very high penalty
-                vmCompletionTime = Double.MAX_VALUE / 2;
-            } else {
-                for (int taskIdx : taskOrder) {
-                    Task task = tasks.get(taskIdx);
-                    // Time = instructions / IPS
-                    vmCompletionTime += (double) task.getInstructionLength() / vmIps;
-                }
+                return Double.MAX_VALUE / 2;
             }
 
-            if (vmCompletionTime > maxCompletionTime) {
-                maxCompletionTime = vmCompletionTime;
+            // Calculate total ticks for this VM using ceiling division
+            // This models the discrete 1-second time steps in simulation
+            long vmCompletionTicks = 0;
+            for (int taskIdx : taskOrder) {
+                Task task = tasks.get(taskIdx);
+                // Ceiling division: ceil(instructionLength / vmIps)
+                // When a task finishes mid-tick, remaining IPS is wasted
+                long ticksForTask = (task.getInstructionLength() + vmIps - 1) / vmIps;
+                vmCompletionTicks += ticksForTask;
+            }
+
+            if (vmCompletionTicks > maxCompletionTicks) {
+                maxCompletionTicks = vmCompletionTicks;
             }
         }
 
-        return maxCompletionTime;
+        return (double) maxCompletionTicks;
     }
 
     @Override
