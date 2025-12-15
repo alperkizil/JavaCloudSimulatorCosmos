@@ -312,11 +312,15 @@ public class Host {
 
         // Calculate incremental power for each VM based on its workload
         for (VM vm : assignedVMs) {
-            WorkloadType workloadType = vm.getCurrentWorkloadType();
+            // Get workload type and utilization from VMUtilization object
+            // This correctly reflects the workload even after task completion
+            // (vm.getCurrentWorkloadType() would return IDLE after task completes)
+            WorkloadType workloadType = WorkloadType.IDLE;
             double cpuUtil = 0.0;
             double gpuUtil = 0.0;
 
             if (vm.getCurrentUtilization() != null) {
+                workloadType = vm.getCurrentUtilization().getActiveWorkloadType();
                 cpuUtil = vm.getCurrentUtilization().getCpuUtilization();
                 gpuUtil = vm.getCurrentUtilization().getGpuUtilization();
             }
