@@ -44,6 +44,10 @@ public class EnergyObjective implements SchedulingObjective {
     // Flag to use measurement-based model
     private boolean useMeasurementBasedModel = true;
 
+    // Additional hosts that consume idle power but have no VMs assigned
+    // (e.g., hosts placed in datacenter but without VM assignments)
+    private int additionalIdleHostCount = 0;
+
     /**
      * Creates an EnergyObjective with MeasurementBasedPowerModel (default).
      * Uses empirical power measurements for accurate energy estimation.
@@ -106,6 +110,16 @@ public class EnergyObjective implements SchedulingObjective {
         int activeVmCount = 0;
         long totalVmTicks = 0;  // Sum of all VM completion times (for idle calculation)
 
+        // Count unique hosts that have VMs assigned (these will consume idle power)
+        // This matches simulation behavior where ALL hosts with VMs consume idle power
+        java.util.Set<Long> hostsWithVMs = new java.util.HashSet<>();
+        for (VM vm : vms) {
+            if (vm.getAssignedHostId() != null) {
+                hostsWithVMs.add(vm.getAssignedHostId());
+            }
+        }
+        int activeHostCount = Math.max(1, hostsWithVMs.size());
+
         // First pass: calculate makespan and incremental energy
         long[] vmCompletionTicks = new long[vms.size()];
 
@@ -148,9 +162,12 @@ public class EnergyObjective implements SchedulingObjective {
         }
 
         // Add base idle energy for the entire simulation duration (host idle power)
-        // This matches simulation's tick-by-tick calculation: each tick includes baseIdlePower
+        // Each host with VMs consumes idle power for the entire makespan duration
+        // Also include any additional hosts that are powered on but have no VMs
+        // This matches simulation's tick-by-tick calculation where each host adds idlePower per tick
         double baseIdlePower = powerModel.getScaledIdlePower();
-        double hostIdleEnergyJoules = baseIdlePower * makespan;
+        int totalActiveHosts = activeHostCount + additionalIdleHostCount;
+        double hostIdleEnergyJoules = baseIdlePower * makespan * totalActiveHosts;
 
         // Add VM idle energy: when VMs finish before makespan, they still consume some power
         // Each active VM runs for 'makespan' ticks total, but only executes tasks for vmCompletionTicks
@@ -348,5 +365,26 @@ public class EnergyObjective implements SchedulingObjective {
      */
     public void setUseMeasurementBasedModel(boolean useMeasurementBasedModel) {
         this.useMeasurementBasedModel = useMeasurementBasedModel;
+    }
+
+    /**
+     * Gets the number of additional idle hosts (hosts without VMs but consuming power).
+     *
+     * @return The additional idle host count
+     */
+    public int getAdditionalIdleHostCount() {
+        return additionalIdleHostCount;
+    }
+
+    /**
+     * Sets the number of additional hosts that consume idle power but have no VMs assigned.
+     * This accounts for hosts that are placed in datacenters but not assigned any VMs.
+     * Set this value based on (total hosts in datacenter) - (hosts with VMs) for accurate
+     * energy prediction that matches simulation.
+     *
+     * @param additionalIdleHostCount Number of additional idle hosts
+     */
+    public void setAdditionalIdleHostCount(int additionalIdleHostCount) {
+        this.additionalIdleHostCount = Math.max(0, additionalIdleHostCount);
     }
 }
