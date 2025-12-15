@@ -18,7 +18,7 @@ import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.steps.TaskExecutionStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.MultiObjectiveTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
@@ -202,8 +202,7 @@ public class BatchExperimentMain {
         // Check if strategy is multi-objective and run accordingly
         if (taskStrategy instanceof MultiObjectiveTaskSchedulingStrategy) {
             // Run multi-objective simulation for all Pareto front solutions
-            MultiObjectiveSimulationResult moResult = engine.runMultiObjective(
-                    (MultiObjectiveTaskSchedulingStrategy) taskStrategy);
+            MultiObjectiveSimulationResult moResult = engine.runMultiObjective();
 
             // Generate Pareto front reports
             try {
