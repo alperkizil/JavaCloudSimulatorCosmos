@@ -425,16 +425,24 @@ public class EnergyObjective implements SchedulingObjective {
     }
 
     /**
-     * Sets the hosts list for dynamic calculation of idle host count.
+     * Sets the hosts list for dynamic calculation of idle host count and reference IPS.
      * When set, the additional idle hosts will be automatically calculated as:
      * (hosts in datacenter) - (hosts with VMs)
      *
-     * This eliminates the need to manually call setAdditionalIdleHostCount().
+     * Also automatically initializes the reference IPS for speed-based power scaling
+     * using the median IPS of all hosts.
+     *
+     * This eliminates the need to manually call setAdditionalIdleHostCount() or
+     * initializeReferenceIpsFromHosts().
      *
      * @param hosts List of all hosts in the simulation
      */
     public void setHosts(java.util.List<Host> hosts) {
         this.hosts = hosts;
+        // Automatically initialize reference IPS for speed-based scaling
+        if (powerModel != null && hosts != null && !hosts.isEmpty()) {
+            powerModel.calculateReferenceIpsFromHosts(hosts);
+        }
     }
 
     /**
