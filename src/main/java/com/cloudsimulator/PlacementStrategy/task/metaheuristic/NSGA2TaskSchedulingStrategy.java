@@ -2,7 +2,7 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic;
 
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
-import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,6 +19,11 @@ import java.util.Optional;
  * The strategy is batch-optimizing: it considers all tasks together rather than
  * assigning them one at a time. This allows global optimization of the objectives.
  *
+ * Implements MultiObjectiveTaskSchedulingStrategy to support:
+ * - Running optimization and getting the full Pareto front
+ * - Applying any specific solution from the front
+ * - Simulating all solutions for comprehensive trade-off analysis
+ *
  * Usage:
  * <pre>
  * NSGA2Configuration config = NSGA2Configuration.builder()
@@ -30,14 +35,17 @@ import java.util.Optional;
  *
  * NSGA2TaskSchedulingStrategy strategy = new NSGA2TaskSchedulingStrategy(config);
  *
- * // Get entire Pareto front
- * ParetoFront front = strategy.optimize(tasks, vms);
+ * // Get entire Pareto front for multi-solution simulation
+ * ParetoFront front = strategy.optimizeAndGetParetoFront(tasks, vms);
+ *
+ * // Apply a specific solution
+ * Map<Task, VM> assignments = strategy.applySolution(solution, tasks, vms, currentTime);
  *
  * // Or use as a TaskAssignmentStrategy (uses knee point by default)
  * Map<Task, VM> assignments = strategy.assignAll(tasks, vms, currentTime);
  * </pre>
  */
-public class NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy {
+public class NSGA2TaskSchedulingStrategy implements MultiObjectiveTaskSchedulingStrategy {
 
     /**
      * Selection method for choosing a single solution from the Pareto front
@@ -252,5 +260,88 @@ public class NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy {
      */
     public NSGA2Configuration getConfiguration() {
         return config;
+    }
+
+    // ==================== MultiObjectiveTaskSchedulingStrategy Interface ====================
+
+    /**
+     * Caches for task and VM index lookups, built during optimization
+     */
+    private List<Task> lastTaskList;
+    private List<VM> lastVmList;
+
+    @Override
+    public ParetoFront optimizeAndGetParetoFront(List<Task> tasks, List<VM> vms) {
+        // Cache the task and VM lists for later use in applySolution
+        this.lastTaskList = new ArrayList<>(tasks);
+        this.lastVmList = new ArrayList<>(vms);
+
+        // Run optimization
+        return optimize(tasks, vms);
+    }
+
+    @Override
+    public Map<Task, VM> applySolution(SchedulingSolution solution, List<Task> tasks,
+                                        List<VM> vms, long currentTime) {
+        Map<Task, VM> assignments = new LinkedHashMap<>();
+
+        if (solution == null || tasks.isEmpty() || vms.isEmpty()) {
+            return assignments;
+        }
+
+        // Build lookup maps
+        List<Task> taskList = new ArrayList<>(tasks);
+        List<VM> vmList = new ArrayList<>(vms);
+
+        Map<Integer, Task> taskByIndex = new LinkedHashMap<>();
+        Map<Integer, VM> vmByIndex = new LinkedHashMap<>();
+
+        for (int i = 0; i < taskList.size(); i++) {
+            taskByIndex.put(i, taskList.get(i));
+        }
+        for (int i = 0; i < vmList.size(); i++) {
+            vmByIndex.put(i, vmList.get(i));
+        }
+
+        // Apply the solution
+        int[] taskAssignment = solution.getTaskAssignment();
+        List<List<Integer>> vmTaskOrder = solution.getVmTaskOrder();
+
+        // Assign tasks according to the solution, respecting task order within VMs
+        for (int vmIdx = 0; vmIdx < vmTaskOrder.size(); vmIdx++) {
+            VM vm = vmByIndex.get(vmIdx);
+            if (vm == null) continue;
+
+            List<Integer> taskOrder = vmTaskOrder.get(vmIdx);
+
+            for (int taskIdx : taskOrder) {
+                if (taskIdx < 0 || taskIdx >= taskList.size()) continue;
+
+                Task task = taskByIndex.get(taskIdx);
+                if (task == null) continue;
+
+                // Verify assignment matches
+                if (taskAssignment[taskIdx] != vmIdx) {
+                    continue; // Skip inconsistent assignments
+                }
+
+                // Assign task to VM
+                task.assignToVM(vm.getId(), currentTime);
+                vm.assignTask(task);
+                assignments.put(task, vm);
+            }
+        }
+
+        return assignments;
+    }
+
+    @Override
+    public List<String> getObjectiveNames() {
+        return config.getObjectiveNames();
+    }
+
+    @Override
+    public boolean[] getObjectiveMinimization() {
+        return config.getMinimizationArray();
     }
 }

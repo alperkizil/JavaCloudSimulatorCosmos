@@ -175,9 +175,27 @@ public class Task {
     }
 
     /**
-     * Resets task for retry scenarios.
+     * Resets task execution state for retry scenarios.
+     * Does NOT reset assignment (use resetForRescheduling for that).
      */
     public void reset() {
+        instructionsExecuted = 0;
+        taskExecutionStatus = TaskExecutionStatus.NOT_EXECUTED;
+        taskExecStartTime = null;
+        taskExecEndTime = null;
+        taskCpuExecTime = 0;
+    }
+
+    /**
+     * Fully resets task for rescheduling scenarios (e.g., Pareto front evaluation).
+     * Resets both assignment and execution state.
+     */
+    public void resetForRescheduling() {
+        // Reset assignment
+        assignedVmId = null;
+        taskAssignmentTime = null;
+
+        // Reset execution state
         instructionsExecuted = 0;
         taskExecutionStatus = TaskExecutionStatus.NOT_EXECUTED;
         taskExecStartTime = null;

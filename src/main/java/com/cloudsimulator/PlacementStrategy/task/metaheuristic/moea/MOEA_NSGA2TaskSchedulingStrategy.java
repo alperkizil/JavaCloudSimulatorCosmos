@@ -3,7 +3,7 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
-import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
@@ -58,7 +58,7 @@ import java.util.Optional;
  * @see Executor
  * @see Analyzer
  */
-public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy {
+public class MOEA_NSGA2TaskSchedulingStrategy implements MultiObjectiveTaskSchedulingStrategy {
 
     /**
      * Selection method for choosing a single solution from the Pareto front.
@@ -607,5 +607,71 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements TaskAssignmentStrategy 
      */
     public NSGA2Configuration getConfiguration() {
         return config;
+    }
+
+    // ==================== MultiObjectiveTaskSchedulingStrategy Interface ====================
+
+    @Override
+    public ParetoFront optimizeAndGetParetoFront(List<Task> tasks, List<VM> vms) {
+        return optimize(tasks, vms);
+    }
+
+    @Override
+    public Map<Task, VM> applySolution(SchedulingSolution solution, List<Task> tasks,
+                                        List<VM> vms, long currentTime) {
+        Map<Task, VM> assignments = new LinkedHashMap<>();
+
+        if (solution == null || tasks.isEmpty() || vms.isEmpty()) {
+            return assignments;
+        }
+
+        List<Task> taskList = new ArrayList<>(tasks);
+        List<VM> vmList = new ArrayList<>(vms);
+
+        Map<Integer, Task> taskByIndex = new LinkedHashMap<>();
+        Map<Integer, VM> vmByIndex = new LinkedHashMap<>();
+
+        for (int i = 0; i < taskList.size(); i++) {
+            taskByIndex.put(i, taskList.get(i));
+        }
+        for (int i = 0; i < vmList.size(); i++) {
+            vmByIndex.put(i, vmList.get(i));
+        }
+
+        int[] taskAssignment = solution.getTaskAssignment();
+        List<List<Integer>> vmTaskOrder = solution.getVmTaskOrder();
+
+        for (int vmIdx = 0; vmIdx < vmTaskOrder.size(); vmIdx++) {
+            VM vm = vmByIndex.get(vmIdx);
+            if (vm == null) continue;
+
+            List<Integer> taskOrder = vmTaskOrder.get(vmIdx);
+            for (int taskIdx : taskOrder) {
+                if (taskIdx < 0 || taskIdx >= taskList.size()) continue;
+
+                Task task = taskByIndex.get(taskIdx);
+                if (task == null) continue;
+
+                if (taskAssignment[taskIdx] != vmIdx) {
+                    continue;
+                }
+
+                task.assignToVM(vm.getId(), currentTime);
+                vm.assignTask(task);
+                assignments.put(task, vm);
+            }
+        }
+
+        return assignments;
+    }
+
+    @Override
+    public List<String> getObjectiveNames() {
+        return config.getObjectiveNames();
+    }
+
+    @Override
+    public boolean[] getObjectiveMinimization() {
+        return config.getMinimizationArray();
     }
 }

@@ -620,4 +620,39 @@ public class Host {
                 ", assignedDatacenterId=" + assignedDatacenterId +
                 '}';
     }
+
+    /**
+     * Resets Host execution state for rescheduling scenarios (e.g., Pareto front evaluation).
+     * Resets energy counters, power draw, utilization history, and timing.
+     * Does NOT reset datacenter assignment, VM assignments, or resource allocations.
+     * VMs stay on the host; their individual state should be reset separately.
+     */
+    public void resetForRescheduling() {
+        // Reset timing counters
+        this.activeSeconds = 0;
+        this.secondsIDLE = 0;
+        this.secondsExecuting = 0;
+        this.totalNumberOfSecondsWorking = 0;
+        this.totalNumberOfSecondsIdle = 0;
+
+        // Reset power tracking
+        this.currentTotalPowerDraw = 0.0;
+        this.currentCpuPowerDraw = 0.0;
+        this.currentGpuPowerDraw = 0.0;
+        this.otherComponentsPowerDraw = 0.0;
+
+        // Reset energy tracking
+        this.totalEnergyConsumedJoules = 0.0;
+
+        // Reset utilization history
+        this.utilizationHistory = new ArrayList<>();
+        this.vmOpenSecondsMap = new HashMap<>();
+        this.vmWorkloadSecondsMap = new HashMap<>();
+
+        // Re-initialize VM tracking maps for currently assigned VMs
+        for (VM vm : assignedVMs) {
+            this.vmOpenSecondsMap.put(vm.getId(), 0L);
+            this.vmWorkloadSecondsMap.put(vm.getId(), new HashMap<>());
+        }
+    }
 }
