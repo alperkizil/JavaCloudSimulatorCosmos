@@ -288,10 +288,12 @@ public class VM {
                 finishTask(currentExecutingTask);
                 currentExecutingTask = null;
                 currentTaskProgress = 0;
-                currentUtilization.resetToIdle();
+                // NOTE: Don't reset utilization here! Keep it set so Host.updateState()
+                // can read the correct workload for this tick's energy calculation.
+                // Utilization will be reset on the next tick when we detect no current task.
             }
         } else {
-            // VM is idle
+            // VM is idle - reset utilization now (this is the start of an idle period)
             currentUtilization.resetToIdle();
         }
     }
