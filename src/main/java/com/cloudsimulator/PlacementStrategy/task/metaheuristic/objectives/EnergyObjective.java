@@ -7,9 +7,7 @@ import com.cloudsimulator.model.VM;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Energy objective: Minimizes total energy consumption.
@@ -105,8 +103,7 @@ public class EnergyObjective implements SchedulingObjective {
 
         double incrementalEnergyJoules = 0.0;
         long makespan = 0;
-        // Track distinct hosts that will be active so we can account for each host's idle draw
-        Set<Long> activeHostIds = new HashSet<>();
+        int activeVmCount = 0;
         long totalVmTicks = 0;  // Sum of all VM completion times (for idle calculation)
 
         // First pass: calculate makespan and incremental energy
@@ -120,9 +117,7 @@ public class EnergyObjective implements SchedulingObjective {
                 continue; // VM is not used
             }
 
-            if (vm.getAssignedHostId() != null) {
-                activeHostIds.add(vm.getAssignedHostId());
-            }
+            activeVmCount++;
             long vmIps = vm.getTotalRequestedIps();
             if (vmIps == 0) {
                 continue; // Invalid VM
@@ -155,8 +150,7 @@ public class EnergyObjective implements SchedulingObjective {
         // Add base idle energy for the entire simulation duration (host idle power)
         // This matches simulation's tick-by-tick calculation: each tick includes baseIdlePower
         double baseIdlePower = powerModel.getScaledIdlePower();
-        // Each active host contributes its own idle draw throughout the makespan
-        double hostIdleEnergyJoules = baseIdlePower * makespan * Math.max(1, activeHostIds.size());
+        double hostIdleEnergyJoules = baseIdlePower * makespan;
 
         // Add VM idle energy: when VMs finish before makespan, they still consume some power
         // Each active VM runs for 'makespan' ticks total, but only executes tasks for vmCompletionTicks
