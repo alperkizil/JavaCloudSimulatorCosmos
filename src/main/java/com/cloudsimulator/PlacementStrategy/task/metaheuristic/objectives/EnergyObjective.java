@@ -430,7 +430,9 @@ public class EnergyObjective implements SchedulingObjective {
      * (hosts in datacenter) - (hosts with VMs)
      *
      * Also automatically initializes the reference IPS for speed-based power scaling
-     * using the median IPS of all hosts.
+     * using the median IPS of all hosts. This reference IPS is propagated to:
+     * 1. This EnergyObjective's power model (for optimization predictions)
+     * 2. Each Host's MeasurementBasedPowerModel (for simulation calculations)
      *
      * This eliminates the need to manually call setAdditionalIdleHostCount() or
      * initializeReferenceIpsFromHosts().
@@ -442,6 +444,15 @@ public class EnergyObjective implements SchedulingObjective {
         // Automatically initialize reference IPS for speed-based scaling
         if (powerModel != null && hosts != null && !hosts.isEmpty()) {
             powerModel.calculateReferenceIpsFromHosts(hosts);
+
+            // Propagate reference IPS to all hosts' MeasurementBasedPowerModels
+            // so simulation energy matches prediction
+            long referenceIps = powerModel.getReferenceVmIps();
+            for (Host host : hosts) {
+                if (host.getMeasurementBasedPowerModel() != null) {
+                    host.getMeasurementBasedPowerModel().setReferenceVmIps(referenceIps);
+                }
+            }
         }
     }
 

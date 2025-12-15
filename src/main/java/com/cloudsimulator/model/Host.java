@@ -325,9 +325,9 @@ public class Host {
                 gpuUtil = vm.getCurrentUtilization().getGpuUtilization();
             }
 
-            // Get incremental power for this workload
-            double vmIncrementalPower = measurementBasedPowerModel.calculateIncrementalPower(
-                workloadType, cpuUtil, gpuUtil);
+            // Get incremental power for this workload (with speed-based scaling)
+            double vmIncrementalPower = measurementBasedPowerModel.calculateIncrementalPowerWithSpeedScaling(
+                workloadType, cpuUtil, gpuUtil, vm.getTotalRequestedIps());
 
             totalIncrementalPower += vmIncrementalPower;
 
