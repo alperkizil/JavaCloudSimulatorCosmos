@@ -633,4 +633,41 @@ public class VM {
                 ", finishedTasks=" + finishedTasks.size() +
                 '}';
     }
+
+    /**
+     * Resets VM execution state for rescheduling scenarios (e.g., Pareto front evaluation).
+     * Clears task queues, execution counters, and utilization history.
+     * Does NOT reset host assignment or resource specifications.
+     */
+    public void resetForRescheduling() {
+        // Clear task queues
+        this.assignedTasks = new LinkedList<>();
+        this.finishedTasks = new ArrayList<>();
+
+        // Reset execution state
+        this.currentExecutingTask = null;
+        this.currentTaskProgress = 0;
+
+        // Reset timing counters
+        this.activeSeconds = 0;
+        this.secondsIDLE = 0;
+        this.secondsExecuting = 0;
+        this.totalOpenSeconds = 0;
+        this.totalIDLESeconds = 0;
+        this.totalActiveWorkloadSeconds = 0;
+
+        // Reset utilization tracking
+        this.currentUtilization = new VMUtilization();
+        this.utilizationHistory = new ArrayList<>();
+        this.taskRunningSecondsMap = new HashMap<>();
+        this.taskWorkloadSecondsMap = new HashMap<>();
+
+        // Reset state to RUNNING (VM is already placed, ready for new tasks)
+        // Keep assignedHostId - VM stays on its host
+        if (this.assignedHostId != null) {
+            this.vmState = VmState.RUNNING;
+        } else {
+            this.vmState = VmState.CREATED;
+        }
+    }
 }

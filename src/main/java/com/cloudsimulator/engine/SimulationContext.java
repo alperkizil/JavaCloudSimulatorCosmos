@@ -163,4 +163,33 @@ public class SimulationContext {
                 ", tasks=" + tasks.size() +
                 '}';
     }
+
+    /**
+     * Resets simulation state for rescheduling scenarios (e.g., Pareto front evaluation).
+     * Resets clock, metrics, and all entity execution states.
+     * Infrastructure (datacenter/host/VM placement) is preserved.
+     */
+    public void resetForRescheduling() {
+        // Reset simulation clock
+        this.clock.reset();
+
+        // Clear metrics and summary
+        this.metrics = new HashMap<>();
+        this.simulationSummary = null;
+
+        // Reset all tasks
+        for (Task task : tasks) {
+            task.resetForRescheduling();
+        }
+
+        // Reset all VMs
+        for (VM vm : vms) {
+            vm.resetForRescheduling();
+        }
+
+        // Reset all hosts
+        for (Host host : hosts) {
+            host.resetForRescheduling();
+        }
+    }
 }
