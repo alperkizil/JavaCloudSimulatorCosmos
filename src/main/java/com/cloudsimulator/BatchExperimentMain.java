@@ -18,9 +18,12 @@ import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.steps.TaskExecutionStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.MultiObjectiveTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
+import com.cloudsimulator.engine.MultiObjectiveSimulationResult;
+import com.cloudsimulator.reporter.ParetoFrontReporter;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -187,7 +190,8 @@ public class BatchExperimentMain {
                 .addObjective(new MakespanObjective())
                 .addObjective(new EnergyObjective())
                 .build();
-        engine.addStep(new TaskAssignmentStep(new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config)));
+        MOEA_NSGA2TaskSchedulingStrategy taskStrategy = new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config);
+        engine.addStep(new TaskAssignmentStep(taskStrategy));
 
         // Step 6: Execute VMs - runs the main simulation loop until all tasks complete
         engine.addStep(new VMExecutionStep());
@@ -195,14 +199,75 @@ public class BatchExperimentMain {
         // Step 7: Analyze task execution results (makespan, turnaround time, throughput, etc.)
         engine.addStep(new TaskExecutionStep());
 
-        // Run all steps
-        engine.run();
+        // Check if strategy is multi-objective and run accordingly
+        if (taskStrategy instanceof MultiObjectiveTaskSchedulingStrategy) {
+            // Run multi-objective simulation for all Pareto front solutions
+            MultiObjectiveSimulationResult moResult = engine.runMultiObjective(
+                    (MultiObjectiveTaskSchedulingStrategy) taskStrategy);
 
-        // Print VM assignments (uses Host -> VM relationships)
-        printVMAssignments(engine.getContext());
+            // Generate Pareto front reports
+            try {
+                ParetoFrontReporter reporter = new ParetoFrontReporter();
+                String reportDir = "./reports/pareto_" + configCopy.getRandomSeed();
+                reporter.generateReports(moResult, reportDir);
+            } catch (Exception e) {
+                System.err.println("Failed to generate Pareto front reports: " + e.getMessage());
+            }
 
-        // Print task assignments (uses Task.assignedVmId which persists after execution)
-        printTaskAssignments(engine.getContext());
+            // Print summary
+            printMultiObjectiveResults(moResult);
+        } else {
+            // Run single-solution simulation
+            engine.run();
+
+            // Print VM assignments (uses Host -> VM relationships)
+            printVMAssignments(engine.getContext());
+
+            // Print task assignments (uses Task.assignedVmId which persists after execution)
+            printTaskAssignments(engine.getContext());
+        }
+    }
+
+    /**
+     * Prints summary of multi-objective simulation results.
+     */
+    private void printMultiObjectiveResults(MultiObjectiveSimulationResult moResult) {
+        System.out.println();
+        System.out.println("MULTI-OBJECTIVE SIMULATION RESULTS");
+        System.out.println("----------------------------------------");
+        System.out.printf("Pareto front size: %d solutions%n", moResult.getNumSolutions());
+        System.out.printf("Total simulation time: %d ms%n", moResult.getTotalSimulationTimeMs());
+        System.out.println();
+
+        // Print each solution's results
+        System.out.println("Solution Results:");
+        System.out.printf("%-8s %-15s %-15s %-15s %-15s%n",
+                "Index", "Pred.Makespan", "Sim.Makespan", "Pred.Energy", "Sim.Energy");
+        System.out.println("--------------------------------------------------------------------------------");
+
+        for (var solResult : moResult.getSolutionResults()) {
+            double[] predicted = solResult.getPredictedObjectives();
+            System.out.printf("%-8d %-15.2f %-15d %-15.4f %-15.6f%n",
+                    solResult.getSolutionIndex(),
+                    predicted.length > 0 ? predicted[0] : 0,
+                    solResult.getSimulatedMakespan(),
+                    predicted.length > 1 ? predicted[1] : 0,
+                    solResult.getSimulatedEnergyKWh());
+        }
+
+        // Print best solutions
+        var bestMakespan = moResult.getBestBySimulatedMakespan();
+        var bestEnergy = moResult.getBestBySimulatedEnergy();
+
+        System.out.println();
+        if (bestMakespan != null) {
+            System.out.printf("Best makespan: Solution %d (%d seconds)%n",
+                    bestMakespan.getSolutionIndex(), bestMakespan.getSimulatedMakespan());
+        }
+        if (bestEnergy != null) {
+            System.out.printf("Best energy: Solution %d (%.6f kWh)%n",
+                    bestEnergy.getSolutionIndex(), bestEnergy.getSimulatedEnergyKWh());
+        }
     }
 
     /**
