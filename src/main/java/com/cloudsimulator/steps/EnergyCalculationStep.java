@@ -120,6 +120,8 @@ public class EnergyCalculationStep implements SimulationStep {
 
     @Override
     public void execute(SimulationContext context) {
+        resetState();
+
         List<CloudDatacenter> datacenters = context.getDatacenters();
         List<Host> hosts = context.getHosts();
         List<Task> tasks = context.getTasks();
@@ -164,6 +166,32 @@ public class EnergyCalculationStep implements SimulationStep {
 
         // Record metrics to context
         recordMetrics(context);
+    }
+
+    /**
+     * Resets calculated fields so the step can be reused safely across multiple runs
+     * (e.g., for each solution in a Pareto front).
+     */
+    private void resetState() {
+        totalITEnergyJoules = 0;
+        totalFacilityEnergyJoules = 0;
+        totalCpuEnergyJoules = 0;
+        totalGpuEnergyJoules = 0;
+        totalOtherComponentsEnergyJoules = 0;
+        peakTotalPowerWatts = 0;
+        averagePowerWatts = 0;
+        carbonFootprintKg = 0;
+        estimatedCostDollars = 0;
+        energyPerTaskJoules = 0;
+        energyEfficiencyIpsPerWatt = 0;
+        simulationDurationSeconds = 0;
+        totalInstructionsExecuted = 0;
+        tasksCompleted = 0;
+
+        datacenterEnergyJoules.clear();
+        datacenterPeakPowerWatts.clear();
+        hostEnergyJoules.clear();
+        hostPeakPowerWatts.clear();
     }
 
     /**
