@@ -66,6 +66,7 @@ public class MetricsCollectionStep implements SimulationStep {
 
         logInfo("Collecting and aggregating simulation metrics...");
 
+        aggregatedMetrics.clear();
         summary = new SimulationSummary();
 
         // Set metadata

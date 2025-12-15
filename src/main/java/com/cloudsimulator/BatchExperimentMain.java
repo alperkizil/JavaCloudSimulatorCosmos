@@ -9,13 +9,16 @@ import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.enums.WorkloadType;
+import com.cloudsimulator.steps.EnergyCalculationStep;
 import com.cloudsimulator.steps.HostPlacementStep;
 import com.cloudsimulator.steps.InitializationStep;
-import com.cloudsimulator.steps.UserDatacenterMappingStep;
-import com.cloudsimulator.steps.VMPlacementStep;
+import com.cloudsimulator.steps.MetricsCollectionStep;
+import com.cloudsimulator.steps.ReportingStep;
 import com.cloudsimulator.steps.TaskAssignmentStep;
-import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.steps.TaskExecutionStep;
+import com.cloudsimulator.steps.UserDatacenterMappingStep;
+import com.cloudsimulator.steps.VMExecutionStep;
+import com.cloudsimulator.steps.VMPlacementStep;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
@@ -198,6 +201,18 @@ public class BatchExperimentMain {
 
         // Step 7: Analyze task execution results (makespan, turnaround time, throughput, etc.)
         engine.addStep(new TaskExecutionStep());
+
+        // Step 8: Calculate energy consumption and sustainability metrics
+        EnergyCalculationStep energyStep = new EnergyCalculationStep();
+        engine.addStep(energyStep);
+
+        // Step 9: Collect metrics into SimulationSummary for reporting and multi-objective outputs
+        MetricsCollectionStep metricsStep = new MetricsCollectionStep();
+        engine.addStep(metricsStep);
+
+        // Step 10: Generate CSV reports (optional but useful for debugging each solution)
+        ReportingStep reportingStep = new ReportingStep();
+        engine.addStep(reportingStep);
 
         // Check if strategy is multi-objective and run accordingly
         if (taskStrategy instanceof MultiObjectiveTaskSchedulingStrategy) {
