@@ -63,24 +63,13 @@ public class TaskExecutionStep implements SimulationStep {
     private List<String> completedUserNames;
 
     public TaskExecutionStep() {
-        this.completedTasks = 0;
-        this.failedTasks = 0;
-        this.unassignedTasks = 0;
-        this.makespan = 0;
-        this.averageWaitingTime = 0.0;
-        this.averageTurnaroundTime = 0.0;
-        this.averageExecutionTime = 0.0;
-        this.throughput = 0.0;
-        this.firstTaskStartTime = null;
-        this.lastTaskEndTime = null;
-        this.userStatistics = new HashMap<>();
-        this.workloadStatistics = new HashMap<>();
-        this.usersCompleted = 0;
-        this.completedUserNames = new ArrayList<>();
+        resetState();
     }
 
     @Override
     public void execute(SimulationContext context) {
+        resetState();
+
         List<Task> allTasks = context.getTasks();
         List<User> users = context.getUsers();
         long currentTime = context.getCurrentTime();
@@ -242,6 +231,26 @@ public class TaskExecutionStep implements SimulationStep {
 
         // Record metrics
         recordMetrics(context);
+    }
+
+    /**
+     * Resets all aggregations so each execution starts with a clean slate.
+     */
+    private void resetState() {
+        this.completedTasks = 0;
+        this.failedTasks = 0;
+        this.unassignedTasks = 0;
+        this.makespan = 0;
+        this.averageWaitingTime = 0.0;
+        this.averageTurnaroundTime = 0.0;
+        this.averageExecutionTime = 0.0;
+        this.throughput = 0.0;
+        this.firstTaskStartTime = null;
+        this.lastTaskEndTime = null;
+        this.userStatistics = new HashMap<>();
+        this.workloadStatistics = new HashMap<>();
+        this.usersCompleted = 0;
+        this.completedUserNames = new ArrayList<>();
     }
 
     /**
