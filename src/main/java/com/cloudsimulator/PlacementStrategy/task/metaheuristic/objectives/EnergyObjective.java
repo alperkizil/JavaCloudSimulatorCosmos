@@ -45,6 +45,9 @@ public class EnergyObjective implements SchedulingObjective {
     // Flag to use measurement-based model
     private boolean useMeasurementBasedModel = true;
 
+    // Flag to enable speed-based power scaling (creates makespan vs energy trade-off)
+    private boolean useSpeedBasedScaling = true;
+
     // Additional hosts that consume idle power but have no VMs assigned
     // (e.g., hosts placed in datacenter but without VM assignments)
     private int additionalIdleHostCount = 0;
@@ -217,6 +220,9 @@ public class EnergyObjective implements SchedulingObjective {
      * Calculates INCREMENTAL power (above idle) for a specific workload type.
      * This is the additional power consumed by the workload beyond base idle power.
      *
+     * When speed-based scaling is enabled, faster VMs consume more power per second,
+     * creating a trade-off between execution speed (makespan) and energy consumption.
+     *
      * @param workloadType The workload being executed
      * @param vm           The VM executing the workload
      * @return Incremental power consumption in Watts (NOT including idle)
@@ -224,7 +230,19 @@ public class EnergyObjective implements SchedulingObjective {
     private double calculateIncrementalPowerForWorkload(WorkloadType workloadType, VM vm) {
         if (useMeasurementBasedModel) {
             double[] utilization = getUtilizationProfile(workloadType);
-            return powerModel.calculateIncrementalPower(workloadType, utilization[0], utilization[1]);
+
+            if (useSpeedBasedScaling) {
+                // Apply speed-based scaling: faster VMs use more power per second
+                return powerModel.calculateIncrementalPowerWithSpeedScaling(
+                        workloadType,
+                        utilization[0],
+                        utilization[1],
+                        vm.getTotalRequestedIps()
+                );
+            } else {
+                // Original behavior: no speed scaling
+                return powerModel.calculateIncrementalPower(workloadType, utilization[0], utilization[1]);
+            }
         } else {
             // Legacy model: total power minus base power
             return calculatePowerLegacy(workloadType, vm) - basePowerWatts;
@@ -407,16 +425,24 @@ public class EnergyObjective implements SchedulingObjective {
     }
 
     /**
-     * Sets the hosts list for dynamic calculation of idle host count.
+     * Sets the hosts list for dynamic calculation of idle host count and reference IPS.
      * When set, the additional idle hosts will be automatically calculated as:
      * (hosts in datacenter) - (hosts with VMs)
      *
-     * This eliminates the need to manually call setAdditionalIdleHostCount().
+     * Also automatically initializes the reference IPS for speed-based power scaling
+     * using the median IPS of all hosts.
+     *
+     * This eliminates the need to manually call setAdditionalIdleHostCount() or
+     * initializeReferenceIpsFromHosts().
      *
      * @param hosts List of all hosts in the simulation
      */
     public void setHosts(java.util.List<Host> hosts) {
         this.hosts = hosts;
+        // Automatically initialize reference IPS for speed-based scaling
+        if (powerModel != null && hosts != null && !hosts.isEmpty()) {
+            powerModel.calculateReferenceIpsFromHosts(hosts);
+        }
     }
 
     /**
@@ -426,5 +452,84 @@ public class EnergyObjective implements SchedulingObjective {
      */
     public java.util.List<Host> getHosts() {
         return hosts;
+    }
+
+    // ==================== Speed-Based Power Scaling ====================
+
+    /**
+     * Checks if speed-based power scaling is enabled.
+     * When enabled, faster VMs consume more power per second, creating
+     * a trade-off between execution speed (makespan) and energy consumption.
+     *
+     * @return true if speed-based scaling is enabled
+     */
+    public boolean isUsingSpeedBasedScaling() {
+        return useSpeedBasedScaling;
+    }
+
+    /**
+     * Enables or disables speed-based power scaling.
+     *
+     * When ENABLED (default):
+     * - Faster VMs consume more power per second
+     * - Creates trade-off: fast execution = high energy, slow execution = low energy
+     * - Pareto front will have multiple solutions
+     *
+     * When DISABLED:
+     * - Power consumption independent of VM speed
+     * - Minimizing makespan also minimizes energy (no trade-off)
+     * - Pareto front collapses to ~1 solution
+     *
+     * @param useSpeedBasedScaling true to enable speed-based scaling
+     */
+    public void setUseSpeedBasedScaling(boolean useSpeedBasedScaling) {
+        this.useSpeedBasedScaling = useSpeedBasedScaling;
+    }
+
+    /**
+     * Initializes the reference IPS for speed-based scaling from the VM list.
+     * The reference IPS is set to the MEDIAN IPS of all VMs, creating a balanced
+     * trade-off where roughly half the VMs are "power-efficient" and half are "power-hungry".
+     *
+     * This method should be called before optimization if speed-based scaling is enabled.
+     *
+     * @param vms List of VMs to analyze
+     */
+    public void initializeReferenceIpsFromVMs(java.util.List<VM> vms) {
+        if (powerModel != null && vms != null && !vms.isEmpty()) {
+            powerModel.calculateReferenceIpsFromVMs(vms);
+        }
+    }
+
+    /**
+     * Initializes the reference IPS for speed-based scaling from the host list.
+     * The reference IPS is set to the MEDIAN IPS of all hosts.
+     *
+     * @param hosts List of hosts to analyze
+     */
+    public void initializeReferenceIpsFromHosts(java.util.List<Host> hosts) {
+        if (powerModel != null && hosts != null && !hosts.isEmpty()) {
+            powerModel.calculateReferenceIpsFromHosts(hosts);
+        }
+    }
+
+    /**
+     * Gets the current reference IPS used for speed-based power scaling.
+     *
+     * @return Reference IPS value, or -1 if power model is not available
+     */
+    public long getReferenceIps() {
+        return powerModel != null ? powerModel.getReferenceVmIps() : -1;
+    }
+
+    /**
+     * Manually sets the reference IPS for speed-based power scaling.
+     *
+     * @param referenceIps The reference IPS value
+     */
+    public void setReferenceIps(long referenceIps) {
+        if (powerModel != null) {
+            powerModel.setReferenceVmIps(referenceIps);
+        }
     }
 }
