@@ -3,6 +3,7 @@ package com.cloudsimulator.model;
 import com.cloudsimulator.enums.WorkloadType;
 
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,6 +39,17 @@ public class MeasurementBasedPowerModel {
     // Reference system specifications (Dell Precision 7920 + Nvidia 5080)
     public static final double REFERENCE_IDLE_POWER = 75.79;  // Watts
     public static final String REFERENCE_SYSTEM = "Dell Precision 7920 + Nvidia 5080 GPU";
+
+    // Speed-based power scaling parameters
+    // Power scales as (vmIPS / referenceIPS) ^ exponent
+    // 1.0 = linear, 1.5 = super-linear (realistic for CPUs), 2.0 = quadratic
+    public static final double POWER_SCALING_EXPONENT = 1.5;
+
+    // Default reference IPS (used if not calculated from hosts)
+    public static final long DEFAULT_REFERENCE_IPS = 3_000_000_000L;  // 3 billion IPS
+
+    // Dynamic reference IPS calculated from host composition
+    private long referenceVmIps = DEFAULT_REFERENCE_IPS;
 
     /**
      * Creates a MeasurementBasedPowerModel with default reference system values.
@@ -421,5 +433,166 @@ public class MeasurementBasedPowerModel {
         }
 
         return sb.toString();
+    }
+
+    // ==================== Speed-Based Power Scaling ====================
+
+    /**
+     * Calculates and sets the reference IPS based on the composition of hosts.
+     * The reference IPS is set to the MEDIAN IPS of all hosts, which ensures
+     * that roughly half the hosts are "slow" (power-efficient) and half are
+     * "fast" (power-hungry), creating a balanced trade-off.
+     *
+     * @param hosts List of hosts to analyze
+     */
+    public void calculateReferenceIpsFromHosts(List<Host> hosts) {
+        if (hosts == null || hosts.isEmpty()) {
+            this.referenceVmIps = DEFAULT_REFERENCE_IPS;
+            return;
+        }
+
+        // Extract IPS values and sort them
+        long[] ipsValues = hosts.stream()
+                .mapToLong(Host::getInstructionsPerSecond)
+                .filter(ips -> ips > 0)
+                .sorted()
+                .toArray();
+
+        if (ipsValues.length == 0) {
+            this.referenceVmIps = DEFAULT_REFERENCE_IPS;
+            return;
+        }
+
+        // Calculate median
+        int mid = ipsValues.length / 2;
+        if (ipsValues.length % 2 == 0) {
+            // Even number of elements: average of two middle values
+            this.referenceVmIps = (ipsValues[mid - 1] + ipsValues[mid]) / 2;
+        } else {
+            // Odd number of elements: middle value
+            this.referenceVmIps = ipsValues[mid];
+        }
+    }
+
+    /**
+     * Calculates and sets the reference IPS based on VM speeds.
+     * The reference IPS is set to the MEDIAN IPS of all VMs.
+     *
+     * @param vms List of VMs to analyze
+     */
+    public void calculateReferenceIpsFromVMs(List<VM> vms) {
+        if (vms == null || vms.isEmpty()) {
+            this.referenceVmIps = DEFAULT_REFERENCE_IPS;
+            return;
+        }
+
+        // Extract total IPS values and sort them
+        long[] ipsValues = vms.stream()
+                .mapToLong(VM::getTotalRequestedIps)
+                .filter(ips -> ips > 0)
+                .sorted()
+                .toArray();
+
+        if (ipsValues.length == 0) {
+            this.referenceVmIps = DEFAULT_REFERENCE_IPS;
+            return;
+        }
+
+        // Calculate median
+        int mid = ipsValues.length / 2;
+        if (ipsValues.length % 2 == 0) {
+            this.referenceVmIps = (ipsValues[mid - 1] + ipsValues[mid]) / 2;
+        } else {
+            this.referenceVmIps = ipsValues[mid];
+        }
+    }
+
+    /**
+     * Gets the current reference IPS used for power scaling.
+     *
+     * @return Reference IPS value
+     */
+    public long getReferenceVmIps() {
+        return referenceVmIps;
+    }
+
+    /**
+     * Manually sets the reference IPS for power scaling.
+     *
+     * @param referenceVmIps The reference IPS value
+     */
+    public void setReferenceVmIps(long referenceVmIps) {
+        this.referenceVmIps = referenceVmIps > 0 ? referenceVmIps : DEFAULT_REFERENCE_IPS;
+    }
+
+    /**
+     * Calculates the speed-based power scaling factor for a VM.
+     * Faster VMs consume more power per unit time, creating a trade-off
+     * between execution speed (makespan) and energy consumption.
+     *
+     * Formula: scaleFactor = (vmIPS / referenceIPS) ^ POWER_SCALING_EXPONENT
+     *
+     * Examples with exponent 1.5 and reference 3B IPS:
+     * - VM at 2B IPS (0.67x reference): factor = 0.54 (46% power reduction)
+     * - VM at 3B IPS (1x reference):    factor = 1.0  (baseline)
+     * - VM at 4B IPS (1.33x reference): factor = 1.54 (54% more power)
+     *
+     * @param vmIps The VM's processing speed in instructions per second
+     * @return Power scaling factor (1.0 = reference speed)
+     */
+    public double calculateSpeedPowerFactor(long vmIps) {
+        if (vmIps <= 0 || referenceVmIps <= 0) {
+            return 1.0;
+        }
+        double speedRatio = (double) vmIps / referenceVmIps;
+        return Math.pow(speedRatio, POWER_SCALING_EXPONENT);
+    }
+
+    /**
+     * Calculates incremental power with VM speed scaling applied.
+     * This creates a trade-off: faster VMs draw more power per second.
+     *
+     * @param workloadType The type of workload being executed
+     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
+     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
+     * @param vmIps The VM's processing speed in instructions per second
+     * @return Speed-scaled incremental power in Watts
+     */
+    public double calculateIncrementalPowerWithSpeedScaling(
+            WorkloadType workloadType,
+            double cpuUtilization,
+            double gpuUtilization,
+            long vmIps) {
+        double basePower = calculateIncrementalPower(workloadType, cpuUtilization, gpuUtilization);
+        double speedFactor = calculateSpeedPowerFactor(vmIps);
+        return basePower * speedFactor;
+    }
+
+    /**
+     * Calculates total power with VM speed scaling applied.
+     *
+     * @param workloadType The type of workload being executed
+     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
+     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
+     * @param vmIps The VM's processing speed in instructions per second
+     * @return Speed-scaled total power in Watts
+     */
+    public double calculateTotalPowerWithSpeedScaling(
+            WorkloadType workloadType,
+            double cpuUtilization,
+            double gpuUtilization,
+            long vmIps) {
+        double incrementalPower = calculateIncrementalPowerWithSpeedScaling(
+                workloadType, cpuUtilization, gpuUtilization, vmIps);
+        return (baseIdlePowerWatts + incrementalPower) * hardwareScaleFactor;
+    }
+
+    /**
+     * Gets the power scaling exponent.
+     *
+     * @return Power scaling exponent
+     */
+    public static double getPowerScalingExponent() {
+        return POWER_SCALING_EXPONENT;
     }
 }
