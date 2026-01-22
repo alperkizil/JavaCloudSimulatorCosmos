@@ -11,6 +11,7 @@ import com.cloudsimulator.PlacementStrategy.VMPlacement.VMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.FirstFitVMPlacementStrategy;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -100,8 +101,15 @@ public class VMPlacementStep implements SimulationStep {
             vmsPerDatacenter.put(dc.getName(), 0);
         }
 
-        // Process each unassigned VM
-        for (VM vm : allVMs) {
+        // Sort VMs by placement flexibility (most constrained first)
+        // CPU_GPU_MIXED VMs can only run on CPU_GPU_MIXED hosts (most constrained)
+        // GPU_ONLY VMs can run on GPU_ONLY or CPU_GPU_MIXED hosts
+        // CPU_ONLY VMs can run on CPU_ONLY or CPU_GPU_MIXED hosts (least constrained)
+        List<VM> sortedVMs = new ArrayList<>(allVMs);
+        sortedVMs.sort(Comparator.comparingInt(vm -> getPlacementFlexibilityScore(vm.getComputeType())));
+
+        // Process each unassigned VM (in order of placement flexibility)
+        for (VM vm : sortedVMs) {
             // Skip VMs that are already assigned to a host
             if (vm.isAssignedToHost()) {
                 vmsPlaced++;
@@ -216,6 +224,30 @@ public class VMPlacementStep implements SimulationStep {
 
         // CPU_ONLY VMs on CPU_ONLY hosts, GPU_ONLY VMs on GPU_ONLY hosts
         return vmType == hostType;
+    }
+
+    /**
+     * Returns a placement flexibility score for a VM compute type.
+     * Lower scores indicate more constrained VMs that should be placed first.
+     *
+     * Scores:
+     * - CPU_GPU_MIXED: 0 (most constrained - can only run on CPU_GPU_MIXED hosts)
+     * - GPU_ONLY: 1 (can run on GPU_ONLY or CPU_GPU_MIXED hosts)
+     * - CPU_ONLY: 2 (can run on CPU_ONLY or CPU_GPU_MIXED hosts)
+     *
+     * @param computeType The VM's compute type
+     * @return Flexibility score (lower = more constrained)
+     */
+    private int getPlacementFlexibilityScore(ComputeType computeType) {
+        switch (computeType) {
+            case CPU_GPU_MIXED:
+                return 0; // Most constrained - place first
+            case GPU_ONLY:
+                return 1; // Moderately constrained
+            case CPU_ONLY:
+            default:
+                return 2; // Least constrained - place last
+        }
     }
 
     /**
