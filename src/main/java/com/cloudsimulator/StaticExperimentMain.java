@@ -40,7 +40,7 @@ import java.util.List;
 /**
  * Static main file that runs 10 cloud simulation experiments.
  *
- * This class loads all 10 configuration files from configs/experiment1/ directory
+ * This class loads all 10 configuration files from configs/experiment1new/ directory
  * and runs each experiment sequentially with hardcoded strategies:
  * - Host Placement: PowerAwareLoadBalancingHostPlacementStrategy
  * - VM Placement: BestFitVMPlacementStrategy
@@ -59,7 +59,7 @@ import java.util.List;
  */
 public class StaticExperimentMain {
 
-    private static final String CONFIG_DIRECTORY = "configs/experiment1";
+    private static final String CONFIG_DIRECTORY = "configs/experiment1new";
     private static final String REPORTS_DIRECTORY = "reports";
 
     // GA Configuration parameters
