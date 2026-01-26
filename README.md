@@ -61,11 +61,12 @@ com.cloudsimulator
 │   ├── hostPlacement/  # 5 host placement strategies
 │   ├── VMPlacement/    # 4 VM placement strategies
 │   └── task/           # 3 task assignment strategies + metaheuristics
-│       └── metaheuristic/  # Evolutionary optimization framework
+│       └── metaheuristic/  # Metaheuristic optimization framework
 │           ├── objectives/    # Scheduling objectives (Makespan, Energy)
 │           ├── operators/     # Genetic operators (Crossover, Mutation, Repair)
 │           ├── selection/     # Selection operators (Tournament)
-│           └── termination/   # Termination conditions
+│           ├── termination/   # Termination conditions
+│           └── cooling/       # SA cooling schedules (Geometric, Adaptive, etc.)
 ├── calculator/         # Energy calculators
 ├── reporter/           # CSV report generators (6 report types)
 └── gui/                # JavaFX Configuration Generator
@@ -592,6 +593,7 @@ Example: my_experiment_20241209_143025_a1b2c3/
 | `WorkloadAwareTaskAssignmentStrategy` | Minimizes estimated completion time | Heterogeneous workloads |
 | `NSGA2TaskSchedulingStrategy` | Multi-objective Pareto optimization | Research, trade-off analysis |
 | `GenerationalGATaskSchedulingStrategy` | Single/weighted-sum optimization with elitism | Fast convergence, single best solution |
+| `SimulatedAnnealingTaskSchedulingStrategy` | Single/weighted-sum SA optimization | Memory-efficient, gradual refinement |
 
 ### NSGA-II Multi-Objective Optimization
 
@@ -726,6 +728,122 @@ statistics.setOutputFormat(GAStatistics.OutputFormat.DETAILED);
 | Selection | Crowded tournament | Standard tournament |
 | Use case | Trade-off analysis | Fast, focused optimization |
 | Complexity | Higher | Lower |
+
+### Simulated Annealing (SA)
+
+The Simulated Annealing strategy implements the classic SA metaheuristic for single-objective or weighted-sum optimization:
+
+```java
+// Single objective optimization with geometric cooling
+SAConfiguration config = SAConfiguration.builder()
+    .initialTemperature(1000.0)          // Starting temperature
+    .finalTemperature(0.001)              // Stopping temperature
+    .coolingSchedule(new GeometricCoolingSchedule(0.95))
+    .iterationsPerTemperature(100)        // Equilibrium iterations
+    .objective(new MakespanObjective())   // Single objective
+    .verboseLogging(true)
+    .build();
+
+SimulatedAnnealingTaskSchedulingStrategy strategy =
+    new SimulatedAnnealingTaskSchedulingStrategy(config);
+SchedulingSolution best = strategy.optimize(tasks, vms);
+
+// Access statistics
+SAStatistics stats = strategy.getLastStatistics();
+System.out.println("Best fitness: " + stats.getGlobalBestFitness());
+System.out.println("Acceptance rate: " + stats.getOverallAcceptanceRate());
+```
+
+**Auto-Temperature Calculation:**
+
+```java
+// Let SA calculate initial temperature for 80% acceptance rate
+SAConfiguration config = SAConfiguration.builder()
+    .autoInitialTemperature(true)
+    .initialAcceptanceProbability(0.8)    // Target 80% initial acceptance
+    .temperatureSampleSize(100)            // Sample 100 neighbors
+    .coolingSchedule(new GeometricCoolingSchedule(0.95))
+    .objective(new MakespanObjective())
+    .build();
+```
+
+**Weighted-Sum Multi-Objective:**
+
+```java
+// Combine objectives with weights
+SAConfiguration config = SAConfiguration.builder()
+    .initialTemperature(1000.0)
+    .coolingSchedule(new AdaptiveCoolingSchedule())  // Self-tuning cooling
+    .addWeightedObjective(new MakespanObjective(), 0.7)  // 70% weight
+    .addWeightedObjective(new EnergyObjective(), 0.3)    // 30% weight
+    .build();
+```
+
+**Cooling Schedules:**
+
+| Schedule | Formula | Use Case |
+|----------|---------|----------|
+| `GeometricCoolingSchedule(α)` | T = α × T | Most common, balanced (α ∈ [0.8, 0.99]) |
+| `LinearCoolingSchedule(T₀, β)` | T = T₀ - i × β | Predictable, uniform cooling |
+| `LogarithmicCoolingSchedule(T₀)` | T = T₀ / log(i+e) | Theoretical optimum, very slow |
+| `VerySlowDecreaseCoolingSchedule(β)` | T = T / (1 + β × T) | Lundy-Mees, gradual |
+| `AdaptiveCoolingSchedule()` | Dynamic based on acceptance | Self-tuning, recommended |
+
+**Adaptive Cooling Parameters:**
+
+```java
+// Fully customized adaptive cooling
+AdaptiveCoolingSchedule adaptive = new AdaptiveCoolingSchedule(
+    0.5,    // Target acceptance rate (50%)
+    0.1,    // Tolerance (±10%)
+    0.85,   // Fast cooling rate (when acceptance > 60%)
+    0.95,   // Normal cooling rate (when acceptance 40-60%)
+    0.99    // Slow cooling rate (when acceptance < 40%)
+);
+```
+
+**Statistics Output:**
+
+The algorithm tracks comprehensive metrics per temperature step:
+
+```
+Temp Step: X, Best Candidate: [task assignments], Fitness Value: Y
+```
+
+Additional metrics available via `SAStatistics`:
+- `getCurrentTemperature()`: Current temperature
+- `getBestFitness()`: Best fitness found
+- `getAcceptanceRate()`: Acceptance rate at current temperature
+- `getTotalIterations()`: Total neighbor evaluations
+- `getOverallAcceptanceRate()`: Overall acceptance rate
+- `getBestSolutionTemperatureStep()`: Step where best was found
+
+**Output Formats:**
+
+```java
+// Configure output format (same as GA)
+statistics.setOutputFormat(SAStatistics.OutputFormat.DETAILED);
+
+// Available formats:
+// MINIMAL:  "Temp Step: X, Temp: Y, Best: Z"
+// DEFAULT:  "Temp Step: X, Best Candidate: [...], Fitness Value: Y"
+// DETAILED: Full metrics including acceptance rate, moves
+// CSV:      "temp_step,temperature,current_fitness,best_fitness,acceptance_rate,..."
+```
+
+**Comparison: GA vs SA:**
+
+| Feature | Generational GA | Simulated Annealing |
+|---------|-----------------|---------------------|
+| Search type | Population-based | Single-solution |
+| Exploration | Crossover + mutation | Temperature-controlled acceptance |
+| Memory | O(population × solution) | O(1) - single solution |
+| Parallelization | Easy (population) | Harder |
+| Parameters | Population, crossover, mutation, elitism | Temperature, cooling rate, iterations |
+| Convergence | Multiple solutions evolve | Gradual refinement |
+| Use case | When diversity matters | When memory is limited |
+
+**Reference:** El-Ghazali Talbi, "Metaheuristics: From Design to Implementation"
 
 ---
 

@@ -59,6 +59,16 @@ public class AlgorithmStatistics {
     private int nonDominatedCount;
 
     /**
+     * Current temperature (for Simulated Annealing).
+     */
+    private double currentTemperature;
+
+    /**
+     * Initial temperature (for Simulated Annealing).
+     */
+    private double initialTemperature;
+
+    /**
      * Creates a new AlgorithmStatistics instance and starts the timer.
      *
      * @param numObjectives Number of objectives being optimized
@@ -210,6 +220,22 @@ public class AlgorithmStatistics {
 
     public void setNonDominatedCount(int nonDominatedCount) {
         this.nonDominatedCount = nonDominatedCount;
+    }
+
+    public double getCurrentTemperature() {
+        return currentTemperature;
+    }
+
+    public void setCurrentTemperature(double currentTemperature) {
+        this.currentTemperature = currentTemperature;
+    }
+
+    public double getInitialTemperature() {
+        return initialTemperature;
+    }
+
+    public void setInitialTemperature(double initialTemperature) {
+        this.initialTemperature = initialTemperature;
     }
 
     @Override
