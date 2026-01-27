@@ -294,8 +294,11 @@ public class FlexibleExperimentMain {
             System.out.println();
         }
 
-        // Generate Python plotting script
-        generatePythonPlotterScript();
+        // Generate Python plotting script and execute it
+        if (MULTI_OBJECTIVE_MODE) {
+            generatePythonPlotterScript();
+            executePythonPlotter();
+        }
 
         // Print final summary
         printFinalSummary(allResults);
@@ -1099,6 +1102,73 @@ public class FlexibleExperimentMain {
         }
 
         System.out.println("Python plotting script saved to: " + filePath);
+    }
+
+    /**
+     * Executes the Python plotting script to generate Pareto front visualizations.
+     * Tries python3 first, then falls back to python.
+     * If Python is not available, prints manual execution instructions.
+     */
+    private static void executePythonPlotter() {
+        Path scriptPath = Paths.get(REPORTS_DIRECTORY, "pareto_plotter.py");
+
+        if (!Files.exists(scriptPath)) {
+            System.err.println("WARNING: Python script not found at " + scriptPath);
+            return;
+        }
+
+        System.out.println();
+        System.out.println("Executing Python plotter...");
+
+        // Try python3 first, then python
+        String[] pythonCommands = {"python3", "python"};
+        boolean success = false;
+
+        for (String pythonCmd : pythonCommands) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(
+                    pythonCmd,
+                    scriptPath.toString(),
+                    REPORTS_DIRECTORY
+                );
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+
+                // Read output
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("  [Python] " + line);
+                }
+
+                int exitCode = process.waitFor();
+                if (exitCode == 0) {
+                    System.out.println("Pareto plots generated successfully.");
+                    success = true;
+                    break;
+                } else {
+                    System.err.println("WARNING: " + pythonCmd + " exited with code " + exitCode);
+                }
+            } catch (IOException e) {
+                // Python command not found, try next
+                continue;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.err.println("WARNING: Python execution interrupted");
+                break;
+            }
+        }
+
+        if (!success) {
+            System.out.println();
+            System.out.println("Could not automatically execute Python script.");
+            System.out.println("To generate plots manually, run:");
+            System.out.println("  python " + scriptPath + " " + REPORTS_DIRECTORY + "/");
+            System.out.println();
+            System.out.println("Required Python packages: matplotlib, pandas");
+            System.out.println("Install with: pip install matplotlib pandas");
+        }
     }
 
     // =========================================================================
