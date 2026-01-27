@@ -905,7 +905,7 @@ public class FlexibleExperimentMain {
         TaskAssignmentStrategy taskStrategy = createStrategy(
             context.getHosts(),
             context.getTasks(),
-            context.getVMs()
+            context.getVms()
         );
 
         System.out.println("--- Step 5: Task Assignment (" + getStrategyName(STRATEGY) + ") ---");
