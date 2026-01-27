@@ -89,11 +89,16 @@ public class PerformanceMetrics {
 
     private void normalize() {
         normalizedParetos = new ArrayList<>();
+        // Calculate ranges with protection against division by zero
+        double range1 = f1max - f1min;
+        double range2 = f2max - f2min;
+
         for (int i = 0; i < allParetos.size(); i++) { // A, B, Tr
             ArrayList<ArrayList<Double>> normalizedP = new ArrayList<>(); // nA, nB, nTr
             for (ArrayList<Double> solution : allParetos.get(i)) {
-                double nf1 = (solution.get(0) - f1min) / (f1max - f1min);
-                double nf2 = (solution.get(1) - f2min) / (f2max - f2min);
+                // Safe normalization: if range is zero, all values are the same, so normalize to 0.0
+                double nf1 = (range1 > 0) ? (solution.get(0) - f1min) / range1 : 0.0;
+                double nf2 = (range2 > 0) ? (solution.get(1) - f2min) / range2 : 0.0;
                 ArrayList<Double> nSolution = new ArrayList<>();
                 nSolution.add(nf1);
                 nSolution.add(nf2);
