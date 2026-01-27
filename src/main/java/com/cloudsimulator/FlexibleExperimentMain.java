@@ -726,6 +726,49 @@ public class FlexibleExperimentMain {
     }
 
     /**
+     * Filters a list of solutions to its non-dominated subset.
+     * Used to ensure each algorithm's solution set is a proper Pareto front
+     * before calculating metrics like HV, GD, IGD.
+     *
+     * @param solutions List of solutions (may contain dominated points)
+     * @return List containing only non-dominated solutions
+     */
+    private static List<double[]> filterToNonDominated(List<double[]> solutions) {
+        if (solutions.size() <= 1) {
+            return new ArrayList<>(solutions);
+        }
+
+        List<double[]> nonDominated = new ArrayList<>();
+        for (double[] candidate : solutions) {
+            boolean isDominated = false;
+            for (double[] other : solutions) {
+                if (candidate != other && dominates(other, candidate)) {
+                    isDominated = true;
+                    break;
+                }
+            }
+            if (!isDominated) {
+                // Check for duplicates
+                boolean duplicate = false;
+                for (double[] existing : nonDominated) {
+                    if (Math.abs(existing[0] - candidate[0]) < 1e-9 &&
+                        Math.abs(existing[1] - candidate[1]) < 1e-9) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) {
+                    nonDominated.add(candidate);
+                }
+            }
+        }
+
+        // Sort by first objective (makespan)
+        nonDominated.sort((a, b) -> Double.compare(a[0], b[0]));
+        return nonDominated;
+    }
+
+    /**
      * Verifies all solutions in a list are non-dominated (internal check).
      * Uses Dominance.compare() from PerfMet package.
      */
@@ -760,20 +803,36 @@ public class FlexibleExperimentMain {
 
     /**
      * Calculates HV, GD, IGD, Spacing for each algorithm using PerfMet.
+     *
+     * IMPORTANT: Each algorithm's solutions are filtered to their non-dominated
+     * subset before metrics calculation. This ensures proper Pareto front comparison
+     * even when multiple iterations yield dominated points.
      */
     private static void calculatePerformanceMetrics(ConfigExperimentResults configResult) {
         // Build the allParetos list for PerformanceMetrics
         // Format: [algo1, algo2, ..., algoN, universalPareto]
         ArrayList<ArrayList<ArrayList<Double>>> allParetos = new ArrayList<>();
 
-        // Add each algorithm's solutions
+        // Add each algorithm's solutions (filtered to non-dominated)
         List<Integer> algoOrder = new ArrayList<>(configResult.algorithmResults.keySet());
         algoOrder.sort(Integer::compareTo);
 
         for (int algoId : algoOrder) {
             AlgorithmAggregatedResult algoResult = configResult.algorithmResults.get(algoId);
+
+            // Filter to non-dominated subset before metrics calculation
+            // This is crucial when aggregating across multiple iterations
+            algoResult.nonDominatedSolutions = filterToNonDominated(algoResult.allSolutions);
+
+            int totalSolutions = algoResult.allSolutions.size();
+            int nonDominatedCount = algoResult.nonDominatedSolutions.size();
+            if (totalSolutions != nonDominatedCount) {
+                System.out.println("  " + algoResult.algorithmName + ": " + nonDominatedCount +
+                    " non-dominated / " + totalSolutions + " total solutions");
+            }
+
             ArrayList<ArrayList<Double>> paretoList = new ArrayList<>();
-            for (double[] sol : algoResult.allSolutions) {
+            for (double[] sol : algoResult.nonDominatedSolutions) {
                 ArrayList<Double> point = new ArrayList<>();
                 point.add(sol[0]);
                 point.add(sol[1]);
@@ -811,7 +870,8 @@ public class FlexibleExperimentMain {
                 algoResult.hv = pm.HV(index);
                 algoResult.gd = pm.GD(index);
                 algoResult.igd = pm.IGD(index);
-                if (algoResult.allSolutions.size() > 1) {
+                // Spacing requires at least 2 non-dominated solutions
+                if (algoResult.nonDominatedSolutions.size() > 1) {
                     algoResult.spacing = pm.Spacing(index);
                 } else {
                     algoResult.spacing = 0.0; // Single solution has no spacing
@@ -960,7 +1020,9 @@ public class FlexibleExperimentMain {
         Path filePath = outputDir.resolve("performance_metrics.csv");
 
         try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
-            writer.println("Algorithm,HV,GD,IGD,Spacing,SolutionCount,IterationCount,AvgTimeMs,NonDominanceVerified");
+            // NonDomSolutions = solutions used for metrics calculation (filtered Pareto front)
+            // TotalSolutions = all solutions across iterations (may include dominated)
+            writer.println("Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,IterationCount,AvgTimeMs,NonDominanceVerified");
 
             List<Integer> algoOrder = new ArrayList<>(configResult.algorithmResults.keySet());
             algoOrder.sort(Integer::compareTo);
@@ -972,12 +1034,16 @@ public class FlexibleExperimentMain {
                     .mapToLong(r -> r.executionTimeMs)
                     .sum() / Math.max(1, algoResult.runs.size());
 
-                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%b%n",
+                int ndCount = algoResult.nonDominatedSolutions != null ?
+                    algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
+
+                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%b%n",
                     algoResult.algorithmName,
                     algoResult.hv,
                     algoResult.gd,
                     algoResult.igd,
                     algoResult.spacing,
+                    ndCount,
                     algoResult.allSolutions.size(),
                     algoResult.runs.size(),
                     avgTime,
@@ -985,8 +1051,9 @@ public class FlexibleExperimentMain {
             }
 
             // Add Universal Pareto row
-            writer.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,N/A,N/A,true%n",
-                configResult.universalHV, configResult.universalParetoSet.size());
+            writer.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,%d,N/A,N/A,true%n",
+                configResult.universalHV, configResult.universalParetoSet.size(),
+                configResult.universalParetoSet.size());
 
         } catch (IOException e) {
             System.err.println("ERROR: Could not write performance_metrics.csv: " + e.getMessage());
@@ -1182,27 +1249,31 @@ public class FlexibleExperimentMain {
         System.out.println("============================================================");
         System.out.println();
 
-        System.out.printf("%-15s | %-8s | %-8s | %-8s | %-8s | %-10s | %-6s%n",
-            "Algorithm", "HV", "GD", "IGD", "Spacing", "Solutions", "Valid");
-        System.out.println("-".repeat(80));
+        // Header: ND_Sol = Non-Dominated Solutions (used for metrics)
+        System.out.printf("%-15s | %-8s | %-8s | %-8s | %-8s | %-8s | %-6s%n",
+            "Algorithm", "HV", "GD", "IGD", "Spacing", "ND_Sol", "Valid");
+        System.out.println("-".repeat(78));
 
         List<Integer> algoOrder = new ArrayList<>(result.algorithmResults.keySet());
         algoOrder.sort(Integer::compareTo);
 
         for (int algoId : algoOrder) {
             AlgorithmAggregatedResult algoResult = result.algorithmResults.get(algoId);
-            System.out.printf("%-15s | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-10d | %-6s%n",
+            // Show non-dominated count (what metrics are based on)
+            int ndCount = algoResult.nonDominatedSolutions != null ?
+                algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
+            System.out.printf("%-15s | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8d | %-6s%n",
                 algoResult.algorithmName,
                 algoResult.hv,
                 algoResult.gd,
                 algoResult.igd,
                 algoResult.spacing,
-                algoResult.allSolutions.size(),
+                ndCount,
                 algoResult.nonDominanceVerified ? "PASS" : "FAIL");
         }
 
-        System.out.println("-".repeat(80));
-        System.out.printf("%-15s | %-8.4f | %-8s | %-8s | %-8s | %-10d | %-6s%n",
+        System.out.println("-".repeat(78));
+        System.out.printf("%-15s | %-8.4f | %-8s | %-8s | %-8s | %-8d | %-6s%n",
             "Universal", result.universalHV, "0.0000", "0.0000", "-",
             result.universalParetoSet.size(), "REF");
         System.out.println();
@@ -1413,6 +1484,7 @@ public class FlexibleExperimentMain {
         final String algorithmName;
         final List<AlgorithmRunResult> runs = new ArrayList<>();
         final List<double[]> allSolutions = new ArrayList<>();  // Combined from all iterations
+        List<double[]> nonDominatedSolutions = new ArrayList<>();  // Filtered to non-dominated only
 
         // Performance metrics (calculated against Universal Pareto)
         double hv;
