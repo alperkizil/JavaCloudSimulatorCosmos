@@ -63,33 +63,43 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.Fitne
 // Cooling schedules
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.cooling.GeometricCoolingSchedule;
 
+// Performance metrics
+import com.cloudsimulator.multiobjectivePerformance.PerfMet.PerformanceMetrics;
+import com.cloudsimulator.multiobjectivePerformance.PerfMet.Dominance;
+
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
- * Flexible Experiment Main - Easy-to-configure cloud simulation runner.
+ * Flexible Experiment Main - Multi-algorithm cloud simulation runner.
  *
- * This file is designed for easy experimentation. All configuration is done
- * through simple constants at the top of the file - no command line arguments needed.
+ * This file is designed for comparative experiments across multiple algorithms.
+ * All configuration is done through simple constants at the top of the file.
  *
  * QUICK START:
- * 1. Set STRATEGY (1-8) to choose your algorithm
- * 2. Set MULTI_OBJECTIVE_MODE to true/false
- * 3. Adjust weights if using weighted-sum mode
- * 4. Run!
+ * 1. Set ALGORITHMS array to select which algorithms to run
+ * 2. Set MULTI_OBJECTIVE_MODE to true for Pareto analysis, false for single-objective comparison
+ * 3. Set ITERATION_COUNT for statistical significance
+ * 4. Adjust weights if using weighted-sum mode
+ * 5. Run!
  *
  * ============================================================================
  * STRATEGY GUIDE:
  * ============================================================================
  *
  * HEURISTICS (fast, simple):
- *   1 = First Available    - Assigns to first compatible VM (baseline) [DEFAULT]
+ *   1 = First Available    - Assigns to first compatible VM (baseline)
  *   2 = Shortest Queue     - Assigns to VM with fewest tasks
  *   3 = Workload Aware     - Considers completion time estimation
  *
@@ -107,35 +117,22 @@ import java.util.List;
  *   8 = MOEA_SPEA2         - MOEA Framework SPEA2 (MULTI_OBJECTIVE_MODE only)
  *
  * ============================================================================
- * TERMINATION CRITERIA (40,000 fitness evaluations for fair comparison):
+ * MULTI-ALGORITHM MODE:
  * ============================================================================
  *
- *   GA:           200 population × 200 generations = 40,000 evaluations
- *   SA:           40,000 total fitness evaluations
- *   Local Search: 40,000 max iterations OR 200 iterations without improvement
- *   MOEA_NSGAII:  40,000 max evaluations
- *   MOEA_SPEA2:   40,000 max evaluations
+ * When multiple algorithms are selected:
+ *   - Each algorithm runs for each config file
+ *   - Each algorithm runs ITERATION_COUNT times with different seeds
+ *   - Seeds increment by SEED_INCREMENT: baseSeed, baseSeed+100, baseSeed+200, ...
  *
- * ============================================================================
- * OBJECTIVE MODES:
- * ============================================================================
+ * When MULTI_OBJECTIVE_MODE = true:
+ *   - Universal Pareto Set computed from all algorithm solutions
+ *   - HV, GD, IGD, Spacing calculated for each algorithm
+ *   - CSV outputs generated for external plotting
  *
- * When MULTI_OBJECTIVE_MODE = false (single objective):
- *   - For strategies 4-6: Uses the objective with higher weight
- *   - Strategies 7-8 (MOEA): NOT AVAILABLE - will fallback to First Available
- *
- * When MULTI_OBJECTIVE_MODE = true (multi-objective):
- *   - For strategies 4-6: Uses weighted sum of objectives
- *   - For strategies 7-8 (MOEA): Returns Pareto front, selects knee point
- *
- * ============================================================================
- * GENETIC OPERATORS:
- * ============================================================================
- *
- * All evolutionary algorithms (GA, MOEA_NSGAII, MOEA_SPEA2) use identical operators:
- *   - Crossover: UNIFORM crossover
- *   - Mutation:  COMBINED (REASSIGN + SWAP_ORDER)
- *   - Repair:    Constraint satisfaction via RepairOperator
+ * When MULTI_OBJECTIVE_MODE = false:
+ *   - Single-objective comparison (best/avg values)
+ *   - No Pareto analysis (not applicable)
  *
  * ============================================================================
  */
@@ -146,8 +143,11 @@ public class FlexibleExperimentMain {
     // =========================================================================
 
     /**
-     * Strategy selection (see STRATEGY GUIDE above):
-     *   1 = First Available (heuristic) [DEFAULT]
+     * Algorithms to run for each config file.
+     * Multiple algorithms will be compared with Pareto analysis.
+     *
+     * Algorithm IDs:
+     *   1 = First Available (heuristic)
      *   2 = Shortest Queue (heuristic)
      *   3 = Workload Aware (heuristic)
      *   4 = Genetic Algorithm (GA)
@@ -156,15 +156,28 @@ public class FlexibleExperimentMain {
      *   7 = MOEA_NSGAII (multi-objective only)
      *   8 = MOEA_SPEA2 (multi-objective only)
      */
-    private static final int STRATEGY = 1;
+    private static final int[] ALGORITHMS = {1, 2, 3, 4, 5, 6, 7, 8};
+
+    /**
+     * Number of iterations per algorithm per config file.
+     * Each iteration uses a different seed: baseSeed + (iteration-1) * SEED_INCREMENT
+     * Example: baseSeed=1, ITERATION_COUNT=10 -> seeds: 1, 101, 201, 301, ...
+     */
+    private static final int ITERATION_COUNT = 1;
+
+    /**
+     * Seed increment between iterations.
+     */
+    private static final int SEED_INCREMENT = 100;
 
     /**
      * Multi-objective mode:
-     *   false = Single objective (uses objective with higher weight)
-     *           NOTE: Strategies 7-8 (MOEA) require multi-objective mode!
+     *   false = Single objective comparison (best value only, no Pareto metrics)
+     *           NOTE: Strategies 7-8 (MOEA) will be skipped in this mode!
      *   true  = Multi-objective (weighted sum for GA/SA/LS, Pareto front for MOEA)
+     *           Full Pareto analysis with HV, GD, IGD calculations
      */
-    private static final boolean MULTI_OBJECTIVE_MODE = false;
+    private static final boolean MULTI_OBJECTIVE_MODE = true;
 
     /**
      * Objective weights (used for weighted-sum or to select primary objective)
@@ -174,77 +187,35 @@ public class FlexibleExperimentMain {
     private static final double WEIGHT_ENERGY = 0.3;
 
     /**
-     * Number of experiment files to run (max 10)
+     * Number of experiment files to run (max from sorted list)
      */
     private static final int MAX_EXPERIMENTS = 2;
 
     /**
      * Enable verbose logging for metaheuristics
      */
-    private static final boolean VERBOSE_LOGGING = true;
+    private static final boolean VERBOSE_LOGGING = false;
 
     // =========================================================================
     // UNIFIED ALGORITHM PARAMETERS (40,000 evaluations for fair comparison)
     // =========================================================================
 
-    /**
-     * Total fitness evaluations budget - ensures fair comparison across algorithms.
-     * All metaheuristic algorithms terminate after approximately this many evaluations.
-     */
     private static final int TOTAL_EVALUATIONS = 40000;
-
-    /**
-     * Population size for population-based algorithms (GA, MOEA).
-     * With 200 generations: 200 × 200 = 40,000 evaluations.
-     */
     private static final int POPULATION_SIZE = 200;
-
-    /**
-     * Number of generations for GA and MOEA algorithms.
-     * With population 200: 200 × 200 = 40,000 evaluations.
-     */
     private static final int GENERATIONS = 200;
-
-    /**
-     * Crossover rate - probability of applying crossover operator.
-     * Used by: GA, MOEA_NSGAII, MOEA_SPEA2
-     */
     private static final double CROSSOVER_RATE = 0.9;
-
-    /**
-     * Mutation rate - per-gene probability of mutation.
-     * Used by: GA, SA, MOEA_NSGAII, MOEA_SPEA2
-     */
     private static final double MUTATION_RATE = 0.1;
 
-    // =========================================================================
-    // GA-SPECIFIC PARAMETERS
-    // =========================================================================
-
-    /** Number of elite individuals preserved each generation (10% of population) */
+    // GA-specific
     private static final int GA_ELITE_COUNT = 20;
-
-    /** Tournament size for selection */
     private static final int GA_TOURNAMENT_SIZE = 3;
 
-    // =========================================================================
-    // SA-SPECIFIC PARAMETERS
-    // =========================================================================
-
-    /** Initial temperature for SA (used with auto-termination) */
+    // SA-specific
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
-
-    /** Cooling rate for geometric cooling schedule */
     private static final double SA_COOLING_RATE = 0.95;
 
-    // =========================================================================
-    // LOCAL SEARCH PARAMETERS
-    // =========================================================================
-
-    /** Maximum iterations (40,000 for fair comparison) */
+    // Local Search
     private static final int LS_MAX_ITERATIONS = 40000;
-
-    /** Stop after this many iterations without improvement */
     private static final int LS_MAX_NO_IMPROVEMENT = 200;
 
     // =========================================================================
@@ -260,11 +231,18 @@ public class FlexibleExperimentMain {
 
     public static void main(String[] args) {
         System.out.println("========================================================");
-        System.out.println("  Flexible Experiment Runner");
+        System.out.println("  Multi-Algorithm Experiment Runner");
         System.out.println("========================================================");
         System.out.println();
         printConfiguration();
         System.out.println();
+
+        // Validate configuration
+        int[] effectiveAlgorithms = validateAlgorithms();
+        if (effectiveAlgorithms.length == 0) {
+            System.err.println("ERROR: No valid algorithms selected.");
+            System.exit(1);
+        }
 
         // Load configuration files
         List<File> configFiles = loadConfigFiles();
@@ -278,51 +256,86 @@ public class FlexibleExperimentMain {
             configFiles = configFiles.subList(0, MAX_EXPERIMENTS);
         }
 
-        System.out.println("Running " + configFiles.size() + " experiment(s):");
-        for (File f : configFiles) {
-            System.out.println("  - " + f.getName());
-        }
+        System.out.println("Running " + configFiles.size() + " config(s) × " +
+            effectiveAlgorithms.length + " algorithm(s) × " + ITERATION_COUNT + " iteration(s)");
+        System.out.println("Total runs: " + (configFiles.size() * effectiveAlgorithms.length * ITERATION_COUNT));
         System.out.println();
 
         // Ensure reports directory exists
         ensureReportsDirectory();
 
         // Run experiments
-        List<ExperimentResult> results = new ArrayList<>();
-        int experimentNumber = 1;
+        List<ConfigExperimentResults> allResults = new ArrayList<>();
+        int configNumber = 1;
 
         for (File configFile : configFiles) {
             System.out.println("========================================================");
-            System.out.println("  EXPERIMENT " + experimentNumber + "/" + configFiles.size());
-            System.out.println("  Config: " + configFile.getName());
+            System.out.println("  CONFIG " + configNumber + "/" + configFiles.size() + ": " + configFile.getName());
             System.out.println("========================================================");
             System.out.println();
 
             try {
-                ExperimentResult result = runExperiment(configFile, experimentNumber);
-                results.add(result);
-                printExperimentSummary(result);
+                ConfigExperimentResults result = runMultiAlgorithmExperiment(
+                    configFile, configNumber, effectiveAlgorithms);
+                allResults.add(result);
+
+                if (MULTI_OBJECTIVE_MODE) {
+                    printMultiObjectiveComparison(result);
+                } else {
+                    printSingleObjectiveComparison(result);
+                }
+
             } catch (Exception e) {
-                System.err.println("ERROR: Experiment " + experimentNumber + " failed: " + e.getMessage());
+                System.err.println("ERROR: Config " + configNumber + " failed: " + e.getMessage());
                 e.printStackTrace();
-                results.add(new ExperimentResult(configFile.getName(), experimentNumber, e));
             }
 
-            experimentNumber++;
+            configNumber++;
             System.out.println();
         }
 
+        // Generate Python plotting script and execute it
+        if (MULTI_OBJECTIVE_MODE) {
+            generatePythonPlotterScript();
+            executePythonPlotter();
+        }
+
         // Print final summary
-        printFinalSummary(results);
+        printFinalSummary(allResults);
     }
 
     // =========================================================================
-    // CONFIGURATION DISPLAY
+    // CONFIGURATION VALIDATION
     // =========================================================================
 
+    /**
+     * Validates and filters algorithms based on mode.
+     * MOEA strategies (7-8) require MULTI_OBJECTIVE_MODE = true.
+     */
+    private static int[] validateAlgorithms() {
+        List<Integer> valid = new ArrayList<>();
+
+        for (int algo : ALGORITHMS) {
+            if (algo < 1 || algo > 8) {
+                System.err.println("WARNING: Invalid algorithm ID " + algo + ", skipping.");
+                continue;
+            }
+            if ((algo == 7 || algo == 8) && !MULTI_OBJECTIVE_MODE) {
+                System.err.println("WARNING: Algorithm " + algo + " (" + getStrategyName(algo) +
+                    ") requires MULTI_OBJECTIVE_MODE=true, skipping.");
+                continue;
+            }
+            valid.add(algo);
+        }
+
+        return valid.stream().mapToInt(i -> i).toArray();
+    }
+
     private static void printConfiguration() {
-        System.out.println("Current Configuration:");
-        System.out.println("  Strategy: " + getStrategyName(STRATEGY) + " (" + STRATEGY + ")");
+        System.out.println("Configuration:");
+        System.out.println("  Algorithms: " + Arrays.toString(ALGORITHMS));
+        System.out.println("  Iteration Count: " + ITERATION_COUNT);
+        System.out.println("  Seed Increment: " + SEED_INCREMENT);
         System.out.println("  Multi-objective Mode: " + MULTI_OBJECTIVE_MODE);
         System.out.println("  Weights: Makespan=" + WEIGHT_MAKESPAN + ", Energy=" + WEIGHT_ENERGY);
         System.out.println("  Max Experiments: " + MAX_EXPERIMENTS);
@@ -331,110 +344,226 @@ public class FlexibleExperimentMain {
 
     private static String getStrategyName(int strategy) {
         switch (strategy) {
-            case 1: return "First Available (Heuristic)";
-            case 2: return "Shortest Queue (Heuristic)";
-            case 3: return "Workload Aware (Heuristic)";
-            case 4: return "Genetic Algorithm (GA)";
-            case 5: return "Simulated Annealing (SA)";
-            case 6: return "Local Search (LS)";
-            case 7: return "MOEA_NSGAII (Multi-objective)";
-            case 8: return "MOEA_SPEA2 (Multi-objective)";
+            case 1: return "FirstAvailable";
+            case 2: return "ShortestQueue";
+            case 3: return "WorkloadAware";
+            case 4: return "GA";
+            case 5: return "SA";
+            case 6: return "LocalSearch";
+            case 7: return "MOEA_NSGAII";
+            case 8: return "MOEA_SPEA2";
             default: return "Unknown";
         }
+    }
+
+    // =========================================================================
+    // MULTI-ALGORITHM EXPERIMENT RUNNER
+    // =========================================================================
+
+    /**
+     * Runs all selected algorithms for a single config file.
+     */
+    private static ConfigExperimentResults runMultiAlgorithmExperiment(
+            File configFile, int configNumber, int[] algorithms) throws Exception {
+
+        // Parse configuration to get base seed
+        FileConfigParser parser = new FileConfigParser();
+        ExperimentConfiguration baseConfig = parser.parse(configFile.getAbsolutePath());
+        long baseSeed = baseConfig.getRandomSeed();
+
+        ConfigExperimentResults configResult = new ConfigExperimentResults(
+            configFile.getName(), baseSeed, configNumber);
+
+        // Run each algorithm
+        for (int algoId : algorithms) {
+            System.out.println("------------------------------------------------------------");
+            System.out.println("  Algorithm " + algoId + "/" + algorithms.length + ": " + getStrategyName(algoId));
+            System.out.println("------------------------------------------------------------");
+
+            AlgorithmAggregatedResult algoResult = new AlgorithmAggregatedResult(
+                algoId, getStrategyName(algoId));
+
+            // Run iterations
+            for (int iter = 1; iter <= ITERATION_COUNT; iter++) {
+                long seed = baseSeed + (iter - 1) * SEED_INCREMENT;
+                System.out.print("  Iteration " + iter + "/" + ITERATION_COUNT + " (seed=" + seed + ")... ");
+
+                try {
+                    AlgorithmRunResult runResult = runSingleAlgorithmIteration(
+                        configFile, algoId, iter, seed);
+                    algoResult.runs.add(runResult);
+                    algoResult.allSolutions.addAll(runResult.solutions);
+
+                    String solCount = runResult.solutions.size() == 1 ? "1 solution" :
+                        runResult.solutions.size() + " solutions";
+                    System.out.println("done (" + runResult.executionTimeMs + "ms, " + solCount + ")");
+
+                } catch (Exception e) {
+                    System.out.println("FAILED: " + e.getMessage());
+                    algoResult.runs.add(new AlgorithmRunResult(algoId, getStrategyName(algoId),
+                        iter, seed, e));
+                }
+            }
+
+            // Verify non-dominance for this algorithm's solutions
+            algoResult.nonDominanceVerified = verifyNonDominance(algoResult.allSolutions);
+            System.out.println("  Non-dominance verified: " + (algoResult.nonDominanceVerified ? "PASS" : "FAIL"));
+
+            configResult.algorithmResults.put(algoId, algoResult);
+        }
+
+        // Compute Universal Pareto Set (only in multi-objective mode)
+        if (MULTI_OBJECTIVE_MODE) {
+            System.out.println();
+            System.out.println("Computing Universal Pareto Set...");
+            configResult.universalParetoSet = computeUniversalPareto(configResult.algorithmResults);
+            System.out.println("  Universal Pareto: " + configResult.universalParetoSet.size() + " non-dominated solutions");
+
+            // Calculate Pareto contributions for each algorithm
+            calculateParetoContributions(configResult);
+
+            // Calculate performance metrics for each algorithm
+            System.out.println();
+            System.out.println("Calculating Performance Metrics...");
+            calculatePerformanceMetrics(configResult);
+
+            // Generate CSV outputs
+            generateCSVOutputs(configResult);
+        }
+
+        return configResult;
+    }
+
+    /**
+     * Runs a single algorithm iteration for a config file.
+     */
+    private static AlgorithmRunResult runSingleAlgorithmIteration(
+            File configFile, int algoId, int iteration, long seed) throws Exception {
+
+        long startTime = System.currentTimeMillis();
+
+        // Parse configuration
+        FileConfigParser parser = new FileConfigParser();
+        ExperimentConfiguration config = parser.parse(configFile.getAbsolutePath());
+
+        // Initialize random generator with iteration seed
+        RandomGenerator.initialize(seed);
+
+        // Create simulation context
+        SimulationContext context = new SimulationContext();
+
+        // Create placement strategies
+        PowerAwareLoadBalancingHostPlacementStrategy hostStrategy =
+            new PowerAwareLoadBalancingHostPlacementStrategy();
+        BestFitVMPlacementStrategy vmStrategy = new BestFitVMPlacementStrategy();
+
+        // Execute simulation pipeline (Steps 1-4)
+        InitializationStep initStep = new InitializationStep(config);
+        initStep.execute(context);
+
+        HostPlacementStep hostPlacementStep = new HostPlacementStep(hostStrategy);
+        hostPlacementStep.execute(context);
+
+        UserDatacenterMappingStep userMappingStep = new UserDatacenterMappingStep();
+        userMappingStep.execute(context);
+
+        VMPlacementStep vmPlacementStep = new VMPlacementStep(vmStrategy);
+        vmPlacementStep.execute(context);
+
+        // Create task assignment strategy
+        TaskAssignmentStrategy taskStrategy = createStrategy(
+            algoId, context.getHosts(), context.getTasks(), context.getVms());
+
+        // Step 5: Task Assignment
+        TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(taskStrategy);
+        taskAssignmentStep.execute(context);
+
+        // Steps 6-8: Execution and Energy
+        VMExecutionStep vmExecutionStep = new VMExecutionStep();
+        vmExecutionStep.execute(context);
+
+        TaskExecutionStep taskExecutionStep = new TaskExecutionStep();
+        taskExecutionStep.execute(context);
+
+        EnergyCalculationStep energyCalculationStep = new EnergyCalculationStep();
+        energyCalculationStep.execute(context);
+
+        long endTime = System.currentTimeMillis();
+
+        // Extract solutions
+        List<double[]> solutions = extractSolutions(taskStrategy, taskExecutionStep, energyCalculationStep);
+
+        // Verify non-dominance for this run
+        boolean nonDominated = verifyNonDominance(solutions);
+
+        return new AlgorithmRunResult(
+            algoId, getStrategyName(algoId), iteration, seed,
+            solutions, endTime - startTime, nonDominated);
+    }
+
+    /**
+     * Extracts solutions [makespan, energy] from strategy results.
+     */
+    private static List<double[]> extractSolutions(
+            TaskAssignmentStrategy strategy,
+            TaskExecutionStep taskStep,
+            EnergyCalculationStep energyStep) {
+
+        List<double[]> solutions = new ArrayList<>();
+
+        // For MOEA strategies, get all Pareto front solutions
+        if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
+            ParetoFront front = ((MOEA_NSGA2TaskSchedulingStrategy) strategy).getLastParetoFront();
+            if (front != null && !front.isEmpty()) {
+                for (SchedulingSolution sol : front.getSolutions()) {
+                    double[] objs = sol.getObjectiveValues();
+                    if (objs != null && objs.length >= 2) {
+                        solutions.add(new double[]{objs[0], objs[1]});
+                    }
+                }
+            }
+        } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
+            ParetoFront front = ((MOEA_SPEA2TaskSchedulingStrategy) strategy).getLastParetoFront();
+            if (front != null && !front.isEmpty()) {
+                for (SchedulingSolution sol : front.getSolutions()) {
+                    double[] objs = sol.getObjectiveValues();
+                    if (objs != null && objs.length >= 2) {
+                        solutions.add(new double[]{objs[0], objs[1]});
+                    }
+                }
+            }
+        }
+
+        // If no Pareto front (single-solution algorithms), use actual execution results
+        if (solutions.isEmpty()) {
+            double makespan = taskStep.getMakespan();
+            double energy = energyStep.getTotalITEnergyKWh();
+            solutions.add(new double[]{makespan, energy});
+        }
+
+        return solutions;
     }
 
     // =========================================================================
     // STRATEGY FACTORY METHODS
     // =========================================================================
 
-    /**
-     * Creates a task assignment strategy based on STRATEGY constant.
-     *
-     * @param hosts List of hosts (needed for energy objective)
-     * @param tasks List of tasks (needed for MOEA custom operators)
-     * @param vms   List of VMs (needed for MOEA custom operators)
-     * @return Configured TaskAssignmentStrategy
-     */
-    private static TaskAssignmentStrategy createStrategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
-        // Validate MOEA strategies require multi-objective mode
-        if ((STRATEGY == 7 || STRATEGY == 8) && !MULTI_OBJECTIVE_MODE) {
-            System.err.println("========================================================");
-            System.err.println("  ERROR: MOEA strategies (7, 8) require MULTI_OBJECTIVE_MODE = true");
-            System.err.println("  Strategy " + STRATEGY + " (" + getStrategyName(STRATEGY) + ") is multi-objective only.");
-            System.err.println("  Falling back to First Available strategy.");
-            System.err.println("========================================================");
-            return createFirstAvailableStrategy();
-        }
-
-        switch (STRATEGY) {
-            case 1:
-                return createFirstAvailableStrategy();
-            case 2:
-                return createShortestQueueStrategy();
-            case 3:
-                return createWorkloadAwareStrategy();
-            case 4:
-                return createGAStrategy(hosts);
-            case 5:
-                return createSAStrategy(hosts);
-            case 6:
-                return createLocalSearchStrategy(hosts);
-            case 7:
-                return createMOEA_NSGAIIStrategy(hosts, tasks, vms);
-            case 8:
-                return createMOEA_SPEA2Strategy(hosts, tasks, vms);
-            default:
-                System.err.println("Unknown strategy: " + STRATEGY + ", using First Available");
-                return createFirstAvailableStrategy();
+    private static TaskAssignmentStrategy createStrategy(int algoId, List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
+        switch (algoId) {
+            case 1: return new FirstAvailableTaskAssignmentStrategy();
+            case 2: return new ShortestQueueTaskAssignmentStrategy();
+            case 3: return new WorkloadAwareTaskAssignmentStrategy();
+            case 4: return createGAStrategy(hosts);
+            case 5: return createSAStrategy(hosts);
+            case 6: return createLocalSearchStrategy(hosts);
+            case 7: return createMOEA_NSGAIIStrategy(hosts, tasks, vms);
+            case 8: return createMOEA_SPEA2Strategy(hosts, tasks, vms);
+            default: return new FirstAvailableTaskAssignmentStrategy();
         }
     }
-
-    /**
-     * Creates a task assignment strategy based on STRATEGY constant.
-     * Overload for backward compatibility - delegates to full version.
-     *
-     * @param hosts List of hosts (needed for energy objective)
-     * @return Configured TaskAssignmentStrategy
-     */
-    private static TaskAssignmentStrategy createStrategy(List<Host> hosts) {
-        // For strategies that don't need tasks/vms, pass empty lists
-        return createStrategy(hosts, new ArrayList<>(), new ArrayList<>());
-    }
-
-    // -------------------------------------------------------------------------
-    // Heuristic Strategies
-    // -------------------------------------------------------------------------
-
-    private static TaskAssignmentStrategy createFirstAvailableStrategy() {
-        return new FirstAvailableTaskAssignmentStrategy();
-    }
-
-    private static TaskAssignmentStrategy createShortestQueueStrategy() {
-        return new ShortestQueueTaskAssignmentStrategy();
-    }
-
-    private static TaskAssignmentStrategy createWorkloadAwareStrategy() {
-        return new WorkloadAwareTaskAssignmentStrategy();
-    }
-
-    // -------------------------------------------------------------------------
-    // GA Configuration
-    // -------------------------------------------------------------------------
 
     private static TaskAssignmentStrategy createGAStrategy(List<Host> hosts) {
-        GAConfiguration config = createGAConfiguration(hosts);
-        return new GenerationalGATaskSchedulingStrategy(config);
-    }
-
-    /**
-     * Creates GA configuration based on current settings.
-     *
-     * In single-objective mode: uses the objective with higher weight.
-     * In multi-objective mode: uses weighted sum of both objectives.
-     *
-     * Uses unified parameters: POPULATION_SIZE × GENERATIONS = 40,000 evaluations.
-     */
-    private static GAConfiguration createGAConfiguration(List<Host> hosts) {
         GAConfiguration.Builder builder = GAConfiguration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
@@ -445,80 +574,19 @@ public class FlexibleExperimentMain {
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE_MODE) {
-            // Weighted sum of objectives
             MakespanObjective makespan = new MakespanObjective();
             EnergyObjective energy = new EnergyObjective();
             energy.setHosts(hosts);
-
             builder.addWeightedObjective(makespan, WEIGHT_MAKESPAN);
             builder.addWeightedObjective(energy, WEIGHT_ENERGY);
         } else {
-            // Single objective - use the one with higher weight
-            SchedulingObjective objective = createPrimaryObjective(hosts);
-            builder.objective(objective);
+            builder.objective(createPrimaryObjective(hosts));
         }
 
-        return builder.build();
+        return new GenerationalGATaskSchedulingStrategy(builder.build());
     }
-
-    /**
-     * Creates a custom GA configuration with specific parameters.
-     */
-    public static GAConfiguration createGAConfigurationCustom(
-            List<Host> hosts,
-            int populationSize,
-            int generations,
-            double crossoverRate,
-            double mutationRate,
-            int eliteCount,
-            int tournamentSize,
-            double makespanWeight,
-            double energyWeight,
-            boolean multiObjective) {
-
-        GAConfiguration.Builder builder = GAConfiguration.builder()
-            .populationSize(populationSize)
-            .crossoverRate(crossoverRate)
-            .mutationRate(mutationRate)
-            .eliteCount(eliteCount)
-            .tournamentSize(tournamentSize)
-            .terminationCondition(new GenerationCountTermination(generations))
-            .verboseLogging(VERBOSE_LOGGING);
-
-        if (multiObjective) {
-            MakespanObjective makespan = new MakespanObjective();
-            EnergyObjective energy = new EnergyObjective();
-            energy.setHosts(hosts);
-            builder.addWeightedObjective(makespan, makespanWeight);
-            builder.addWeightedObjective(energy, energyWeight);
-        } else {
-            if (makespanWeight >= energyWeight) {
-                builder.objective(new MakespanObjective());
-            } else {
-                EnergyObjective energy = new EnergyObjective();
-                energy.setHosts(hosts);
-                builder.objective(energy);
-            }
-        }
-
-        return builder.build();
-    }
-
-    // -------------------------------------------------------------------------
-    // SA Configuration
-    // -------------------------------------------------------------------------
 
     private static TaskAssignmentStrategy createSAStrategy(List<Host> hosts) {
-        SAConfiguration config = createSAConfiguration(hosts);
-        return new SimulatedAnnealingTaskSchedulingStrategy(config);
-    }
-
-    /**
-     * Creates SA configuration based on current settings.
-     * Uses evaluation-count-based termination (TOTAL_EVALUATIONS) for fair comparison.
-     * Geometric cooling schedule with automatic temperature steps.
-     */
-    private static SAConfiguration createSAConfiguration(List<Host> hosts) {
         SAConfiguration.Builder builder = SAConfiguration.builder()
             .initialTemperature(SA_INITIAL_TEMPERATURE)
             .coolingSchedule(new GeometricCoolingSchedule(SA_COOLING_RATE))
@@ -526,82 +594,19 @@ public class FlexibleExperimentMain {
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE_MODE) {
-            // Weighted sum of objectives
             MakespanObjective makespan = new MakespanObjective();
             EnergyObjective energy = new EnergyObjective();
             energy.setHosts(hosts);
-
             builder.addWeightedObjective(makespan, WEIGHT_MAKESPAN);
             builder.addWeightedObjective(energy, WEIGHT_ENERGY);
         } else {
-            // Single objective
-            SchedulingObjective objective = createPrimaryObjective(hosts);
-            builder.objective(objective);
+            builder.objective(createPrimaryObjective(hosts));
         }
 
-        return builder.build();
+        return new SimulatedAnnealingTaskSchedulingStrategy(builder.build());
     }
-
-    /**
-     * Creates a custom SA configuration with evaluation-count termination.
-     *
-     * @param hosts           List of hosts (for energy objective)
-     * @param initialTemp     Initial temperature
-     * @param coolingRate     Cooling rate for geometric schedule
-     * @param maxEvaluations  Total fitness evaluations (termination criterion)
-     * @param makespanWeight  Weight for makespan objective
-     * @param energyWeight    Weight for energy objective
-     * @param multiObjective  true for weighted-sum, false for single objective
-     * @return SAConfiguration
-     */
-    public static SAConfiguration createSAConfigurationCustom(
-            List<Host> hosts,
-            double initialTemp,
-            double coolingRate,
-            int maxEvaluations,
-            double makespanWeight,
-            double energyWeight,
-            boolean multiObjective) {
-
-        SAConfiguration.Builder builder = SAConfiguration.builder()
-            .initialTemperature(initialTemp)
-            .coolingSchedule(new GeometricCoolingSchedule(coolingRate))
-            .terminationCondition(new FitnessEvaluationsTermination(maxEvaluations))
-            .verboseLogging(VERBOSE_LOGGING);
-
-        if (multiObjective) {
-            MakespanObjective makespan = new MakespanObjective();
-            EnergyObjective energy = new EnergyObjective();
-            energy.setHosts(hosts);
-            builder.addWeightedObjective(makespan, makespanWeight);
-            builder.addWeightedObjective(energy, energyWeight);
-        } else {
-            if (makespanWeight >= energyWeight) {
-                builder.objective(new MakespanObjective());
-            } else {
-                EnergyObjective energy = new EnergyObjective();
-                energy.setHosts(hosts);
-                builder.objective(energy);
-            }
-        }
-
-        return builder.build();
-    }
-
-    // -------------------------------------------------------------------------
-    // Local Search Configuration
-    // -------------------------------------------------------------------------
 
     private static TaskAssignmentStrategy createLocalSearchStrategy(List<Host> hosts) {
-        LocalSearchConfiguration config = createLocalSearchConfiguration(hosts);
-        return new LocalSearchTaskSchedulingStrategy(config);
-    }
-
-    /**
-     * Creates Local Search configuration based on current settings.
-     * Uses First Improvement strategy (good balance of speed and quality).
-     */
-    private static LocalSearchConfiguration createLocalSearchConfiguration(List<Host> hosts) {
         LocalSearchConfiguration.Builder builder = LocalSearchConfiguration.builder()
             .neighborSelectionStrategy(new FirstImprovementStrategy())
             .neighborhoodType(NeighborhoodGenerator.NeighborhoodType.COMBINED)
@@ -610,120 +615,36 @@ public class FlexibleExperimentMain {
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE_MODE) {
-            // Weighted sum of objectives
             MakespanObjective makespan = new MakespanObjective();
             EnergyObjective energy = new EnergyObjective();
             energy.setHosts(hosts);
-
             builder.addWeightedObjective(makespan, WEIGHT_MAKESPAN);
             builder.addWeightedObjective(energy, WEIGHT_ENERGY);
         } else {
-            // Single objective
-            SchedulingObjective objective = createPrimaryObjective(hosts);
-            builder.objective(objective);
+            builder.objective(createPrimaryObjective(hosts));
         }
 
-        return builder.build();
+        return new LocalSearchTaskSchedulingStrategy(builder.build());
     }
 
-    /**
-     * Creates a custom Local Search configuration with specific parameters.
-     */
-    public static LocalSearchConfiguration createLocalSearchConfigurationCustom(
-            List<Host> hosts,
-            int maxIterations,
-            int maxNoImprovement,
-            double makespanWeight,
-            double energyWeight,
-            boolean multiObjective) {
-
-        LocalSearchConfiguration.Builder builder = LocalSearchConfiguration.builder()
-            .neighborSelectionStrategy(new FirstImprovementStrategy())
-            .neighborhoodType(NeighborhoodGenerator.NeighborhoodType.COMBINED)
-            .maxIterations(maxIterations)
-            .maxIterationsWithoutImprovement(maxNoImprovement)
-            .verboseLogging(VERBOSE_LOGGING);
-
-        if (multiObjective) {
-            MakespanObjective makespan = new MakespanObjective();
-            EnergyObjective energy = new EnergyObjective();
-            energy.setHosts(hosts);
-            builder.addWeightedObjective(makespan, makespanWeight);
-            builder.addWeightedObjective(energy, energyWeight);
-        } else {
-            if (makespanWeight >= energyWeight) {
-                builder.objective(new MakespanObjective());
-            } else {
-                EnergyObjective energy = new EnergyObjective();
-                energy.setHosts(hosts);
-                builder.objective(energy);
-            }
-        }
-
-        return builder.build();
-    }
-
-    // -------------------------------------------------------------------------
-    // MOEA_NSGAII Configuration
-    // -------------------------------------------------------------------------
-
-    /**
-     * Creates MOEA Framework NSGA-II strategy with custom genetic operators.
-     * Uses the same CrossoverOperator and MutationOperator as the native GA
-     * to ensure fair comparison between algorithms.
-     *
-     * @param hosts List of hosts (needed for energy objective)
-     * @param tasks List of tasks (needed for custom operators)
-     * @param vms   List of VMs (needed for custom operators)
-     * @return Configured MOEA_NSGA2TaskSchedulingStrategy
-     */
-    private static TaskAssignmentStrategy createMOEA_NSGAIIStrategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
+    private static TaskAssignmentStrategy createMOEA_NSGAIIStrategy(List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
         NSGA2Configuration config = createMOEAConfiguration(hosts);
         MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
-
-        // Set selection method based on weights
-        if (WEIGHT_MAKESPAN > WEIGHT_ENERGY) {
-            strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
-        } else {
-            strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
-        }
+        strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
-
         return strategy;
     }
 
-    // -------------------------------------------------------------------------
-    // MOEA_SPEA2 Configuration
-    // -------------------------------------------------------------------------
-
-    /**
-     * Creates MOEA Framework SPEA2 strategy with custom genetic operators.
-     * Uses the same CrossoverOperator and MutationOperator as the native GA
-     * to ensure fair comparison between algorithms.
-     *
-     * @param hosts List of hosts (needed for energy objective)
-     * @param tasks List of tasks (needed for custom operators)
-     * @param vms   List of VMs (needed for custom operators)
-     * @return Configured MOEA_SPEA2TaskSchedulingStrategy
-     */
-    private static TaskAssignmentStrategy createMOEA_SPEA2Strategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
+    private static TaskAssignmentStrategy createMOEA_SPEA2Strategy(List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
         NSGA2Configuration config = createMOEAConfiguration(hosts);
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
-
-        // Set selection method based on weights
         strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
-
         return strategy;
     }
 
-    /**
-     * Creates shared MOEA configuration for both NSGA-II and SPEA2.
-     * Uses unified parameters: POPULATION_SIZE × GENERATIONS = TOTAL_EVALUATIONS.
-     *
-     * @param hosts List of hosts (needed for energy objective)
-     * @return NSGA2Configuration (shared format for all MOEA algorithms)
-     */
     private static NSGA2Configuration createMOEAConfiguration(List<Host> hosts) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
@@ -740,117 +661,6 @@ public class FlexibleExperimentMain {
             .build();
     }
 
-    /**
-     * Creates a custom MOEA configuration with specific parameters.
-     * Can be used for both MOEA_NSGAII and MOEA_SPEA2.
-     *
-     * @param hosts          List of hosts (for energy objective)
-     * @param populationSize Population size
-     * @param generations    Number of generations (total evals = pop × gen)
-     * @param crossoverRate  Crossover probability
-     * @param mutationRate   Mutation probability per gene
-     * @return NSGA2Configuration
-     */
-    public static NSGA2Configuration createMOEAConfigurationCustom(
-            List<Host> hosts,
-            int populationSize,
-            int generations,
-            double crossoverRate,
-            double mutationRate) {
-
-        MakespanObjective makespan = new MakespanObjective();
-        EnergyObjective energy = new EnergyObjective();
-        energy.setHosts(hosts);
-
-        return NSGA2Configuration.builder()
-            .populationSize(populationSize)
-            .crossoverRate(crossoverRate)
-            .mutationRate(mutationRate)
-            .addObjective(makespan)
-            .addObjective(energy)
-            .terminationCondition(new GenerationCountTermination(generations))
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-    }
-
-    // -------------------------------------------------------------------------
-    // Pareto Front Display
-    // -------------------------------------------------------------------------
-
-    /**
-     * Prints the full Pareto front for MOEA strategies.
-     * Shows all non-dominated solutions with their objective values.
-     *
-     * @param strategy The task assignment strategy (must be MOEA_NSGA2 or MOEA_SPEA2)
-     */
-    private static void printParetoFront(TaskAssignmentStrategy strategy) {
-        ParetoFront front = null;
-        String algorithmName = "";
-
-        if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
-            MOEA_NSGA2TaskSchedulingStrategy nsgaStrategy = (MOEA_NSGA2TaskSchedulingStrategy) strategy;
-            front = nsgaStrategy.getLastParetoFront();
-            algorithmName = "MOEA_NSGAII";
-        } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
-            MOEA_SPEA2TaskSchedulingStrategy speaStrategy = (MOEA_SPEA2TaskSchedulingStrategy) strategy;
-            front = speaStrategy.getLastParetoFront();
-            algorithmName = "MOEA_SPEA2";
-        }
-
-        if (front == null || front.isEmpty()) {
-            System.out.println("  [" + algorithmName + "] No Pareto front available");
-            return;
-        }
-
-        System.out.println();
-        System.out.println("  ========================================================");
-        System.out.println("  " + algorithmName + " PARETO FRONT (" + front.size() + " non-dominated solutions)");
-        System.out.println("  ========================================================");
-        System.out.println();
-        System.out.printf("  %-6s %-20s %-20s%n", "#", "Makespan (s)", "Energy (kWh)");
-        System.out.println("  " + "-".repeat(50));
-
-        List<SchedulingSolution> solutions = front.getSolutions();
-        for (int i = 0; i < solutions.size(); i++) {
-            SchedulingSolution sol = solutions.get(i);
-            double[] objectives = sol.getObjectiveValues();
-            if (objectives != null && objectives.length >= 2) {
-                System.out.printf("  %-6d %-20.2f %-20.6f%n", (i + 1), objectives[0], objectives[1]);
-            }
-        }
-
-        System.out.println("  " + "-".repeat(50));
-
-        // Show special points
-        SchedulingSolution bestMakespan = front.getBestForObjective(0);
-        SchedulingSolution bestEnergy = front.getBestForObjective(1);
-        SchedulingSolution kneePoint = front.getKneePoint();
-
-        System.out.println();
-        System.out.println("  Special Points:");
-        if (bestMakespan != null && bestMakespan.getObjectiveValues() != null) {
-            System.out.printf("    Best Makespan:  %.2f s, %.6f kWh%n",
-                bestMakespan.getObjectiveValues()[0], bestMakespan.getObjectiveValues()[1]);
-        }
-        if (bestEnergy != null && bestEnergy.getObjectiveValues() != null) {
-            System.out.printf("    Best Energy:    %.2f s, %.6f kWh%n",
-                bestEnergy.getObjectiveValues()[0], bestEnergy.getObjectiveValues()[1]);
-        }
-        if (kneePoint != null && kneePoint.getObjectiveValues() != null) {
-            System.out.printf("    Knee Point:     %.2f s, %.6f kWh%n",
-                kneePoint.getObjectiveValues()[0], kneePoint.getObjectiveValues()[1]);
-        }
-        System.out.println("  ========================================================");
-    }
-
-    // -------------------------------------------------------------------------
-    // Objective Helper
-    // -------------------------------------------------------------------------
-
-    /**
-     * Creates the primary objective based on weights.
-     * Returns the objective with higher weight.
-     */
     private static SchedulingObjective createPrimaryObjective(List<Host> hosts) {
         if (WEIGHT_MAKESPAN >= WEIGHT_ENERGY) {
             return new MakespanObjective();
@@ -859,6 +669,758 @@ public class FlexibleExperimentMain {
             energy.setHosts(hosts);
             return energy;
         }
+    }
+
+    // =========================================================================
+    // UNIVERSAL PARETO & NON-DOMINANCE
+    // =========================================================================
+
+    /**
+     * Computes the Universal Pareto Set from all algorithm solutions.
+     * Returns only non-dominated solutions.
+     */
+    private static List<double[]> computeUniversalPareto(
+            Map<Integer, AlgorithmAggregatedResult> algorithmResults) {
+
+        // Collect ALL solutions from all algorithms
+        List<double[]> allSolutions = new ArrayList<>();
+        for (AlgorithmAggregatedResult result : algorithmResults.values()) {
+            allSolutions.addAll(result.allSolutions);
+        }
+
+        // Filter to non-dominated only
+        List<double[]> universalPareto = new ArrayList<>();
+        for (double[] candidate : allSolutions) {
+            boolean isDominated = false;
+            for (double[] other : allSolutions) {
+                if (candidate != other && dominates(other, candidate)) {
+                    isDominated = true;
+                    break;
+                }
+            }
+            if (!isDominated) {
+                // Check for duplicates
+                boolean duplicate = false;
+                for (double[] existing : universalPareto) {
+                    if (Math.abs(existing[0] - candidate[0]) < 1e-9 &&
+                        Math.abs(existing[1] - candidate[1]) < 1e-9) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) {
+                    universalPareto.add(candidate);
+                }
+            }
+        }
+
+        // Sort by first objective (makespan)
+        universalPareto.sort((a, b) -> Double.compare(a[0], b[0]));
+        return universalPareto;
+    }
+
+    /**
+     * Calculates how many solutions each algorithm contributed to the Universal Pareto.
+     * A solution is "contributed" if it appears in the Universal Pareto set.
+     */
+    private static void calculateParetoContributions(ConfigExperimentResults configResult) {
+        System.out.println("  Pareto contributions:");
+
+        for (AlgorithmAggregatedResult algoResult : configResult.algorithmResults.values()) {
+            int contribution = 0;
+
+            // Count how many of this algorithm's solutions are in the Universal Pareto
+            for (double[] sol : algoResult.allSolutions) {
+                if (isInUniversalPareto(sol, configResult.universalParetoSet)) {
+                    contribution++;
+                }
+            }
+
+            algoResult.paretoContribution = contribution;
+            System.out.println("    " + algoResult.algorithmName + ": " + contribution +
+                " / " + configResult.universalParetoSet.size() +
+                " (" + String.format("%.1f", 100.0 * contribution / configResult.universalParetoSet.size()) + "%)");
+        }
+    }
+
+    /**
+     * Checks if solution a dominates solution b.
+     * Uses strict dominance: a dominates b if a is better in BOTH objectives.
+     */
+    private static boolean dominates(double[] a, double[] b) {
+        // Both objectives are minimization
+        return a[0] < b[0] && a[1] < b[1];
+    }
+
+    /**
+     * Filters a list of solutions to its non-dominated subset.
+     * Used to ensure each algorithm's solution set is a proper Pareto front
+     * before calculating metrics like HV, GD, IGD.
+     *
+     * @param solutions List of solutions (may contain dominated points)
+     * @return List containing only non-dominated solutions
+     */
+    private static List<double[]> filterToNonDominated(List<double[]> solutions) {
+        if (solutions.size() <= 1) {
+            return new ArrayList<>(solutions);
+        }
+
+        List<double[]> nonDominated = new ArrayList<>();
+        for (double[] candidate : solutions) {
+            boolean isDominated = false;
+            for (double[] other : solutions) {
+                if (candidate != other && dominates(other, candidate)) {
+                    isDominated = true;
+                    break;
+                }
+            }
+            if (!isDominated) {
+                // Check for duplicates
+                boolean duplicate = false;
+                for (double[] existing : nonDominated) {
+                    if (Math.abs(existing[0] - candidate[0]) < 1e-9 &&
+                        Math.abs(existing[1] - candidate[1]) < 1e-9) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) {
+                    nonDominated.add(candidate);
+                }
+            }
+        }
+
+        // Sort by first objective (makespan)
+        nonDominated.sort((a, b) -> Double.compare(a[0], b[0]));
+        return nonDominated;
+    }
+
+    /**
+     * Verifies all solutions in a list are non-dominated (internal check).
+     * Uses Dominance.compare() from PerfMet package.
+     */
+    private static boolean verifyNonDominance(List<double[]> solutions) {
+        if (solutions.size() <= 1) return true;
+
+        for (int i = 0; i < solutions.size(); i++) {
+            for (int j = 0; j < solutions.size(); j++) {
+                if (i != j) {
+                    ArrayList<Double> sol1 = toArrayList(solutions.get(i));
+                    ArrayList<Double> sol2 = toArrayList(solutions.get(j));
+                    // If sol2 dominates sol1, then sol1 shouldn't be in the front
+                    if (Dominance.compare(sol2, sol1) == -1) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static ArrayList<Double> toArrayList(double[] arr) {
+        ArrayList<Double> list = new ArrayList<>();
+        list.add(arr[0]);
+        list.add(arr[1]);
+        return list;
+    }
+
+    // =========================================================================
+    // PERFORMANCE METRICS CALCULATION
+    // =========================================================================
+
+    /**
+     * Calculates HV, GD, IGD, Spacing for each algorithm using PerfMet.
+     *
+     * IMPORTANT: Each algorithm's solutions are filtered to their non-dominated
+     * subset before metrics calculation. This ensures proper Pareto front comparison
+     * even when multiple iterations yield dominated points.
+     */
+    private static void calculatePerformanceMetrics(ConfigExperimentResults configResult) {
+        // Build the allParetos list for PerformanceMetrics
+        // Format: [algo1, algo2, ..., algoN, universalPareto]
+        ArrayList<ArrayList<ArrayList<Double>>> allParetos = new ArrayList<>();
+
+        // Add each algorithm's solutions (filtered to non-dominated)
+        List<Integer> algoOrder = new ArrayList<>(configResult.algorithmResults.keySet());
+        algoOrder.sort(Integer::compareTo);
+
+        for (int algoId : algoOrder) {
+            AlgorithmAggregatedResult algoResult = configResult.algorithmResults.get(algoId);
+
+            // Filter to non-dominated subset before metrics calculation
+            // This is crucial when aggregating across multiple iterations
+            algoResult.nonDominatedSolutions = filterToNonDominated(algoResult.allSolutions);
+
+            int totalSolutions = algoResult.allSolutions.size();
+            int nonDominatedCount = algoResult.nonDominatedSolutions.size();
+            if (totalSolutions != nonDominatedCount) {
+                System.out.println("  " + algoResult.algorithmName + ": " + nonDominatedCount +
+                    " non-dominated / " + totalSolutions + " total solutions");
+            }
+
+            ArrayList<ArrayList<Double>> paretoList = new ArrayList<>();
+            for (double[] sol : algoResult.nonDominatedSolutions) {
+                ArrayList<Double> point = new ArrayList<>();
+                point.add(sol[0]);
+                point.add(sol[1]);
+                paretoList.add(point);
+            }
+            // Handle empty Pareto (shouldn't happen, but be safe)
+            if (paretoList.isEmpty()) {
+                ArrayList<Double> dummy = new ArrayList<>();
+                dummy.add(Double.MAX_VALUE);
+                dummy.add(Double.MAX_VALUE);
+                paretoList.add(dummy);
+            }
+            allParetos.add(paretoList);
+        }
+
+        // Add Universal Pareto as the last (reference)
+        ArrayList<ArrayList<Double>> universalList = new ArrayList<>();
+        for (double[] sol : configResult.universalParetoSet) {
+            ArrayList<Double> point = new ArrayList<>();
+            point.add(sol[0]);
+            point.add(sol[1]);
+            universalList.add(point);
+        }
+        allParetos.add(universalList);
+
+        // Create PerformanceMetrics with Universal Pareto as reference (last index)
+        int referenceIndex = allParetos.size() - 1;
+        PerformanceMetrics pm = new PerformanceMetrics(allParetos, referenceIndex);
+
+        // Calculate metrics for each algorithm
+        int index = 0;
+        for (int algoId : algoOrder) {
+            AlgorithmAggregatedResult algoResult = configResult.algorithmResults.get(algoId);
+            try {
+                algoResult.hv = pm.HV(index);
+                algoResult.gd = pm.GD(index);
+                algoResult.igd = pm.IGD(index);
+                // Spacing requires at least 2 non-dominated solutions
+                if (algoResult.nonDominatedSolutions.size() > 1) {
+                    algoResult.spacing = pm.Spacing(index);
+                } else {
+                    algoResult.spacing = 0.0; // Single solution has no spacing
+                }
+            } catch (Exception e) {
+                System.err.println("  WARNING: Metrics calculation failed for " +
+                    algoResult.algorithmName + ": " + e.getMessage());
+                algoResult.hv = 0;
+                algoResult.gd = Double.MAX_VALUE;
+                algoResult.igd = Double.MAX_VALUE;
+                algoResult.spacing = 0;
+            }
+            index++;
+        }
+
+        // Calculate metrics for Universal Pareto itself
+        configResult.universalHV = pm.HV(referenceIndex);
+    }
+
+    // =========================================================================
+    // CSV OUTPUT GENERATION
+    // =========================================================================
+
+    private static void generateCSVOutputs(ConfigExperimentResults configResult) {
+        // Create output directory
+        String dirName = "config_" + configResult.configNumber + "_seed_" + configResult.baseSeed;
+        Path outputDir = Paths.get(REPORTS_DIRECTORY, dirName);
+
+        try {
+            Files.createDirectories(outputDir);
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not create output directory: " + e.getMessage());
+            return;
+        }
+
+        // Generate algorithm-specific CSVs
+        for (Map.Entry<Integer, AlgorithmAggregatedResult> entry : configResult.algorithmResults.entrySet()) {
+            generateAlgorithmCSV(outputDir, entry.getValue());
+        }
+
+        // Generate Universal Pareto CSV
+        generateUniversalParetoCSV(outputDir, configResult);
+
+        // Generate combined Pareto graph data
+        generateParetoGraphDataCSV(outputDir, configResult);
+
+        // Generate performance metrics CSV
+        generatePerformanceMetricsCSV(outputDir, configResult);
+
+        System.out.println("  CSV outputs saved to: " + outputDir);
+    }
+
+    private static void generateAlgorithmCSV(Path outputDir, AlgorithmAggregatedResult algoResult) {
+        String fileName = "algorithm_" + algoResult.algorithmId + "_" + algoResult.algorithmName + ".csv";
+        Path filePath = outputDir.resolve(fileName);
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            writer.println("Iteration,Seed,Makespan,Energy,NonDominated");
+
+            for (AlgorithmRunResult run : algoResult.runs) {
+                if (run.error != null) {
+                    writer.printf("%d,%d,ERROR,ERROR,false%n", run.iteration, run.seed);
+                } else {
+                    for (double[] sol : run.solutions) {
+                        writer.printf("%d,%d,%.6f,%.9f,%b%n",
+                            run.iteration, run.seed, sol[0], sol[1], run.nonDominanceVerified);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write " + fileName + ": " + e.getMessage());
+        }
+    }
+
+    private static void generateUniversalParetoCSV(Path outputDir, ConfigExperimentResults configResult) {
+        Path filePath = outputDir.resolve("universal_pareto.csv");
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            writer.println("Makespan,Energy,SourceAlgorithm,SourceIteration");
+
+            // For each universal Pareto solution, find which algorithm it came from
+            for (double[] sol : configResult.universalParetoSet) {
+                String sourceAlgo = "Unknown";
+                int sourceIter = 0;
+
+                outer:
+                for (AlgorithmAggregatedResult algoResult : configResult.algorithmResults.values()) {
+                    for (AlgorithmRunResult run : algoResult.runs) {
+                        for (double[] runSol : run.solutions) {
+                            if (Math.abs(runSol[0] - sol[0]) < 1e-9 &&
+                                Math.abs(runSol[1] - sol[1]) < 1e-9) {
+                                sourceAlgo = algoResult.algorithmName;
+                                sourceIter = run.iteration;
+                                break outer;
+                            }
+                        }
+                    }
+                }
+
+                writer.printf("%.6f,%.9f,%s,%d%n", sol[0], sol[1], sourceAlgo, sourceIter);
+            }
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write universal_pareto.csv: " + e.getMessage());
+        }
+    }
+
+    private static void generateParetoGraphDataCSV(Path outputDir, ConfigExperimentResults configResult) {
+        Path filePath = outputDir.resolve("pareto_graph_data.csv");
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            writer.println("Algorithm,Makespan,Energy,Iteration,Seed,IsUniversalPareto");
+
+            // Add all algorithm solutions
+            for (AlgorithmAggregatedResult algoResult : configResult.algorithmResults.values()) {
+                for (AlgorithmRunResult run : algoResult.runs) {
+                    if (run.error != null) continue;
+                    for (double[] sol : run.solutions) {
+                        boolean isUniversal = isInUniversalPareto(sol, configResult.universalParetoSet);
+                        writer.printf("%s,%.6f,%.9f,%d,%d,%b%n",
+                            algoResult.algorithmName, sol[0], sol[1],
+                            run.iteration, run.seed, isUniversal);
+                    }
+                }
+            }
+
+            // Add Universal Pareto points
+            for (double[] sol : configResult.universalParetoSet) {
+                writer.printf("Universal_Pareto,%.6f,%.9f,0,0,true%n", sol[0], sol[1]);
+            }
+
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write pareto_graph_data.csv: " + e.getMessage());
+        }
+    }
+
+    private static boolean isInUniversalPareto(double[] sol, List<double[]> universalPareto) {
+        for (double[] u : universalPareto) {
+            if (Math.abs(u[0] - sol[0]) < 1e-9 && Math.abs(u[1] - sol[1]) < 1e-9) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void generatePerformanceMetricsCSV(Path outputDir, ConfigExperimentResults configResult) {
+        Path filePath = outputDir.resolve("performance_metrics.csv");
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            // NonDomSolutions = solutions used for metrics calculation (filtered Pareto front)
+            // TotalSolutions = all solutions across iterations (may include dominated)
+            // ParetoContribution = number of solutions contributed to Universal Pareto
+            writer.println("Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,IterationCount,AvgTimeMs,NonDominanceVerified");
+
+            List<Integer> algoOrder = new ArrayList<>(configResult.algorithmResults.keySet());
+            algoOrder.sort(Integer::compareTo);
+
+            for (int algoId : algoOrder) {
+                AlgorithmAggregatedResult algoResult = configResult.algorithmResults.get(algoId);
+                long avgTime = algoResult.runs.stream()
+                    .filter(r -> r.error == null)
+                    .mapToLong(r -> r.executionTimeMs)
+                    .sum() / Math.max(1, algoResult.runs.size());
+
+                int ndCount = algoResult.nonDominatedSolutions != null ?
+                    algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
+
+                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%b%n",
+                    algoResult.algorithmName,
+                    algoResult.hv,
+                    algoResult.gd,
+                    algoResult.igd,
+                    algoResult.spacing,
+                    ndCount,
+                    algoResult.allSolutions.size(),
+                    algoResult.paretoContribution,
+                    algoResult.runs.size(),
+                    avgTime,
+                    algoResult.nonDominanceVerified);
+            }
+
+            // Add Universal Pareto row
+            writer.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,N/A,N/A,true%n",
+                configResult.universalHV, configResult.universalParetoSet.size(),
+                configResult.universalParetoSet.size(), configResult.universalParetoSet.size());
+
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write performance_metrics.csv: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // PYTHON PLOTTER SCRIPT GENERATION
+    // =========================================================================
+
+    private static void generatePythonPlotterScript() {
+        Path filePath = Paths.get(REPORTS_DIRECTORY, "pareto_plotter.py");
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            writer.println("#!/usr/bin/env python3");
+            writer.println("\"\"\"");
+            writer.println("Pareto Front Plotter for JavaCloudSimulatorCosmos");
+            writer.println("Generated automatically by FlexibleExperimentMain.java");
+            writer.println("");
+            writer.println("Usage:");
+            writer.println("    python pareto_plotter.py <reports_directory>");
+            writer.println("");
+            writer.println("Example:");
+            writer.println("    python pareto_plotter.py reports/config_1_seed_42");
+            writer.println("    python pareto_plotter.py reports  # Processes all config folders");
+            writer.println("\"\"\"");
+            writer.println("");
+            writer.println("import matplotlib.pyplot as plt");
+            writer.println("import pandas as pd");
+            writer.println("import sys");
+            writer.println("import os");
+            writer.println("");
+            writer.println("# Algorithm colors and markers");
+            writer.println("ALGORITHM_STYLES = {");
+            writer.println("    'FirstAvailable':  {'color': '#1f77b4', 'marker': 'o'},");
+            writer.println("    'ShortestQueue':   {'color': '#ff7f0e', 'marker': 's'},");
+            writer.println("    'WorkloadAware':   {'color': '#2ca02c', 'marker': '^'},");
+            writer.println("    'GA':              {'color': '#d62728', 'marker': 'v'},");
+            writer.println("    'SA':              {'color': '#9467bd', 'marker': 'D'},");
+            writer.println("    'LocalSearch':     {'color': '#8c564b', 'marker': 'P'},");
+            writer.println("    'MOEA_NSGAII':     {'color': '#e377c2', 'marker': '*'},");
+            writer.println("    'MOEA_SPEA2':      {'color': '#7f7f7f', 'marker': 'X'},");
+            writer.println("    'Universal_Pareto': {'color': '#000000', 'marker': 'o'},");
+            writer.println("}");
+            writer.println("");
+            writer.println("def plot_pareto_front(csv_path, output_path):");
+            writer.println("    \"\"\"Generate Pareto front plot from CSV data.\"\"\"");
+            writer.println("    df = pd.read_csv(csv_path)");
+            writer.println("");
+            writer.println("    plt.figure(figsize=(12, 8))");
+            writer.println("");
+            writer.println("    # Plot each algorithm");
+            writer.println("    for algo in df['Algorithm'].unique():");
+            writer.println("        if algo == 'Universal_Pareto':");
+            writer.println("            continue  # Plot separately");
+            writer.println("        algo_data = df[df['Algorithm'] == algo]");
+            writer.println("        style = ALGORITHM_STYLES.get(algo, {'color': 'gray', 'marker': 'o'})");
+            writer.println("        plt.scatter(algo_data['Makespan'], algo_data['Energy'],");
+            writer.println("                   c=style['color'], marker=style['marker'],");
+            writer.println("                   label=algo, alpha=0.7, s=60, edgecolors='black', linewidths=0.5)");
+            writer.println("");
+            writer.println("    # Plot Universal Pareto as connected line");
+            writer.println("    universal = df[df['Algorithm'] == 'Universal_Pareto'].sort_values('Makespan')");
+            writer.println("    if not universal.empty:");
+            writer.println("        plt.plot(universal['Makespan'], universal['Energy'],");
+            writer.println("                'k-', linewidth=2, label='Universal Pareto', alpha=0.8)");
+            writer.println("        plt.scatter(universal['Makespan'], universal['Energy'],");
+            writer.println("                   c='black', marker='o', s=100, zorder=5,");
+            writer.println("                   edgecolors='white', linewidths=2)");
+            writer.println("");
+            writer.println("    plt.xlabel('Makespan (seconds)', fontsize=12)");
+            writer.println("    plt.ylabel('Energy (kWh)', fontsize=12)");
+            writer.println("    plt.title('Multi-Algorithm Pareto Front Comparison', fontsize=14)");
+            writer.println("    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)");
+            writer.println("    plt.grid(True, alpha=0.3)");
+            writer.println("    plt.tight_layout()");
+            writer.println("    plt.savefig(output_path, dpi=300, bbox_inches='tight')");
+            writer.println("    plt.close()");
+            writer.println("    print(f'Generated: {output_path}')");
+            writer.println("");
+            writer.println("def main():");
+            writer.println("    if len(sys.argv) < 2:");
+            writer.println("        print(__doc__)");
+            writer.println("        sys.exit(1)");
+            writer.println("");
+            writer.println("    target = sys.argv[1]");
+            writer.println("");
+            writer.println("    if os.path.isfile(target) and target.endswith('.csv'):");
+            writer.println("        # Single CSV file");
+            writer.println("        output = target.replace('.csv', '_pareto.png')");
+            writer.println("        plot_pareto_front(target, output)");
+            writer.println("    elif os.path.isdir(target):");
+            writer.println("        # Directory - look for pareto_graph_data.csv files");
+            writer.println("        csv_file = os.path.join(target, 'pareto_graph_data.csv')");
+            writer.println("        if os.path.exists(csv_file):");
+            writer.println("            output = os.path.join(target, 'pareto_front.png')");
+            writer.println("            plot_pareto_front(csv_file, output)");
+            writer.println("        else:");
+            writer.println("            # Check subdirectories");
+            writer.println("            for folder in os.listdir(target):");
+            writer.println("                folder_path = os.path.join(target, folder)");
+            writer.println("                if os.path.isdir(folder_path):");
+            writer.println("                    csv_file = os.path.join(folder_path, 'pareto_graph_data.csv')");
+            writer.println("                    if os.path.exists(csv_file):");
+            writer.println("                        output = os.path.join(folder_path, 'pareto_front.png')");
+            writer.println("                        plot_pareto_front(csv_file, output)");
+            writer.println("");
+            writer.println("if __name__ == '__main__':");
+            writer.println("    main()");
+
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write pareto_plotter.py: " + e.getMessage());
+        }
+
+        System.out.println("Python plotting script saved to: " + filePath);
+    }
+
+    /**
+     * Executes the Python plotting script to generate Pareto front visualizations.
+     * Tries python3 first, then falls back to python.
+     * If Python is not available, prints manual execution instructions.
+     */
+    private static void executePythonPlotter() {
+        Path scriptPath = Paths.get(REPORTS_DIRECTORY, "pareto_plotter.py");
+
+        if (!Files.exists(scriptPath)) {
+            System.err.println("WARNING: Python script not found at " + scriptPath);
+            return;
+        }
+
+        System.out.println();
+        System.out.println("Executing Python plotter...");
+
+        // Try python3 first, then python
+        String[] pythonCommands = {"python3", "python"};
+        boolean success = false;
+
+        for (String pythonCmd : pythonCommands) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(
+                    pythonCmd,
+                    scriptPath.toString(),
+                    REPORTS_DIRECTORY
+                );
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+
+                // Read output
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("  [Python] " + line);
+                }
+
+                int exitCode = process.waitFor();
+                if (exitCode == 0) {
+                    System.out.println("Pareto plots generated successfully.");
+                    success = true;
+                    break;
+                } else {
+                    System.err.println("WARNING: " + pythonCmd + " exited with code " + exitCode);
+                }
+            } catch (IOException e) {
+                // Python command not found, try next
+                continue;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.err.println("WARNING: Python execution interrupted");
+                break;
+            }
+        }
+
+        if (!success) {
+            System.out.println();
+            System.out.println("Could not automatically execute Python script.");
+            System.out.println("To generate plots manually, run:");
+            System.out.println("  python " + scriptPath + " " + REPORTS_DIRECTORY + "/");
+            System.out.println();
+            System.out.println("Required Python packages: matplotlib, pandas");
+            System.out.println("Install with: pip install matplotlib pandas");
+        }
+    }
+
+    // =========================================================================
+    // OUTPUT DISPLAY
+    // =========================================================================
+
+    private static void printMultiObjectiveComparison(ConfigExperimentResults result) {
+        System.out.println();
+        System.out.println("============================================================");
+        System.out.println("  MULTI-OBJECTIVE COMPARISON (Config: " + result.configFileName + ")");
+        System.out.println("============================================================");
+        System.out.println();
+
+        // Header: ND_Sol = Non-Dominated Solutions, P_Cont = Pareto Contribution
+        System.out.printf("%-15s | %-7s | %-7s | %-7s | %-7s | %-6s | %-6s | %-5s%n",
+            "Algorithm", "HV", "GD", "IGD", "Spacing", "ND_Sol", "P_Cont", "Valid");
+        System.out.println("-".repeat(85));
+
+        List<Integer> algoOrder = new ArrayList<>(result.algorithmResults.keySet());
+        algoOrder.sort(Integer::compareTo);
+
+        for (int algoId : algoOrder) {
+            AlgorithmAggregatedResult algoResult = result.algorithmResults.get(algoId);
+            // Show non-dominated count (what metrics are based on)
+            int ndCount = algoResult.nonDominatedSolutions != null ?
+                algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
+            System.out.printf("%-15s | %-7.4f | %-7.4f | %-7.4f | %-7.4f | %-6d | %-6d | %-5s%n",
+                algoResult.algorithmName,
+                algoResult.hv,
+                algoResult.gd,
+                algoResult.igd,
+                algoResult.spacing,
+                ndCount,
+                algoResult.paretoContribution,
+                algoResult.nonDominanceVerified ? "PASS" : "FAIL");
+        }
+
+        System.out.println("-".repeat(85));
+        System.out.printf("%-15s | %-7.4f | %-7s | %-7s | %-7s | %-6d | %-6d | %-5s%n",
+            "Universal", result.universalHV, "0.0000", "0.0000", "-",
+            result.universalParetoSet.size(), result.universalParetoSet.size(), "REF");
+        System.out.println();
+    }
+
+    private static void printSingleObjectiveComparison(ConfigExperimentResults result) {
+        System.out.println();
+        System.out.println("============================================================");
+        System.out.println("  SINGLE-OBJECTIVE COMPARISON (Config: " + result.configFileName + ")");
+        String primaryObj = WEIGHT_MAKESPAN >= WEIGHT_ENERGY ? "Makespan" : "Energy";
+        System.out.println("  Primary Objective: " + primaryObj);
+        System.out.println("============================================================");
+        System.out.println();
+
+        System.out.printf("%-15s | %-12s | %-12s | %-12s | %-12s | %-10s%n",
+            "Algorithm", "Best Make.", "Avg Make.", "Best Energy", "Avg Energy", "Iterations");
+        System.out.println("-".repeat(85));
+
+        List<Integer> algoOrder = new ArrayList<>(result.algorithmResults.keySet());
+        algoOrder.sort(Integer::compareTo);
+
+        double bestPrimary = Double.MAX_VALUE;
+        String bestAlgo = "";
+
+        for (int algoId : algoOrder) {
+            AlgorithmAggregatedResult algoResult = result.algorithmResults.get(algoId);
+
+            if (algoResult.allSolutions.isEmpty()) {
+                System.out.printf("%-15s | %-12s | %-12s | %-12s | %-12s | %-10d%n",
+                    algoResult.algorithmName, "N/A", "N/A", "N/A", "N/A", 0);
+                continue;
+            }
+
+            double bestMakespan = algoResult.allSolutions.stream()
+                .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
+            double avgMakespan = algoResult.allSolutions.stream()
+                .mapToDouble(s -> s[0]).average().orElse(0);
+            double bestEnergy = algoResult.allSolutions.stream()
+                .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
+            double avgEnergy = algoResult.allSolutions.stream()
+                .mapToDouble(s -> s[1]).average().orElse(0);
+
+            double primary = WEIGHT_MAKESPAN >= WEIGHT_ENERGY ? bestMakespan : bestEnergy;
+            if (primary < bestPrimary) {
+                bestPrimary = primary;
+                bestAlgo = algoResult.algorithmName;
+            }
+
+            System.out.printf("%-15s | %-12.2f | %-12.2f | %-12.6f | %-12.6f | %-10d%n",
+                algoResult.algorithmName, bestMakespan, avgMakespan,
+                bestEnergy, avgEnergy, algoResult.runs.size());
+        }
+
+        System.out.println("-".repeat(85));
+        System.out.println();
+        System.out.println("Winner: " + bestAlgo + " (Best " + primaryObj + ": " +
+            String.format("%.4f", bestPrimary) + ")");
+        System.out.println();
+        System.out.println("NOTE: Pareto analysis (HV, GD, IGD) requires MULTI_OBJECTIVE_MODE = true");
+        System.out.println();
+    }
+
+    private static void printFinalSummary(List<ConfigExperimentResults> allResults) {
+        System.out.println();
+        System.out.println("========================================================");
+        System.out.println("  FINAL SUMMARY - ALL CONFIGS");
+        System.out.println("========================================================");
+        System.out.println();
+
+        System.out.println("Configs processed: " + allResults.size());
+        System.out.println("Mode: " + (MULTI_OBJECTIVE_MODE ? "Multi-objective (Pareto analysis)" :
+            "Single-objective comparison"));
+        System.out.println();
+
+        if (MULTI_OBJECTIVE_MODE && !allResults.isEmpty()) {
+            // Average metrics across all configs
+            System.out.println("Average Performance Metrics Across All Configs:");
+            System.out.println();
+            System.out.printf("%-15s | %-10s | %-10s | %-10s%n",
+                "Algorithm", "Avg HV", "Avg GD", "Avg IGD");
+            System.out.println("-".repeat(55));
+
+            // Collect all algorithm IDs
+            Map<Integer, List<Double>> hvByAlgo = new HashMap<>();
+            Map<Integer, List<Double>> gdByAlgo = new HashMap<>();
+            Map<Integer, List<Double>> igdByAlgo = new HashMap<>();
+
+            for (ConfigExperimentResults config : allResults) {
+                for (Map.Entry<Integer, AlgorithmAggregatedResult> entry : config.algorithmResults.entrySet()) {
+                    int algoId = entry.getKey();
+                    AlgorithmAggregatedResult algoResult = entry.getValue();
+
+                    hvByAlgo.computeIfAbsent(algoId, k -> new ArrayList<>()).add(algoResult.hv);
+                    gdByAlgo.computeIfAbsent(algoId, k -> new ArrayList<>()).add(algoResult.gd);
+                    igdByAlgo.computeIfAbsent(algoId, k -> new ArrayList<>()).add(algoResult.igd);
+                }
+            }
+
+            List<Integer> algoOrder = new ArrayList<>(hvByAlgo.keySet());
+            algoOrder.sort(Integer::compareTo);
+
+            for (int algoId : algoOrder) {
+                double avgHV = hvByAlgo.get(algoId).stream().mapToDouble(d -> d).average().orElse(0);
+                double avgGD = gdByAlgo.get(algoId).stream().mapToDouble(d -> d).average().orElse(0);
+                double avgIGD = igdByAlgo.get(algoId).stream().mapToDouble(d -> d).average().orElse(0);
+
+                System.out.printf("%-15s | %-10.4f | %-10.4f | %-10.4f%n",
+                    getStrategyName(algoId), avgHV, avgGD, avgIGD);
+            }
+
+            System.out.println("-".repeat(55));
+        }
+
+        System.out.println();
+        System.out.println("Reports saved to: " + REPORTS_DIRECTORY + "/");
+        System.out.println("Run: python " + REPORTS_DIRECTORY + "/pareto_plotter.py " + REPORTS_DIRECTORY + "/");
+        System.out.println("========================================================");
     }
 
     // =========================================================================
@@ -876,7 +1438,6 @@ public class FlexibleExperimentMain {
 
         File[] files = configDir.listFiles((dir, name) -> name.endsWith(".cosc"));
         if (files != null) {
-            // Sort by filename for consistent order
             Arrays.sort(files, (f1, f2) -> {
                 try {
                     int num1 = Integer.parseInt(f1.getName().split("_")[0]);
@@ -905,379 +1466,85 @@ public class FlexibleExperimentMain {
     }
 
     // =========================================================================
-    // EXPERIMENT EXECUTION
+    // DATA STRUCTURES
     // =========================================================================
 
-    private static ExperimentResult runExperiment(File configFile, int experimentNumber) throws Exception {
-        long startTime = System.currentTimeMillis();
+    /**
+     * Result for a single algorithm run (one iteration).
+     */
+    private static class AlgorithmRunResult {
+        final int algorithmId;
+        final String algorithmName;
+        final int iteration;
+        final long seed;
+        final List<double[]> solutions;  // Each: [makespan, energy]
+        final long executionTimeMs;
+        final boolean nonDominanceVerified;
+        final Exception error;
 
-        // Parse configuration
-        FileConfigParser parser = new FileConfigParser();
-        ExperimentConfiguration config = parser.parse(configFile.getAbsolutePath());
-
-        // Initialize random generator with seed from config
-        RandomGenerator.initialize(config.getRandomSeed());
-        System.out.println("Seed: " + config.getRandomSeed());
-
-        // Create simulation context
-        SimulationContext context = new SimulationContext();
-
-        // Create placement strategies
-        PowerAwareLoadBalancingHostPlacementStrategy hostStrategy =
-            new PowerAwareLoadBalancingHostPlacementStrategy();
-        BestFitVMPlacementStrategy vmStrategy =
-            new BestFitVMPlacementStrategy();
-
-        System.out.println("Strategy Configuration:");
-        System.out.println("  Host Placement: " + hostStrategy.getStrategyName());
-        System.out.println("  VM Placement: " + vmStrategy.getStrategyName());
-        System.out.println("  Task Assignment: " + getStrategyName(STRATEGY));
-        System.out.println("  Multi-objective Mode: " + MULTI_OBJECTIVE_MODE);
-        if (STRATEGY >= 4) {
-            System.out.println("  Weights: Makespan=" + WEIGHT_MAKESPAN + ", Energy=" + WEIGHT_ENERGY);
-        }
-        System.out.println();
-
-        // Execute simulation pipeline
-        System.out.println("--- Step 1: Initialization ---");
-        InitializationStep initStep = new InitializationStep(config);
-        initStep.execute(context);
-        System.out.println("  Datacenters: " + context.getTotalDatacenterCount());
-        System.out.println("  Hosts: " + context.getTotalHostCount());
-        System.out.println("  Users: " + context.getUsers().size());
-        System.out.println("  VMs: " + context.getTotalVMCount());
-        System.out.println("  Tasks: " + context.getTotalTaskCount());
-        System.out.println();
-
-        System.out.println("--- Step 2: Host Placement ---");
-        HostPlacementStep hostPlacementStep = new HostPlacementStep(hostStrategy);
-        hostPlacementStep.execute(context);
-        System.out.println("  Hosts Placed: " + hostPlacementStep.getHostsPlaced());
-        System.out.println("  Hosts Failed: " + hostPlacementStep.getHostsFailed());
-        System.out.println();
-
-        System.out.println("--- Step 3: User-Datacenter Mapping ---");
-        UserDatacenterMappingStep userMappingStep = new UserDatacenterMappingStep();
-        userMappingStep.execute(context);
-        System.out.println("  Users Processed: " + userMappingStep.getUsersProcessed());
-        System.out.println("  Valid Mappings: " + userMappingStep.getValidMappings());
-        System.out.println("  Reassigned Users: " + userMappingStep.getReassignedUsers());
-        System.out.println();
-
-        System.out.println("--- Step 4: VM Placement ---");
-        VMPlacementStep vmPlacementStep = new VMPlacementStep(vmStrategy);
-        vmPlacementStep.execute(context);
-        System.out.println("  VMs Placed: " + vmPlacementStep.getVmsPlaced());
-        System.out.println("  VMs Failed: " + vmPlacementStep.getVmsFailed());
-        System.out.println("  Active Hosts: " + vmPlacementStep.getActiveHostCount());
-        System.out.println();
-
-        // Create task assignment strategy (needs hosts for energy objective, tasks/vms for MOEA)
-        TaskAssignmentStrategy taskStrategy = createStrategy(
-            context.getHosts(),
-            context.getTasks(),
-            context.getVms()
-        );
-
-        System.out.println("--- Step 5: Task Assignment (" + getStrategyName(STRATEGY) + ") ---");
-        TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(taskStrategy);
-        taskAssignmentStep.execute(context);
-        System.out.println("  Tasks Assigned: " + taskAssignmentStep.getTasksAssigned());
-        System.out.println("  Tasks Failed: " + taskAssignmentStep.getTasksFailed());
-
-        // Print Pareto front for MOEA strategies
-        if (STRATEGY == 7 || STRATEGY == 8) {
-            printParetoFront(taskStrategy);
-        }
-        System.out.println();
-
-        System.out.println("--- Step 6: VM Execution ---");
-        VMExecutionStep vmExecutionStep = new VMExecutionStep();
-        vmExecutionStep.execute(context);
-        System.out.println();
-
-        System.out.println("--- Step 7: Task Execution Analysis ---");
-        TaskExecutionStep taskExecutionStep = new TaskExecutionStep();
-        taskExecutionStep.execute(context);
-        System.out.println();
-
-        System.out.println("--- Step 8: Energy Calculation ---");
-        EnergyCalculationStep energyCalculationStep = new EnergyCalculationStep();
-        energyCalculationStep.execute(context);
-        System.out.println();
-
-        System.out.println("--- Step 9: Metrics Collection ---");
-        MetricsCollectionStep metricsCollectionStep = new MetricsCollectionStep();
-        metricsCollectionStep.execute(context);
-        System.out.println();
-
-        System.out.println("--- Step 10: Reporting ---");
-        ReportingStep reportingStep = new ReportingStep();
-        reportingStep.setBaseOutputDirectory(REPORTS_DIRECTORY);
-        reportingStep.setCustomPrefix("flex_exp" + experimentNumber + "_s" + STRATEGY);
-        reportingStep.execute(context);
-        System.out.println();
-
-        // Also generate SimpleReporter output
-        SimulationSummary summary = context.getSimulationSummary();
-        SimpleReporter simpleReporter = new SimpleReporter();
-        simpleReporter.setOutputDirectory(REPORTS_DIRECTORY);
-        try {
-            simpleReporter.generateAndSaveReport(context, summary);
-        } catch (IOException e) {
-            System.err.println("WARNING: SimpleReporter failed: " + e.getMessage());
+        AlgorithmRunResult(int algorithmId, String algorithmName, int iteration, long seed,
+                          List<double[]> solutions, long executionTimeMs, boolean nonDominanceVerified) {
+            this.algorithmId = algorithmId;
+            this.algorithmName = algorithmName;
+            this.iteration = iteration;
+            this.seed = seed;
+            this.solutions = solutions;
+            this.executionTimeMs = executionTimeMs;
+            this.nonDominanceVerified = nonDominanceVerified;
+            this.error = null;
         }
 
-        long endTime = System.currentTimeMillis();
-        long durationMs = endTime - startTime;
-
-        // Collect results
-        int completedTasks = (int) context.getTasks().stream().filter(Task::isCompleted).count();
-        int failedTasks = (int) context.getTasks().stream()
-            .filter(t -> t.isAssigned() && !t.isCompleted()).count();
-        long makespan = taskExecutionStep.getMakespan();
-        double totalEnergyKWh = energyCalculationStep.getTotalITEnergyKWh();
-
-        // Capture Pareto front for MOEA strategies
-        ParetoFront paretoFront = null;
-        if (STRATEGY == 7 && taskStrategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
-            paretoFront = ((MOEA_NSGA2TaskSchedulingStrategy) taskStrategy).getLastParetoFront();
-        } else if (STRATEGY == 8 && taskStrategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
-            paretoFront = ((MOEA_SPEA2TaskSchedulingStrategy) taskStrategy).getLastParetoFront();
+        AlgorithmRunResult(int algorithmId, String algorithmName, int iteration, long seed, Exception error) {
+            this.algorithmId = algorithmId;
+            this.algorithmName = algorithmName;
+            this.iteration = iteration;
+            this.seed = seed;
+            this.solutions = new ArrayList<>();
+            this.executionTimeMs = 0;
+            this.nonDominanceVerified = false;
+            this.error = error;
         }
-
-        return new ExperimentResult(
-            configFile.getName(),
-            experimentNumber,
-            config.getRandomSeed(),
-            makespan,
-            totalEnergyKWh,
-            completedTasks,
-            failedTasks,
-            context.getTotalTaskCount(),
-            durationMs,
-            paretoFront
-        );
-    }
-
-    // =========================================================================
-    // OUTPUT FORMATTING
-    // =========================================================================
-
-    private static void printExperimentSummary(ExperimentResult result) {
-        System.out.println("========================================================");
-        System.out.println("  EXPERIMENT " + result.experimentNumber + " RESULTS");
-        System.out.println("========================================================");
-
-        if (result.error != null) {
-            System.out.println("  Status: FAILED");
-            System.out.println("  Error: " + result.error.getMessage());
-        } else {
-            System.out.println("  Status: SUCCESS");
-            System.out.println("  Config: " + result.configFileName);
-            System.out.println("  Seed: " + result.seed);
-            System.out.println("  Makespan: " + result.makespan + " seconds");
-            System.out.println("  Total Energy: " + String.format("%.6f", result.totalEnergyKWh) + " kWh");
-            System.out.println("  Tasks Completed: " + result.tasksCompleted + "/" + result.totalTasks);
-            System.out.println("  Tasks Failed: " + result.tasksFailed);
-            System.out.println("  Wall-clock Duration: " + result.durationMs + " ms");
-        }
-        System.out.println("========================================================");
-    }
-
-    private static void printFinalSummary(List<ExperimentResult> results) {
-        System.out.println();
-        System.out.println("========================================================");
-        System.out.println("  FINAL SUMMARY - ALL EXPERIMENTS");
-        System.out.println("  Strategy: " + getStrategyName(STRATEGY));
-        System.out.println("  Mode: " + (MULTI_OBJECTIVE_MODE ? "Multi-objective (weighted sum)" : "Single-objective"));
-        System.out.println("========================================================");
-
-        // For MOEA strategies, print Pareto fronts for each experiment
-        if (STRATEGY == 7 || STRATEGY == 8) {
-            printAllParetoFronts(results);
-        } else {
-            // Standard single-solution summary for non-MOEA strategies
-            System.out.println();
-            System.out.printf("%-4s %-35s %-10s %-15s %-15s %-10s%n",
-                "#", "Config File", "Seed", "Makespan (s)", "Energy (kWh)", "Completed");
-            System.out.println("---------------------------------------------------------------------------------------------");
-
-            for (ExperimentResult result : results) {
-                if (result.error != null) {
-                    System.out.printf("%-4d %-35s %-10s %-15s %-15s %-10s%n",
-                        result.experimentNumber,
-                        truncate(result.configFileName, 35),
-                        "N/A",
-                        "FAILED",
-                        "FAILED",
-                        "FAILED");
-                } else {
-                    System.out.printf("%-4d %-35s %-10d %-15d %-15.6f %d/%d%n",
-                        result.experimentNumber,
-                        truncate(result.configFileName, 35),
-                        result.seed,
-                        result.makespan,
-                        result.totalEnergyKWh,
-                        result.tasksCompleted,
-                        result.totalTasks);
-                }
-            }
-            System.out.println("---------------------------------------------------------------------------------------------");
-        }
-
-        // Summary statistics
-        int successCount = 0;
-        int failedCount = 0;
-        long totalMakespan = 0;
-        double totalEnergy = 0;
-        int totalCompleted = 0;
-        int totalFailed = 0;
-        long totalDuration = 0;
-
-        for (ExperimentResult result : results) {
-            if (result.error != null) {
-                failedCount++;
-            } else {
-                successCount++;
-                totalMakespan += result.makespan;
-                totalEnergy += result.totalEnergyKWh;
-                totalCompleted += result.tasksCompleted;
-                totalFailed += result.tasksFailed;
-                totalDuration += result.durationMs;
-            }
-        }
-
-        System.out.println();
-        System.out.println("Summary Statistics:");
-        System.out.println("  Experiments Succeeded: " + successCount);
-        System.out.println("  Experiments Failed: " + failedCount);
-
-        if (successCount > 0) {
-            System.out.println("  Average Makespan: " + (totalMakespan / successCount) + " seconds");
-            System.out.println("  Average Energy: " + String.format("%.6f", totalEnergy / successCount) + " kWh");
-            System.out.println("  Total Tasks Completed: " + totalCompleted);
-            System.out.println("  Total Tasks Failed: " + totalFailed);
-            System.out.println("  Total Wall-clock Time: " + totalDuration + " ms (" +
-                String.format("%.2f", totalDuration / 1000.0 / 60.0) + " minutes)");
-        }
-
-        System.out.println();
-        System.out.println("Reports saved to: " + REPORTS_DIRECTORY + "/");
-        System.out.println("========================================================");
     }
 
     /**
-     * Prints all Pareto fronts for MOEA strategies in the final summary.
+     * Aggregated results for one algorithm across all iterations.
      */
-    private static void printAllParetoFronts(List<ExperimentResult> results) {
-        for (ExperimentResult result : results) {
-            System.out.println();
-            System.out.println("------------------------------------------------------------");
-            System.out.println("  Experiment " + result.experimentNumber + ": " + result.configFileName);
-            System.out.println("  Seed: " + result.seed + " | Tasks Completed: " +
-                result.tasksCompleted + "/" + result.totalTasks);
-            System.out.println("------------------------------------------------------------");
+    private static class AlgorithmAggregatedResult {
+        final int algorithmId;
+        final String algorithmName;
+        final List<AlgorithmRunResult> runs = new ArrayList<>();
+        final List<double[]> allSolutions = new ArrayList<>();  // Combined from all iterations
+        List<double[]> nonDominatedSolutions = new ArrayList<>();  // Filtered to non-dominated only
 
-            if (result.error != null) {
-                System.out.println("  Status: FAILED - " + result.error.getMessage());
-                continue;
-            }
+        // Performance metrics (calculated against Universal Pareto)
+        double hv;
+        double gd;
+        double igd;
+        double spacing;
+        boolean nonDominanceVerified;
+        int paretoContribution;  // Number of solutions contributed to Universal Pareto
 
-            if (result.paretoFront == null || result.paretoFront.isEmpty()) {
-                System.out.println("  No Pareto front available");
-                continue;
-            }
-
-            ParetoFront front = result.paretoFront;
-            System.out.println();
-            System.out.printf("  %-6s %-20s %-20s%n", "#", "Makespan (s)", "Energy (kWh)");
-            System.out.println("  " + "-".repeat(50));
-
-            List<SchedulingSolution> solutions = front.getSolutions();
-            for (int i = 0; i < solutions.size(); i++) {
-                SchedulingSolution sol = solutions.get(i);
-                double[] objectives = sol.getObjectiveValues();
-                if (objectives != null && objectives.length >= 2) {
-                    System.out.printf("  %-6d %-20.2f %-20.6f%n", (i + 1), objectives[0], objectives[1]);
-                }
-            }
-
-            System.out.println("  " + "-".repeat(50));
-            System.out.println("  Total: " + front.size() + " non-dominated solutions");
-
-            // Show special points
-            SchedulingSolution bestMakespan = front.getBestForObjective(0);
-            SchedulingSolution bestEnergy = front.getBestForObjective(1);
-            SchedulingSolution kneePoint = front.getKneePoint();
-
-            if (bestMakespan != null && bestMakespan.getObjectiveValues() != null) {
-                System.out.printf("  Best Makespan:  %.2f s, %.6f kWh%n",
-                    bestMakespan.getObjectiveValues()[0], bestMakespan.getObjectiveValues()[1]);
-            }
-            if (bestEnergy != null && bestEnergy.getObjectiveValues() != null) {
-                System.out.printf("  Best Energy:    %.2f s, %.6f kWh%n",
-                    bestEnergy.getObjectiveValues()[0], bestEnergy.getObjectiveValues()[1]);
-            }
-            if (kneePoint != null && kneePoint.getObjectiveValues() != null) {
-                System.out.printf("  Knee Point:     %.2f s, %.6f kWh (selected)%n",
-                    kneePoint.getObjectiveValues()[0], kneePoint.getObjectiveValues()[1]);
-            }
+        AlgorithmAggregatedResult(int algorithmId, String algorithmName) {
+            this.algorithmId = algorithmId;
+            this.algorithmName = algorithmName;
         }
     }
 
-    private static String truncate(String str, int maxLength) {
-        if (str == null) return "";
-        if (str.length() <= maxLength) return str;
-        return str.substring(0, maxLength - 3) + "...";
-    }
-
-    // =========================================================================
-    // RESULT CONTAINER
-    // =========================================================================
-
-    private static class ExperimentResult {
+    /**
+     * Results for one config file experiment.
+     */
+    private static class ConfigExperimentResults {
         final String configFileName;
-        final int experimentNumber;
-        final long seed;
-        final long makespan;
-        final double totalEnergyKWh;
-        final int tasksCompleted;
-        final int tasksFailed;
-        final int totalTasks;
-        final long durationMs;
-        final Exception error;
-        final ParetoFront paretoFront;  // For MOEA strategies
+        final long baseSeed;
+        final int configNumber;
+        final Map<Integer, AlgorithmAggregatedResult> algorithmResults = new HashMap<>();
+        List<double[]> universalParetoSet = new ArrayList<>();
+        double universalHV;
 
-        ExperimentResult(String configFileName, int experimentNumber, long seed,
-                         long makespan, double totalEnergyKWh,
-                         int tasksCompleted, int tasksFailed, int totalTasks,
-                         long durationMs, ParetoFront paretoFront) {
+        ConfigExperimentResults(String configFileName, long baseSeed, int configNumber) {
             this.configFileName = configFileName;
-            this.experimentNumber = experimentNumber;
-            this.seed = seed;
-            this.makespan = makespan;
-            this.totalEnergyKWh = totalEnergyKWh;
-            this.tasksCompleted = tasksCompleted;
-            this.tasksFailed = tasksFailed;
-            this.totalTasks = totalTasks;
-            this.durationMs = durationMs;
-            this.error = null;
-            this.paretoFront = paretoFront;
-        }
-
-        ExperimentResult(String configFileName, int experimentNumber, Exception error) {
-            this.configFileName = configFileName;
-            this.experimentNumber = experimentNumber;
-            this.seed = 0;
-            this.makespan = 0;
-            this.totalEnergyKWh = 0;
-            this.tasksCompleted = 0;
-            this.tasksFailed = 0;
-            this.totalTasks = 0;
-            this.durationMs = 0;
-            this.error = error;
-            this.paretoFront = null;
+            this.baseSeed = baseSeed;
+            this.configNumber = configNumber;
         }
     }
 }
