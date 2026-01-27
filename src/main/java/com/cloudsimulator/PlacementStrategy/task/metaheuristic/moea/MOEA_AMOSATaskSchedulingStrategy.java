@@ -8,6 +8,8 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuratio
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.TerminationCondition;
 
 import org.moeaframework.Analyzer;
 import org.moeaframework.Executor;
@@ -576,16 +578,28 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
      * Calculates maximum evaluations from the termination condition.
      */
     private int calculateMaxEvaluations() {
-        String desc = config.getTerminationCondition().getDescription();
+        TerminationCondition termination = config.getTerminationCondition();
 
+        // Direct access to generation count if using GenerationCountTermination
+        if (termination instanceof GenerationCountTermination) {
+            int generations = ((GenerationCountTermination) termination).getMaxGenerations();
+            // For AMOSA, we map generations to temperature steps
+            return generations * iterationsPerTemperature;
+        }
+
+        // Fallback: try to extract from description for other termination types
+        String desc = termination.getDescription();
         if (desc.contains("generation")) {
-            String[] parts = desc.split(" ");
-            try {
-                int generations = Integer.parseInt(parts[0]);
-                // For AMOSA, we map generations to temperature steps
-                return generations * iterationsPerTemperature;
-            } catch (NumberFormatException e) {
-                // Fall back to default
+            // Pattern: "Terminate after X generations"
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\\d+").matcher(desc);
+            if (matcher.find()) {
+                try {
+                    int generations = Integer.parseInt(matcher.group());
+                    // For AMOSA, we map generations to temperature steps
+                    return generations * iterationsPerTemperature;
+                } catch (NumberFormatException e) {
+                    // Fall back to default
+                }
             }
         }
 
