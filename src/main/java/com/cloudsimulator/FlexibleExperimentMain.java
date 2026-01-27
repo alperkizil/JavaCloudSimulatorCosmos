@@ -35,14 +35,20 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATas
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SAConfiguration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.LocalSearchTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.LocalSearchConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.NeighborhoodGenerator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.neighborselection.FirstImprovementStrategy;
+
+// MOEA Framework strategies
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_SPEA2TaskSchedulingStrategy;
+
+// Genetic operators (for MOEA custom variation)
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 
 // Objectives
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
@@ -51,6 +57,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.Energy
 
 // Termination conditions
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination;
 
 // Cooling schedules
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.cooling.GeometricCoolingSchedule;
@@ -71,7 +78,7 @@ import java.util.List;
  * through simple constants at the top of the file - no command line arguments needed.
  *
  * QUICK START:
- * 1. Set STRATEGY (1-12) to choose your algorithm
+ * 1. Set STRATEGY (1-8) to choose your algorithm
  * 2. Set MULTI_OBJECTIVE_MODE to true/false
  * 3. Adjust weights if using weighted-sum mode
  * 4. Run!
@@ -81,7 +88,7 @@ import java.util.List;
  * ============================================================================
  *
  * HEURISTICS (fast, simple):
- *   1 = First Available    - Assigns to first compatible VM (baseline)
+ *   1 = First Available    - Assigns to first compatible VM (baseline) [DEFAULT]
  *   2 = Shortest Queue     - Assigns to VM with fewest tasks
  *   3 = Workload Aware     - Considers completion time estimation
  *
@@ -89,13 +96,24 @@ import java.util.List;
  *   4 = GA                 - Generational GA with elitism
  *
  * SIMULATED ANNEALING (single-solution, memory-efficient):
- *   5 = SA                 - Classic SA with geometric cooling
+ *   5 = SA                 - Classic SA with evaluation-count termination
  *
  * LOCAL SEARCH (fast local optimization):
  *   6 = Local Search       - First improvement hill climbing
  *
- * NSGA-II (true multi-objective, returns Pareto front):
- *   7 = NSGA-II            - Non-dominated Sorting GA II
+ * MOEA FRAMEWORK (true multi-objective, returns Pareto front):
+ *   7 = MOEA_NSGAII        - MOEA Framework NSGA-II (MULTI_OBJECTIVE_MODE only)
+ *   8 = MOEA_SPEA2         - MOEA Framework SPEA2 (MULTI_OBJECTIVE_MODE only)
+ *
+ * ============================================================================
+ * TERMINATION CRITERIA (40,000 fitness evaluations for fair comparison):
+ * ============================================================================
+ *
+ *   GA:           200 population × 200 generations = 40,000 evaluations
+ *   SA:           40,000 total fitness evaluations
+ *   Local Search: 40,000 max iterations OR 200 iterations without improvement
+ *   MOEA_NSGAII:  40,000 max evaluations
+ *   MOEA_SPEA2:   40,000 max evaluations
  *
  * ============================================================================
  * OBJECTIVE MODES:
@@ -103,11 +121,20 @@ import java.util.List;
  *
  * When MULTI_OBJECTIVE_MODE = false (single objective):
  *   - For strategies 4-6: Uses the objective with higher weight
- *   - For strategy 7 (NSGA-II): Returns knee point from Pareto front
+ *   - Strategies 7-8 (MOEA): NOT AVAILABLE - will fallback to First Available
  *
  * When MULTI_OBJECTIVE_MODE = true (multi-objective):
  *   - For strategies 4-6: Uses weighted sum of objectives
- *   - For strategy 7 (NSGA-II): Returns full Pareto front, applies knee point
+ *   - For strategies 7-8 (MOEA): Returns Pareto front, selects knee point
+ *
+ * ============================================================================
+ * GENETIC OPERATORS:
+ * ============================================================================
+ *
+ * All evolutionary algorithms (GA, MOEA_NSGAII, MOEA_SPEA2) use identical operators:
+ *   - Crossover: UNIFORM crossover
+ *   - Mutation:  COMBINED (REASSIGN + SWAP_ORDER)
+ *   - Repair:    Constraint satisfaction via RepairOperator
  *
  * ============================================================================
  */
@@ -119,20 +146,22 @@ public class FlexibleExperimentMain {
 
     /**
      * Strategy selection (see STRATEGY GUIDE above):
-     *   1 = First Available (heuristic)
+     *   1 = First Available (heuristic) [DEFAULT]
      *   2 = Shortest Queue (heuristic)
      *   3 = Workload Aware (heuristic)
      *   4 = Genetic Algorithm (GA)
      *   5 = Simulated Annealing (SA)
      *   6 = Local Search (LS)
-     *   7 = NSGA-II (multi-objective)
+     *   7 = MOEA_NSGAII (multi-objective only)
+     *   8 = MOEA_SPEA2 (multi-objective only)
      */
-    private static final int STRATEGY = 4;
+    private static final int STRATEGY = 1;
 
     /**
      * Multi-objective mode:
-     *   false = Single objective (uses objective with higher weight, or knee point for NSGA-II)
-     *   true  = Multi-objective (weighted sum for GA/SA/LS, full Pareto for NSGA-II)
+     *   false = Single objective (uses objective with higher weight)
+     *           NOTE: Strategies 7-8 (MOEA) require multi-objective mode!
+     *   true  = Multi-objective (weighted sum for GA/SA/LS, Pareto front for MOEA)
      */
     private static final boolean MULTI_OBJECTIVE_MODE = false;
 
@@ -154,32 +183,68 @@ public class FlexibleExperimentMain {
     private static final boolean VERBOSE_LOGGING = true;
 
     // =========================================================================
-    // ALGORITHM PARAMETERS - FINE-TUNE IF NEEDED
+    // UNIFIED ALGORITHM PARAMETERS (40,000 evaluations for fair comparison)
     // =========================================================================
 
-    // GA Parameters
-    private static final int GA_POPULATION_SIZE = 100;
-    private static final int GA_GENERATIONS = 200;
-    private static final double GA_CROSSOVER_RATE = 0.9;
-    private static final double GA_MUTATION_RATE = 0.1;
-    private static final int GA_ELITE_COUNT = 10;
+    /**
+     * Total fitness evaluations budget - ensures fair comparison across algorithms.
+     * All metaheuristic algorithms terminate after approximately this many evaluations.
+     */
+    private static final int TOTAL_EVALUATIONS = 40000;
+
+    /**
+     * Population size for population-based algorithms (GA, MOEA).
+     * With 200 generations: 200 × 200 = 40,000 evaluations.
+     */
+    private static final int POPULATION_SIZE = 200;
+
+    /**
+     * Number of generations for GA and MOEA algorithms.
+     * With population 200: 200 × 200 = 40,000 evaluations.
+     */
+    private static final int GENERATIONS = 200;
+
+    /**
+     * Crossover rate - probability of applying crossover operator.
+     * Used by: GA, MOEA_NSGAII, MOEA_SPEA2
+     */
+    private static final double CROSSOVER_RATE = 0.9;
+
+    /**
+     * Mutation rate - per-gene probability of mutation.
+     * Used by: GA, SA, MOEA_NSGAII, MOEA_SPEA2
+     */
+    private static final double MUTATION_RATE = 0.1;
+
+    // =========================================================================
+    // GA-SPECIFIC PARAMETERS
+    // =========================================================================
+
+    /** Number of elite individuals preserved each generation (10% of population) */
+    private static final int GA_ELITE_COUNT = 20;
+
+    /** Tournament size for selection */
     private static final int GA_TOURNAMENT_SIZE = 3;
 
-    // SA Parameters
+    // =========================================================================
+    // SA-SPECIFIC PARAMETERS
+    // =========================================================================
+
+    /** Initial temperature for SA (used with auto-termination) */
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
-    private static final double SA_FINAL_TEMPERATURE = 0.001;
-    private static final double SA_COOLING_RATE = 0.95;  // Geometric cooling alpha
-    private static final int SA_ITERATIONS_PER_TEMP = 100;
 
-    // Local Search Parameters
-    private static final int LS_MAX_ITERATIONS = 10000;
-    private static final int LS_MAX_NO_IMPROVEMENT = 100;
+    /** Cooling rate for geometric cooling schedule */
+    private static final double SA_COOLING_RATE = 0.95;
 
-    // NSGA-II Parameters
-    private static final int NSGA2_POPULATION_SIZE = 100;
-    private static final int NSGA2_GENERATIONS = 200;
-    private static final double NSGA2_CROSSOVER_RATE = 0.9;
-    private static final double NSGA2_MUTATION_RATE = 0.1;
+    // =========================================================================
+    // LOCAL SEARCH PARAMETERS
+    // =========================================================================
+
+    /** Maximum iterations (40,000 for fair comparison) */
+    private static final int LS_MAX_ITERATIONS = 40000;
+
+    /** Stop after this many iterations without improvement */
+    private static final int LS_MAX_NO_IMPROVEMENT = 200;
 
     // =========================================================================
     // DIRECTORY CONFIGURATION
@@ -271,7 +336,8 @@ public class FlexibleExperimentMain {
             case 4: return "Genetic Algorithm (GA)";
             case 5: return "Simulated Annealing (SA)";
             case 6: return "Local Search (LS)";
-            case 7: return "NSGA-II (Multi-objective)";
+            case 7: return "MOEA_NSGAII (Multi-objective)";
+            case 8: return "MOEA_SPEA2 (Multi-objective)";
             default: return "Unknown";
         }
     }
@@ -284,9 +350,21 @@ public class FlexibleExperimentMain {
      * Creates a task assignment strategy based on STRATEGY constant.
      *
      * @param hosts List of hosts (needed for energy objective)
+     * @param tasks List of tasks (needed for MOEA custom operators)
+     * @param vms   List of VMs (needed for MOEA custom operators)
      * @return Configured TaskAssignmentStrategy
      */
-    private static TaskAssignmentStrategy createStrategy(List<Host> hosts) {
+    private static TaskAssignmentStrategy createStrategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
+        // Validate MOEA strategies require multi-objective mode
+        if ((STRATEGY == 7 || STRATEGY == 8) && !MULTI_OBJECTIVE_MODE) {
+            System.err.println("========================================================");
+            System.err.println("  ERROR: MOEA strategies (7, 8) require MULTI_OBJECTIVE_MODE = true");
+            System.err.println("  Strategy " + STRATEGY + " (" + getStrategyName(STRATEGY) + ") is multi-objective only.");
+            System.err.println("  Falling back to First Available strategy.");
+            System.err.println("========================================================");
+            return createFirstAvailableStrategy();
+        }
+
         switch (STRATEGY) {
             case 1:
                 return createFirstAvailableStrategy();
@@ -301,11 +379,25 @@ public class FlexibleExperimentMain {
             case 6:
                 return createLocalSearchStrategy(hosts);
             case 7:
-                return createNSGA2Strategy(hosts);
+                return createMOEA_NSGAIIStrategy(hosts, tasks, vms);
+            case 8:
+                return createMOEA_SPEA2Strategy(hosts, tasks, vms);
             default:
                 System.err.println("Unknown strategy: " + STRATEGY + ", using First Available");
                 return createFirstAvailableStrategy();
         }
+    }
+
+    /**
+     * Creates a task assignment strategy based on STRATEGY constant.
+     * Overload for backward compatibility - delegates to full version.
+     *
+     * @param hosts List of hosts (needed for energy objective)
+     * @return Configured TaskAssignmentStrategy
+     */
+    private static TaskAssignmentStrategy createStrategy(List<Host> hosts) {
+        // For strategies that don't need tasks/vms, pass empty lists
+        return createStrategy(hosts, new ArrayList<>(), new ArrayList<>());
     }
 
     // -------------------------------------------------------------------------
@@ -338,15 +430,17 @@ public class FlexibleExperimentMain {
      *
      * In single-objective mode: uses the objective with higher weight.
      * In multi-objective mode: uses weighted sum of both objectives.
+     *
+     * Uses unified parameters: POPULATION_SIZE × GENERATIONS = 40,000 evaluations.
      */
     private static GAConfiguration createGAConfiguration(List<Host> hosts) {
         GAConfiguration.Builder builder = GAConfiguration.builder()
-            .populationSize(GA_POPULATION_SIZE)
-            .crossoverRate(GA_CROSSOVER_RATE)
-            .mutationRate(GA_MUTATION_RATE)
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
             .eliteCount(GA_ELITE_COUNT)
             .tournamentSize(GA_TOURNAMENT_SIZE)
-            .terminationCondition(new GenerationCountTermination(GA_GENERATIONS))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE_MODE) {
@@ -420,14 +514,14 @@ public class FlexibleExperimentMain {
 
     /**
      * Creates SA configuration based on current settings.
-     * Uses geometric cooling schedule (most reliable).
+     * Uses evaluation-count-based termination (TOTAL_EVALUATIONS) for fair comparison.
+     * Geometric cooling schedule with automatic temperature steps.
      */
     private static SAConfiguration createSAConfiguration(List<Host> hosts) {
         SAConfiguration.Builder builder = SAConfiguration.builder()
             .initialTemperature(SA_INITIAL_TEMPERATURE)
-            .finalTemperature(SA_FINAL_TEMPERATURE)
             .coolingSchedule(new GeometricCoolingSchedule(SA_COOLING_RATE))
-            .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
+            .terminationCondition(new FitnessEvaluationsTermination(TOTAL_EVALUATIONS))
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE_MODE) {
@@ -448,23 +542,30 @@ public class FlexibleExperimentMain {
     }
 
     /**
-     * Creates a custom SA configuration with specific parameters.
+     * Creates a custom SA configuration with evaluation-count termination.
+     *
+     * @param hosts           List of hosts (for energy objective)
+     * @param initialTemp     Initial temperature
+     * @param coolingRate     Cooling rate for geometric schedule
+     * @param maxEvaluations  Total fitness evaluations (termination criterion)
+     * @param makespanWeight  Weight for makespan objective
+     * @param energyWeight    Weight for energy objective
+     * @param multiObjective  true for weighted-sum, false for single objective
+     * @return SAConfiguration
      */
     public static SAConfiguration createSAConfigurationCustom(
             List<Host> hosts,
             double initialTemp,
-            double finalTemp,
             double coolingRate,
-            int iterationsPerTemp,
+            int maxEvaluations,
             double makespanWeight,
             double energyWeight,
             boolean multiObjective) {
 
         SAConfiguration.Builder builder = SAConfiguration.builder()
             .initialTemperature(initialTemp)
-            .finalTemperature(finalTemp)
             .coolingSchedule(new GeometricCoolingSchedule(coolingRate))
-            .iterationsPerTemperature(iterationsPerTemp)
+            .terminationCondition(new FitnessEvaluationsTermination(maxEvaluations))
             .verboseLogging(VERBOSE_LOGGING);
 
         if (multiObjective) {
@@ -562,39 +663,94 @@ public class FlexibleExperimentMain {
     }
 
     // -------------------------------------------------------------------------
-    // NSGA-II Configuration
+    // MOEA_NSGAII Configuration
     // -------------------------------------------------------------------------
 
-    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts) {
-        NSGA2Configuration config = createNSGA2Configuration(hosts);
-        return new NSGA2TaskSchedulingStrategy(config);
+    /**
+     * Creates MOEA Framework NSGA-II strategy with custom genetic operators.
+     * Uses the same CrossoverOperator and MutationOperator as the native GA
+     * to ensure fair comparison between algorithms.
+     *
+     * @param hosts List of hosts (needed for energy objective)
+     * @param tasks List of tasks (needed for custom operators)
+     * @param vms   List of VMs (needed for custom operators)
+     * @return Configured MOEA_NSGA2TaskSchedulingStrategy
+     */
+    private static TaskAssignmentStrategy createMOEA_NSGAIIStrategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
+        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
+
+        // Set selection method based on weights
+        if (WEIGHT_MAKESPAN > WEIGHT_ENERGY) {
+            strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        } else {
+            strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        }
+        strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
+
+        return strategy;
+    }
+
+    // -------------------------------------------------------------------------
+    // MOEA_SPEA2 Configuration
+    // -------------------------------------------------------------------------
+
+    /**
+     * Creates MOEA Framework SPEA2 strategy with custom genetic operators.
+     * Uses the same CrossoverOperator and MutationOperator as the native GA
+     * to ensure fair comparison between algorithms.
+     *
+     * @param hosts List of hosts (needed for energy objective)
+     * @param tasks List of tasks (needed for custom operators)
+     * @param vms   List of VMs (needed for custom operators)
+     * @return Configured MOEA_SPEA2TaskSchedulingStrategy
+     */
+    private static TaskAssignmentStrategy createMOEA_SPEA2Strategy(List<Host> hosts, List<Task> tasks, List<VM> vms) {
+        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
+
+        // Set selection method based on weights
+        strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
+
+        return strategy;
     }
 
     /**
-     * Creates NSGA-II configuration.
-     * NSGA-II is always multi-objective (returns Pareto front).
-     * In single-objective mode, we still optimize both but use knee point.
+     * Creates shared MOEA configuration for both NSGA-II and SPEA2.
+     * Uses unified parameters: POPULATION_SIZE × GENERATIONS = TOTAL_EVALUATIONS.
+     *
+     * @param hosts List of hosts (needed for energy objective)
+     * @return NSGA2Configuration (shared format for all MOEA algorithms)
      */
-    private static NSGA2Configuration createNSGA2Configuration(List<Host> hosts) {
+    private static NSGA2Configuration createMOEAConfiguration(List<Host> hosts) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
 
         return NSGA2Configuration.builder()
-            .populationSize(NSGA2_POPULATION_SIZE)
-            .crossoverRate(NSGA2_CROSSOVER_RATE)
-            .mutationRate(NSGA2_MUTATION_RATE)
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
-            .terminationCondition(new GenerationCountTermination(NSGA2_GENERATIONS))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))
             .verboseLogging(VERBOSE_LOGGING)
             .build();
     }
 
     /**
-     * Creates a custom NSGA-II configuration with specific parameters.
+     * Creates a custom MOEA configuration with specific parameters.
+     * Can be used for both MOEA_NSGAII and MOEA_SPEA2.
+     *
+     * @param hosts          List of hosts (for energy objective)
+     * @param populationSize Population size
+     * @param generations    Number of generations (total evals = pop × gen)
+     * @param crossoverRate  Crossover probability
+     * @param mutationRate   Mutation probability per gene
+     * @return NSGA2Configuration
      */
-    public static NSGA2Configuration createNSGA2ConfigurationCustom(
+    public static NSGA2Configuration createMOEAConfigurationCustom(
             List<Host> hosts,
             int populationSize,
             int generations,
@@ -745,8 +901,12 @@ public class FlexibleExperimentMain {
         System.out.println("  Active Hosts: " + vmPlacementStep.getActiveHostCount());
         System.out.println();
 
-        // Create task assignment strategy (needs hosts for energy objective)
-        TaskAssignmentStrategy taskStrategy = createStrategy(context.getHosts());
+        // Create task assignment strategy (needs hosts for energy objective, tasks/vms for MOEA)
+        TaskAssignmentStrategy taskStrategy = createStrategy(
+            context.getHosts(),
+            context.getTasks(),
+            context.getVMs()
+        );
 
         System.out.println("--- Step 5: Task Assignment (" + getStrategyName(STRATEGY) + ") ---");
         TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(taskStrategy);
