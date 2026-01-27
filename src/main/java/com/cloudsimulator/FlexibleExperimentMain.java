@@ -36,6 +36,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.LocalSearchTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.LocalSearchConfiguration;
@@ -773,6 +774,76 @@ public class FlexibleExperimentMain {
     }
 
     // -------------------------------------------------------------------------
+    // Pareto Front Display
+    // -------------------------------------------------------------------------
+
+    /**
+     * Prints the full Pareto front for MOEA strategies.
+     * Shows all non-dominated solutions with their objective values.
+     *
+     * @param strategy The task assignment strategy (must be MOEA_NSGA2 or MOEA_SPEA2)
+     */
+    private static void printParetoFront(TaskAssignmentStrategy strategy) {
+        ParetoFront front = null;
+        String algorithmName = "";
+
+        if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
+            MOEA_NSGA2TaskSchedulingStrategy nsgaStrategy = (MOEA_NSGA2TaskSchedulingStrategy) strategy;
+            front = nsgaStrategy.getLastParetoFront();
+            algorithmName = "MOEA_NSGAII";
+        } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
+            MOEA_SPEA2TaskSchedulingStrategy speaStrategy = (MOEA_SPEA2TaskSchedulingStrategy) strategy;
+            front = speaStrategy.getLastParetoFront();
+            algorithmName = "MOEA_SPEA2";
+        }
+
+        if (front == null || front.isEmpty()) {
+            System.out.println("  [" + algorithmName + "] No Pareto front available");
+            return;
+        }
+
+        System.out.println();
+        System.out.println("  ========================================================");
+        System.out.println("  " + algorithmName + " PARETO FRONT (" + front.size() + " non-dominated solutions)");
+        System.out.println("  ========================================================");
+        System.out.println();
+        System.out.printf("  %-6s %-20s %-20s%n", "#", "Makespan (s)", "Energy (kWh)");
+        System.out.println("  " + "-".repeat(50));
+
+        List<SchedulingSolution> solutions = front.getSolutions();
+        for (int i = 0; i < solutions.size(); i++) {
+            SchedulingSolution sol = solutions.get(i);
+            double[] objectives = sol.getObjectiveValues();
+            if (objectives != null && objectives.length >= 2) {
+                System.out.printf("  %-6d %-20.2f %-20.6f%n", (i + 1), objectives[0], objectives[1]);
+            }
+        }
+
+        System.out.println("  " + "-".repeat(50));
+
+        // Show special points
+        SchedulingSolution bestMakespan = front.getBestForObjective(0);
+        SchedulingSolution bestEnergy = front.getBestForObjective(1);
+        SchedulingSolution kneePoint = front.getKneePoint();
+
+        System.out.println();
+        System.out.println("  Special Points:");
+        if (bestMakespan != null && bestMakespan.getObjectiveValues() != null) {
+            System.out.printf("    Best Makespan:  %.2f s, %.6f kWh%n",
+                bestMakespan.getObjectiveValues()[0], bestMakespan.getObjectiveValues()[1]);
+        }
+        if (bestEnergy != null && bestEnergy.getObjectiveValues() != null) {
+            System.out.printf("    Best Energy:    %.2f s, %.6f kWh%n",
+                bestEnergy.getObjectiveValues()[0], bestEnergy.getObjectiveValues()[1]);
+        }
+        if (kneePoint != null && kneePoint.getObjectiveValues() != null) {
+            System.out.printf("    Knee Point:     %.2f s, %.6f kWh%n",
+                kneePoint.getObjectiveValues()[0], kneePoint.getObjectiveValues()[1]);
+        }
+        System.out.println("  ========================================================");
+    }
+
+    // -------------------------------------------------------------------------
     // Objective Helper
     // -------------------------------------------------------------------------
 
@@ -913,6 +984,11 @@ public class FlexibleExperimentMain {
         taskAssignmentStep.execute(context);
         System.out.println("  Tasks Assigned: " + taskAssignmentStep.getTasksAssigned());
         System.out.println("  Tasks Failed: " + taskAssignmentStep.getTasksFailed());
+
+        // Print Pareto front for MOEA strategies
+        if (STRATEGY == 7 || STRATEGY == 8) {
+            printParetoFront(taskStrategy);
+        }
         System.out.println();
 
         System.out.println("--- Step 6: VM Execution ---");
