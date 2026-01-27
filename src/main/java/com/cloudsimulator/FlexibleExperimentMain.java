@@ -322,9 +322,8 @@ public class FlexibleExperimentMain {
             System.out.println();
         }
 
-        // Generate Python plotting script and execute it
+        // Execute Python plotting script (uses existing scripts/pareto_plotter.py)
         if (MULTI_OBJECTIVE_MODE) {
-            generatePythonPlotterScript();
             executePythonPlotter();
         }
 
@@ -1321,135 +1320,37 @@ public class FlexibleExperimentMain {
         }
     }
 
-    // =========================================================================
-    // PYTHON PLOTTER SCRIPT GENERATION
-    // =========================================================================
-
-    private static void generatePythonPlotterScript() {
-        Path filePath = Paths.get(REPORTS_DIRECTORY, "pareto_plotter.py");
-
-        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
-            writer.println("#!/usr/bin/env python3");
-            writer.println("\"\"\"");
-            writer.println("Pareto Front Plotter for JavaCloudSimulatorCosmos");
-            writer.println("Generated automatically by FlexibleExperimentMain.java");
-            writer.println("");
-            writer.println("Usage:");
-            writer.println("    python pareto_plotter.py <reports_directory>");
-            writer.println("");
-            writer.println("Example:");
-            writer.println("    python pareto_plotter.py reports/config_1_seed_42");
-            writer.println("    python pareto_plotter.py reports  # Processes all config folders");
-            writer.println("\"\"\"");
-            writer.println("");
-            writer.println("import matplotlib.pyplot as plt");
-            writer.println("import pandas as pd");
-            writer.println("import sys");
-            writer.println("import os");
-            writer.println("");
-            writer.println("# Algorithm colors and markers");
-            writer.println("ALGORITHM_STYLES = {");
-            writer.println("    'FirstAvailable':  {'color': '#1f77b4', 'marker': 'o'},");
-            writer.println("    'ShortestQueue':   {'color': '#ff7f0e', 'marker': 's'},");
-            writer.println("    'WorkloadAware':   {'color': '#2ca02c', 'marker': '^'},");
-            writer.println("    'GA':              {'color': '#d62728', 'marker': 'v'},");
-            writer.println("    'SA':              {'color': '#9467bd', 'marker': 'D'},");
-            writer.println("    'LocalSearch':     {'color': '#8c564b', 'marker': 'P'},");
-            writer.println("    'MOEA_NSGAII':     {'color': '#e377c2', 'marker': '*'},");
-            writer.println("    'MOEA_SPEA2':      {'color': '#7f7f7f', 'marker': 'X'},");
-            writer.println("    'Universal_Pareto': {'color': '#000000', 'marker': 'o'},");
-            writer.println("}");
-            writer.println("");
-            writer.println("def plot_pareto_front(csv_path, output_path):");
-            writer.println("    \"\"\"Generate Pareto front plot from CSV data.\"\"\"");
-            writer.println("    df = pd.read_csv(csv_path)");
-            writer.println("");
-            writer.println("    plt.figure(figsize=(12, 8))");
-            writer.println("");
-            writer.println("    # Plot each algorithm");
-            writer.println("    for algo in df['Algorithm'].unique():");
-            writer.println("        if algo == 'Universal_Pareto':");
-            writer.println("            continue  # Plot separately");
-            writer.println("        algo_data = df[df['Algorithm'] == algo]");
-            writer.println("        style = ALGORITHM_STYLES.get(algo, {'color': 'gray', 'marker': 'o'})");
-            writer.println("        plt.scatter(algo_data['Makespan'], algo_data['Energy'],");
-            writer.println("                   c=style['color'], marker=style['marker'],");
-            writer.println("                   label=algo, alpha=0.7, s=60, edgecolors='black', linewidths=0.5)");
-            writer.println("");
-            writer.println("    # Plot Universal Pareto as connected line");
-            writer.println("    universal = df[df['Algorithm'] == 'Universal_Pareto'].sort_values('Makespan')");
-            writer.println("    if not universal.empty:");
-            writer.println("        plt.plot(universal['Makespan'], universal['Energy'],");
-            writer.println("                'k-', linewidth=2, label='Universal Pareto', alpha=0.8)");
-            writer.println("        plt.scatter(universal['Makespan'], universal['Energy'],");
-            writer.println("                   c='black', marker='o', s=100, zorder=5,");
-            writer.println("                   edgecolors='white', linewidths=2)");
-            writer.println("");
-            writer.println("    plt.xlabel('Makespan (seconds)', fontsize=12)");
-            writer.println("    plt.ylabel('Energy (kWh)', fontsize=12)");
-            writer.println("    plt.title('Multi-Algorithm Pareto Front Comparison', fontsize=14)");
-            writer.println("    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)");
-            writer.println("    plt.grid(True, alpha=0.3)");
-            writer.println("    plt.tight_layout()");
-            writer.println("    plt.savefig(output_path, dpi=300, bbox_inches='tight')");
-            writer.println("    plt.close()");
-            writer.println("    print(f'Generated: {output_path}')");
-            writer.println("");
-            writer.println("def main():");
-            writer.println("    if len(sys.argv) < 2:");
-            writer.println("        print(__doc__)");
-            writer.println("        sys.exit(1)");
-            writer.println("");
-            writer.println("    target = sys.argv[1]");
-            writer.println("");
-            writer.println("    if os.path.isfile(target) and target.endswith('.csv'):");
-            writer.println("        # Single CSV file");
-            writer.println("        output = target.replace('.csv', '_pareto.png')");
-            writer.println("        plot_pareto_front(target, output)");
-            writer.println("    elif os.path.isdir(target):");
-            writer.println("        # Directory - look for pareto_graph_data.csv files");
-            writer.println("        csv_file = os.path.join(target, 'pareto_graph_data.csv')");
-            writer.println("        if os.path.exists(csv_file):");
-            writer.println("            output = os.path.join(target, 'pareto_front.png')");
-            writer.println("            plot_pareto_front(csv_file, output)");
-            writer.println("        else:");
-            writer.println("            # Check subdirectories");
-            writer.println("            for folder in os.listdir(target):");
-            writer.println("                folder_path = os.path.join(target, folder)");
-            writer.println("                if os.path.isdir(folder_path):");
-            writer.println("                    csv_file = os.path.join(folder_path, 'pareto_graph_data.csv')");
-            writer.println("                    if os.path.exists(csv_file):");
-            writer.println("                        output = os.path.join(folder_path, 'pareto_front.png')");
-            writer.println("                        plot_pareto_front(csv_file, output)");
-            writer.println("");
-            writer.println("if __name__ == '__main__':");
-            writer.println("    main()");
-
-        } catch (IOException e) {
-            System.err.println("ERROR: Could not write pareto_plotter.py: " + e.getMessage());
-        }
-
-        System.out.println("Python plotting script saved to: " + filePath);
-    }
 
     /**
      * Executes the Python plotting script to generate Pareto front visualizations.
-     * Tries python3 first, then falls back to python.
-     * If Python is not available, prints manual execution instructions.
+     * Uses OS detection to choose the correct Python command:
+     * - Windows: python (python3 does not exist)
+     * - Linux/Mac: python3 first, then python as fallback
      */
     private static void executePythonPlotter() {
-        Path scriptPath = Paths.get(REPORTS_DIRECTORY, "pareto_plotter.py");
+        // Use the existing script from scripts folder (not generated)
+        Path scriptPath = Paths.get("scripts", "pareto_plotter.py");
 
         if (!Files.exists(scriptPath)) {
             System.err.println("WARNING: Python script not found at " + scriptPath);
+            printManualPythonInstructions();
             return;
         }
 
         System.out.println();
         System.out.println("Executing Python plotter...");
 
-        // Try python3 first, then python
-        String[] pythonCommands = {"python3", "python"};
+        // Detect OS and choose appropriate Python command
+        // Windows: "python" only (python3 doesn't exist on Windows)
+        // Linux/Mac: Try "python3" first, then "python"
+        String[] pythonCommands;
+        String osName = System.getProperty("os.name").toLowerCase();
+        if (osName.contains("win")) {
+            pythonCommands = new String[]{"python"};
+        } else {
+            pythonCommands = new String[]{"python3", "python"};
+        }
+
         boolean success = false;
 
         for (String pythonCmd : pythonCommands) {
@@ -1489,14 +1390,21 @@ public class FlexibleExperimentMain {
         }
 
         if (!success) {
-            System.out.println();
-            System.out.println("Could not automatically execute Python script.");
-            System.out.println("To generate plots manually, run:");
-            System.out.println("  python " + scriptPath + " " + REPORTS_DIRECTORY + "/");
-            System.out.println();
-            System.out.println("Required Python packages: matplotlib, pandas");
-            System.out.println("Install with: pip install matplotlib pandas");
+            printManualPythonInstructions();
         }
+    }
+
+    /**
+     * Prints instructions for manually running the Python plotter.
+     */
+    private static void printManualPythonInstructions() {
+        System.out.println();
+        System.out.println("Could not automatically execute Python script.");
+        System.out.println("To generate plots manually, run:");
+        System.out.println("  python scripts/pareto_plotter.py " + REPORTS_DIRECTORY + "/");
+        System.out.println();
+        System.out.println("Required Python packages: matplotlib, pandas");
+        System.out.println("Install with: pip install matplotlib pandas");
     }
 
     // =========================================================================
@@ -1651,7 +1559,7 @@ public class FlexibleExperimentMain {
 
         System.out.println();
         System.out.println("Reports saved to: " + REPORTS_DIRECTORY + "/");
-        System.out.println("Run: python " + REPORTS_DIRECTORY + "/pareto_plotter.py " + REPORTS_DIRECTORY + "/");
+        System.out.println("Run: python scripts/pareto_plotter.py " + REPORTS_DIRECTORY + "/");
         System.out.println("========================================================");
     }
 
