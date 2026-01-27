@@ -1038,6 +1038,14 @@ public class FlexibleExperimentMain {
         long makespan = taskExecutionStep.getMakespan();
         double totalEnergyKWh = energyCalculationStep.getTotalITEnergyKWh();
 
+        // Capture Pareto front for MOEA strategies
+        ParetoFront paretoFront = null;
+        if (STRATEGY == 7 && taskStrategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
+            paretoFront = ((MOEA_NSGA2TaskSchedulingStrategy) taskStrategy).getLastParetoFront();
+        } else if (STRATEGY == 8 && taskStrategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
+            paretoFront = ((MOEA_SPEA2TaskSchedulingStrategy) taskStrategy).getLastParetoFront();
+        }
+
         return new ExperimentResult(
             configFile.getName(),
             experimentNumber,
@@ -1047,7 +1055,8 @@ public class FlexibleExperimentMain {
             completedTasks,
             failedTasks,
             context.getTotalTaskCount(),
-            durationMs
+            durationMs,
+            paretoFront
         );
     }
 
@@ -1083,11 +1092,41 @@ public class FlexibleExperimentMain {
         System.out.println("  Strategy: " + getStrategyName(STRATEGY));
         System.out.println("  Mode: " + (MULTI_OBJECTIVE_MODE ? "Multi-objective (weighted sum)" : "Single-objective"));
         System.out.println("========================================================");
-        System.out.println();
-        System.out.printf("%-4s %-35s %-10s %-15s %-15s %-10s%n",
-            "#", "Config File", "Seed", "Makespan (s)", "Energy (kWh)", "Completed");
-        System.out.println("---------------------------------------------------------------------------------------------");
 
+        // For MOEA strategies, print Pareto fronts for each experiment
+        if (STRATEGY == 7 || STRATEGY == 8) {
+            printAllParetoFronts(results);
+        } else {
+            // Standard single-solution summary for non-MOEA strategies
+            System.out.println();
+            System.out.printf("%-4s %-35s %-10s %-15s %-15s %-10s%n",
+                "#", "Config File", "Seed", "Makespan (s)", "Energy (kWh)", "Completed");
+            System.out.println("---------------------------------------------------------------------------------------------");
+
+            for (ExperimentResult result : results) {
+                if (result.error != null) {
+                    System.out.printf("%-4d %-35s %-10s %-15s %-15s %-10s%n",
+                        result.experimentNumber,
+                        truncate(result.configFileName, 35),
+                        "N/A",
+                        "FAILED",
+                        "FAILED",
+                        "FAILED");
+                } else {
+                    System.out.printf("%-4d %-35s %-10d %-15d %-15.6f %d/%d%n",
+                        result.experimentNumber,
+                        truncate(result.configFileName, 35),
+                        result.seed,
+                        result.makespan,
+                        result.totalEnergyKWh,
+                        result.tasksCompleted,
+                        result.totalTasks);
+                }
+            }
+            System.out.println("---------------------------------------------------------------------------------------------");
+        }
+
+        // Summary statistics
         int successCount = 0;
         int failedCount = 0;
         long totalMakespan = 0;
@@ -1098,23 +1137,8 @@ public class FlexibleExperimentMain {
 
         for (ExperimentResult result : results) {
             if (result.error != null) {
-                System.out.printf("%-4d %-35s %-10s %-15s %-15s %-10s%n",
-                    result.experimentNumber,
-                    truncate(result.configFileName, 35),
-                    "N/A",
-                    "FAILED",
-                    "FAILED",
-                    "FAILED");
                 failedCount++;
             } else {
-                System.out.printf("%-4d %-35s %-10d %-15d %-15.6f %d/%d%n",
-                    result.experimentNumber,
-                    truncate(result.configFileName, 35),
-                    result.seed,
-                    result.makespan,
-                    result.totalEnergyKWh,
-                    result.tasksCompleted,
-                    result.totalTasks);
                 successCount++;
                 totalMakespan += result.makespan;
                 totalEnergy += result.totalEnergyKWh;
@@ -1124,7 +1148,6 @@ public class FlexibleExperimentMain {
             }
         }
 
-        System.out.println("---------------------------------------------------------------------------------------------");
         System.out.println();
         System.out.println("Summary Statistics:");
         System.out.println("  Experiments Succeeded: " + successCount);
@@ -1142,6 +1165,65 @@ public class FlexibleExperimentMain {
         System.out.println();
         System.out.println("Reports saved to: " + REPORTS_DIRECTORY + "/");
         System.out.println("========================================================");
+    }
+
+    /**
+     * Prints all Pareto fronts for MOEA strategies in the final summary.
+     */
+    private static void printAllParetoFronts(List<ExperimentResult> results) {
+        for (ExperimentResult result : results) {
+            System.out.println();
+            System.out.println("------------------------------------------------------------");
+            System.out.println("  Experiment " + result.experimentNumber + ": " + result.configFileName);
+            System.out.println("  Seed: " + result.seed + " | Tasks Completed: " +
+                result.tasksCompleted + "/" + result.totalTasks);
+            System.out.println("------------------------------------------------------------");
+
+            if (result.error != null) {
+                System.out.println("  Status: FAILED - " + result.error.getMessage());
+                continue;
+            }
+
+            if (result.paretoFront == null || result.paretoFront.isEmpty()) {
+                System.out.println("  No Pareto front available");
+                continue;
+            }
+
+            ParetoFront front = result.paretoFront;
+            System.out.println();
+            System.out.printf("  %-6s %-20s %-20s%n", "#", "Makespan (s)", "Energy (kWh)");
+            System.out.println("  " + "-".repeat(50));
+
+            List<SchedulingSolution> solutions = front.getSolutions();
+            for (int i = 0; i < solutions.size(); i++) {
+                SchedulingSolution sol = solutions.get(i);
+                double[] objectives = sol.getObjectiveValues();
+                if (objectives != null && objectives.length >= 2) {
+                    System.out.printf("  %-6d %-20.2f %-20.6f%n", (i + 1), objectives[0], objectives[1]);
+                }
+            }
+
+            System.out.println("  " + "-".repeat(50));
+            System.out.println("  Total: " + front.size() + " non-dominated solutions");
+
+            // Show special points
+            SchedulingSolution bestMakespan = front.getBestForObjective(0);
+            SchedulingSolution bestEnergy = front.getBestForObjective(1);
+            SchedulingSolution kneePoint = front.getKneePoint();
+
+            if (bestMakespan != null && bestMakespan.getObjectiveValues() != null) {
+                System.out.printf("  Best Makespan:  %.2f s, %.6f kWh%n",
+                    bestMakespan.getObjectiveValues()[0], bestMakespan.getObjectiveValues()[1]);
+            }
+            if (bestEnergy != null && bestEnergy.getObjectiveValues() != null) {
+                System.out.printf("  Best Energy:    %.2f s, %.6f kWh%n",
+                    bestEnergy.getObjectiveValues()[0], bestEnergy.getObjectiveValues()[1]);
+            }
+            if (kneePoint != null && kneePoint.getObjectiveValues() != null) {
+                System.out.printf("  Knee Point:     %.2f s, %.6f kWh (selected)%n",
+                    kneePoint.getObjectiveValues()[0], kneePoint.getObjectiveValues()[1]);
+            }
+        }
     }
 
     private static String truncate(String str, int maxLength) {
@@ -1165,11 +1247,12 @@ public class FlexibleExperimentMain {
         final int totalTasks;
         final long durationMs;
         final Exception error;
+        final ParetoFront paretoFront;  // For MOEA strategies
 
         ExperimentResult(String configFileName, int experimentNumber, long seed,
                          long makespan, double totalEnergyKWh,
                          int tasksCompleted, int tasksFailed, int totalTasks,
-                         long durationMs) {
+                         long durationMs, ParetoFront paretoFront) {
             this.configFileName = configFileName;
             this.experimentNumber = experimentNumber;
             this.seed = seed;
@@ -1180,6 +1263,7 @@ public class FlexibleExperimentMain {
             this.totalTasks = totalTasks;
             this.durationMs = durationMs;
             this.error = null;
+            this.paretoFront = paretoFront;
         }
 
         ExperimentResult(String configFileName, int experimentNumber, Exception error) {
@@ -1193,6 +1277,7 @@ public class FlexibleExperimentMain {
             this.totalTasks = 0;
             this.durationMs = 0;
             this.error = error;
+            this.paretoFront = null;
         }
     }
 }
