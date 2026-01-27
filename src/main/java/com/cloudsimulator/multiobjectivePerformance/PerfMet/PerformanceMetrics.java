@@ -1,8 +1,11 @@
-package PerfMet;
+package com.cloudsimulator.multiobjectivePerformance.PerfMet;
 
 import java.util.ArrayList;
 
 /**
+ * Performance metrics calculator for multi-objective optimization.
+ * Calculates HV (Hypervolume), GD (Generational Distance), IGD (Inverted Generational Distance),
+ * C-Metric, and Spacing for Pareto fronts.
  *
  * @author kazim.erdogdu
  */
@@ -12,13 +15,50 @@ public class PerformanceMetrics {
     ArrayList<ArrayList<ArrayList<Double>>> allParetos;
     ArrayList<ArrayList<ArrayList<Double>>> normalizedParetos;
 
+    /**
+     * Index of the reference (true) Pareto front in allParetos.
+     * Used for IGD and GD calculations.
+     * Default is 2 (third Pareto front) for backward compatibility.
+     */
+    private int referenceParetoIndex = 2;
+
+    /**
+     * Constructor with default reference Pareto index (2).
+     * @param allParetos List of Pareto fronts. Index 2 is used as reference by default.
+     */
     public PerformanceMetrics(ArrayList<ArrayList<ArrayList<Double>>> allParetos) {
+        this(allParetos, allParetos.size() - 1); // Use last index as reference by default
+    }
+
+    /**
+     * Constructor with configurable reference Pareto index.
+     * @param allParetos List of Pareto fronts
+     * @param referenceParetoIndex Index of the reference (true/universal) Pareto front
+     */
+    public PerformanceMetrics(ArrayList<ArrayList<ArrayList<Double>>> allParetos, int referenceParetoIndex) {
         for (int i = 0; i < allParetos.size(); i++) {
             allParetos.get(i).sort(new FitnessComparator());
         }
         this.allParetos = allParetos;
+        this.referenceParetoIndex = referenceParetoIndex;
         findMinMax();
         normalize();
+    }
+
+    /**
+     * Sets the reference Pareto index for IGD and GD calculations.
+     * @param index Index of the reference Pareto front
+     */
+    public void setReferenceParetoIndex(int index) {
+        this.referenceParetoIndex = index;
+    }
+
+    /**
+     * Gets the reference Pareto index.
+     * @return Index of the reference Pareto front
+     */
+    public int getReferenceParetoIndex() {
+        return referenceParetoIndex;
     }
 
     private void findMinMax() {
@@ -76,10 +116,21 @@ public class PerformanceMetrics {
         return Math.sqrt(Math.pow(x.get(0) - y.get(0), 2) + Math.pow(x.get(1) - y.get(1), 2));
     }
 
+    /**
+     * Calculates Inverted Generational Distance (IGD).
+     * IGD measures the average distance from each point in the reference Pareto
+     * to the nearest point in the approximation.
+     * Lower values indicate better convergence and diversity.
+     *
+     * @param paretoIndex Index of the approximation Pareto front
+     * @return IGD value (lower is better)
+     */
     public double IGD(int paretoIndex) {
         double distance = 0.0;
         ArrayList<ArrayList<Double>> pareto = normalizedParetos.get(paretoIndex);
-        for (ArrayList<Double> trueParetoSolution : normalizedParetos.get(2)) {
+        ArrayList<ArrayList<Double>> referencePareto = normalizedParetos.get(referenceParetoIndex);
+
+        for (ArrayList<Double> trueParetoSolution : referencePareto) {
             double minDistance = Double.MAX_VALUE;
             for (ArrayList<Double> paretoSolution : pareto) {
                 double d = euclid(trueParetoSolution, paretoSolution);
@@ -90,7 +141,36 @@ public class PerformanceMetrics {
             distance += minDistance;
         }
 
-        return (double) distance / normalizedParetos.get(2).size();
+        return distance / referencePareto.size();
+    }
+
+    /**
+     * Calculates Generational Distance (GD).
+     * GD measures the average distance from each point in the approximation
+     * to the nearest point in the reference Pareto.
+     * Lower values indicate better convergence.
+     *
+     * @param paretoIndex Index of the approximation Pareto front
+     * @return GD value (lower is better)
+     */
+    public double GD(int paretoIndex) {
+        double distance = 0.0;
+        ArrayList<ArrayList<Double>> pareto = normalizedParetos.get(paretoIndex);
+        ArrayList<ArrayList<Double>> referencePareto = normalizedParetos.get(referenceParetoIndex);
+
+        // For each point in the approximation, find min distance to reference
+        for (ArrayList<Double> paretoSolution : pareto) {
+            double minDistance = Double.MAX_VALUE;
+            for (ArrayList<Double> trueParetoSolution : referencePareto) {
+                double d = euclid(paretoSolution, trueParetoSolution);
+                if (d < minDistance) {
+                    minDistance = d;
+                }
+            }
+            distance += minDistance;
+        }
+
+        return distance / pareto.size();
     }
 
     public double C_Metric(int first, int second) {
