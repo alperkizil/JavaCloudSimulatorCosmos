@@ -967,12 +967,21 @@ public class FlexibleExperimentMain {
     }
 
     /**
-     * Checks if solution a dominates solution b.
-     * Uses strict dominance: a dominates b if a is better in BOTH objectives.
+     * Checks if solution a dominates solution b using standard Pareto dominance.
+     * a dominates b if: a is at least as good in ALL objectives AND strictly better in AT LEAST ONE.
+     * Both objectives are minimization (lower is better).
      */
     private static boolean dominates(double[] a, double[] b) {
-        // Both objectives are minimization
-        return a[0] < b[0] && a[1] < b[1];
+        boolean atLeastOneBetter = false;
+        for (int i = 0; i < a.length; i++) {
+            if (a[i] > b[i]) {
+                return false;  // a is worse in at least one objective
+            }
+            if (a[i] < b[i]) {
+                atLeastOneBetter = true;
+            }
+        }
+        return atLeastOneBetter;
     }
 
     /**
