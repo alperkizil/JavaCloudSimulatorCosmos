@@ -419,6 +419,9 @@ public class FlexibleExperimentMain {
             configResult.universalParetoSet = computeUniversalPareto(configResult.algorithmResults);
             System.out.println("  Universal Pareto: " + configResult.universalParetoSet.size() + " non-dominated solutions");
 
+            // Calculate Pareto contributions for each algorithm
+            calculateParetoContributions(configResult);
+
             // Calculate performance metrics for each algorithm
             System.out.println();
             System.out.println("Calculating Performance Metrics...");
@@ -714,6 +717,30 @@ public class FlexibleExperimentMain {
         // Sort by first objective (makespan)
         universalPareto.sort((a, b) -> Double.compare(a[0], b[0]));
         return universalPareto;
+    }
+
+    /**
+     * Calculates how many solutions each algorithm contributed to the Universal Pareto.
+     * A solution is "contributed" if it appears in the Universal Pareto set.
+     */
+    private static void calculateParetoContributions(ConfigExperimentResults configResult) {
+        System.out.println("  Pareto contributions:");
+
+        for (AlgorithmAggregatedResult algoResult : configResult.algorithmResults.values()) {
+            int contribution = 0;
+
+            // Count how many of this algorithm's solutions are in the Universal Pareto
+            for (double[] sol : algoResult.allSolutions) {
+                if (isInUniversalPareto(sol, configResult.universalParetoSet)) {
+                    contribution++;
+                }
+            }
+
+            algoResult.paretoContribution = contribution;
+            System.out.println("    " + algoResult.algorithmName + ": " + contribution +
+                " / " + configResult.universalParetoSet.size() +
+                " (" + String.format("%.1f", 100.0 * contribution / configResult.universalParetoSet.size()) + "%)");
+        }
     }
 
     /**
@@ -1022,7 +1049,8 @@ public class FlexibleExperimentMain {
         try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
             // NonDomSolutions = solutions used for metrics calculation (filtered Pareto front)
             // TotalSolutions = all solutions across iterations (may include dominated)
-            writer.println("Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,IterationCount,AvgTimeMs,NonDominanceVerified");
+            // ParetoContribution = number of solutions contributed to Universal Pareto
+            writer.println("Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,IterationCount,AvgTimeMs,NonDominanceVerified");
 
             List<Integer> algoOrder = new ArrayList<>(configResult.algorithmResults.keySet());
             algoOrder.sort(Integer::compareTo);
@@ -1037,7 +1065,7 @@ public class FlexibleExperimentMain {
                 int ndCount = algoResult.nonDominatedSolutions != null ?
                     algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
 
-                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%b%n",
+                writer.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%b%n",
                     algoResult.algorithmName,
                     algoResult.hv,
                     algoResult.gd,
@@ -1045,15 +1073,16 @@ public class FlexibleExperimentMain {
                     algoResult.spacing,
                     ndCount,
                     algoResult.allSolutions.size(),
+                    algoResult.paretoContribution,
                     algoResult.runs.size(),
                     avgTime,
                     algoResult.nonDominanceVerified);
             }
 
             // Add Universal Pareto row
-            writer.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,%d,N/A,N/A,true%n",
+            writer.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,N/A,N/A,true%n",
                 configResult.universalHV, configResult.universalParetoSet.size(),
-                configResult.universalParetoSet.size());
+                configResult.universalParetoSet.size(), configResult.universalParetoSet.size());
 
         } catch (IOException e) {
             System.err.println("ERROR: Could not write performance_metrics.csv: " + e.getMessage());
@@ -1249,10 +1278,10 @@ public class FlexibleExperimentMain {
         System.out.println("============================================================");
         System.out.println();
 
-        // Header: ND_Sol = Non-Dominated Solutions (used for metrics)
-        System.out.printf("%-15s | %-8s | %-8s | %-8s | %-8s | %-8s | %-6s%n",
-            "Algorithm", "HV", "GD", "IGD", "Spacing", "ND_Sol", "Valid");
-        System.out.println("-".repeat(78));
+        // Header: ND_Sol = Non-Dominated Solutions, P_Cont = Pareto Contribution
+        System.out.printf("%-15s | %-7s | %-7s | %-7s | %-7s | %-6s | %-6s | %-5s%n",
+            "Algorithm", "HV", "GD", "IGD", "Spacing", "ND_Sol", "P_Cont", "Valid");
+        System.out.println("-".repeat(85));
 
         List<Integer> algoOrder = new ArrayList<>(result.algorithmResults.keySet());
         algoOrder.sort(Integer::compareTo);
@@ -1262,20 +1291,21 @@ public class FlexibleExperimentMain {
             // Show non-dominated count (what metrics are based on)
             int ndCount = algoResult.nonDominatedSolutions != null ?
                 algoResult.nonDominatedSolutions.size() : algoResult.allSolutions.size();
-            System.out.printf("%-15s | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8d | %-6s%n",
+            System.out.printf("%-15s | %-7.4f | %-7.4f | %-7.4f | %-7.4f | %-6d | %-6d | %-5s%n",
                 algoResult.algorithmName,
                 algoResult.hv,
                 algoResult.gd,
                 algoResult.igd,
                 algoResult.spacing,
                 ndCount,
+                algoResult.paretoContribution,
                 algoResult.nonDominanceVerified ? "PASS" : "FAIL");
         }
 
-        System.out.println("-".repeat(78));
-        System.out.printf("%-15s | %-8.4f | %-8s | %-8s | %-8s | %-8d | %-6s%n",
+        System.out.println("-".repeat(85));
+        System.out.printf("%-15s | %-7.4f | %-7s | %-7s | %-7s | %-6d | %-6d | %-5s%n",
             "Universal", result.universalHV, "0.0000", "0.0000", "-",
-            result.universalParetoSet.size(), "REF");
+            result.universalParetoSet.size(), result.universalParetoSet.size(), "REF");
         System.out.println();
     }
 
@@ -1492,6 +1522,7 @@ public class FlexibleExperimentMain {
         double igd;
         double spacing;
         boolean nonDominanceVerified;
+        int paretoContribution;  // Number of solutions contributed to Universal Pareto
 
         AlgorithmAggregatedResult(int algorithmId, String algorithmName) {
             this.algorithmId = algorithmId;
