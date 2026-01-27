@@ -90,9 +90,10 @@ import java.util.stream.Collectors;
  * QUICK START:
  * 1. Set ALGORITHMS array to select which algorithms to run
  * 2. Set MULTI_OBJECTIVE_MODE to true for Pareto analysis, false for single-objective comparison
- * 3. Set ITERATION_COUNT for statistical significance
- * 4. Adjust weights if using weighted-sum mode
- * 5. Run!
+ * 3. Set EXTREME_POINTS_MODE to true if you want GA/SA/LS to find extreme Pareto points
+ * 4. Set ITERATION_COUNT for statistical significance
+ * 5. Adjust weights if using weighted-sum mode (ignored when EXTREME_POINTS_MODE = true)
+ * 6. Run!
  *
  * ============================================================================
  * STRATEGY GUIDE:
@@ -133,6 +134,21 @@ import java.util.stream.Collectors;
  * When MULTI_OBJECTIVE_MODE = false:
  *   - Single-objective comparison (best/avg values)
  *   - No Pareto analysis (not applicable)
+ *
+ * ============================================================================
+ * EXTREME POINTS MODE (for single-objective algorithms 4-6):
+ * ============================================================================
+ *
+ * When EXTREME_POINTS_MODE = true (requires MULTI_OBJECTIVE_MODE = true):
+ *   - GA, SA, and LocalSearch run TWICE per iteration
+ *   - First run: weights (1.0, 0.0) to minimize makespan only
+ *   - Second run: weights (0.0, 1.0) to minimize energy only
+ *   - This captures the two extreme points of the Pareto front
+ *   - Produces 2 solutions per iteration instead of 1
+ *
+ * When EXTREME_POINTS_MODE = false:
+ *   - Single-objective algorithms use WEIGHT_MAKESPAN and WEIGHT_ENERGY
+ *   - Produces 1 weighted-sum solution per iteration
  *
  * ============================================================================
  */
@@ -178,6 +194,18 @@ public class FlexibleExperimentMain {
      *           Full Pareto analysis with HV, GD, IGD calculations
      */
     private static final boolean MULTI_OBJECTIVE_MODE = true;
+
+    /**
+     * Extreme Points Mode (only applies when MULTI_OBJECTIVE_MODE = true):
+     *   When enabled, single-objective algorithms (GA, SA, LocalSearch) run TWICE per iteration:
+     *     - First run: weights (1.0, 0.0) to minimize makespan only
+     *     - Second run: weights (0.0, 1.0) to minimize energy only
+     *   This captures the two extreme points of the Pareto front.
+     *
+     *   When disabled, single-objective algorithms use WEIGHT_MAKESPAN and WEIGHT_ENERGY
+     *   to produce a single weighted-sum solution per iteration.
+     */
+    private static final boolean EXTREME_POINTS_MODE = false;
 
     /**
      * Objective weights (used for weighted-sum or to select primary objective)
@@ -337,6 +365,10 @@ public class FlexibleExperimentMain {
         System.out.println("  Iteration Count: " + ITERATION_COUNT);
         System.out.println("  Seed Increment: " + SEED_INCREMENT);
         System.out.println("  Multi-objective Mode: " + MULTI_OBJECTIVE_MODE);
+        System.out.println("  Extreme Points Mode: " + EXTREME_POINTS_MODE);
+        if (EXTREME_POINTS_MODE && MULTI_OBJECTIVE_MODE) {
+            System.out.println("    -> Single-obj algorithms will run twice: (1.0,0.0) and (0.0,1.0)");
+        }
         System.out.println("  Weights: Makespan=" + WEIGHT_MAKESPAN + ", Energy=" + WEIGHT_ENERGY);
         System.out.println("  Max Experiments: " + MAX_EXPERIMENTS);
         System.out.println("  Verbose Logging: " + VERBOSE_LOGGING);
@@ -383,25 +415,60 @@ public class FlexibleExperimentMain {
             AlgorithmAggregatedResult algoResult = new AlgorithmAggregatedResult(
                 algoId, getStrategyName(algoId));
 
+            // Check if this algorithm should use extreme points mode
+            // Only applies to single-objective algorithms (4-6) in multi-objective mode
+            boolean useExtremePoints = MULTI_OBJECTIVE_MODE && EXTREME_POINTS_MODE &&
+                                       (algoId >= 4 && algoId <= 6);
+
             // Run iterations
             for (int iter = 1; iter <= ITERATION_COUNT; iter++) {
                 long seed = baseSeed + (iter - 1) * SEED_INCREMENT;
-                System.out.print("  Iteration " + iter + "/" + ITERATION_COUNT + " (seed=" + seed + ")... ");
 
-                try {
-                    AlgorithmRunResult runResult = runSingleAlgorithmIteration(
-                        configFile, algoId, iter, seed);
-                    algoResult.runs.add(runResult);
-                    algoResult.allSolutions.addAll(runResult.solutions);
+                if (useExtremePoints) {
+                    // EXTREME_POINTS_MODE: Run twice with different weights
+                    System.out.print("  Iteration " + iter + "/" + ITERATION_COUNT +
+                        " (seed=" + seed + ", extreme points)... ");
 
-                    String solCount = runResult.solutions.size() == 1 ? "1 solution" :
-                        runResult.solutions.size() + " solutions";
-                    System.out.println("done (" + runResult.executionTimeMs + "ms, " + solCount + ")");
+                    try {
+                        // Run 1: Makespan optimization (1.0, 0.0)
+                        AlgorithmRunResult makespanRun = runSingleAlgorithmIterationWithWeights(
+                            configFile, algoId, iter, seed, 1.0, 0.0);
+                        algoResult.runs.add(makespanRun);
+                        algoResult.allSolutions.addAll(makespanRun.solutions);
 
-                } catch (Exception e) {
-                    System.out.println("FAILED: " + e.getMessage());
-                    algoResult.runs.add(new AlgorithmRunResult(algoId, getStrategyName(algoId),
-                        iter, seed, e));
+                        // Run 2: Energy optimization (0.0, 1.0) - use seed+1 for diversity
+                        AlgorithmRunResult energyRun = runSingleAlgorithmIterationWithWeights(
+                            configFile, algoId, iter, seed + 1, 0.0, 1.0);
+                        algoResult.runs.add(energyRun);
+                        algoResult.allSolutions.addAll(energyRun.solutions);
+
+                        long totalTime = makespanRun.executionTimeMs + energyRun.executionTimeMs;
+                        System.out.println("done (" + totalTime + "ms, 2 extreme points)");
+
+                    } catch (Exception e) {
+                        System.out.println("FAILED: " + e.getMessage());
+                        algoResult.runs.add(new AlgorithmRunResult(algoId, getStrategyName(algoId),
+                            iter, seed, e));
+                    }
+                } else {
+                    // Normal mode: single run with configured weights
+                    System.out.print("  Iteration " + iter + "/" + ITERATION_COUNT + " (seed=" + seed + ")... ");
+
+                    try {
+                        AlgorithmRunResult runResult = runSingleAlgorithmIteration(
+                            configFile, algoId, iter, seed);
+                        algoResult.runs.add(runResult);
+                        algoResult.allSolutions.addAll(runResult.solutions);
+
+                        String solCount = runResult.solutions.size() == 1 ? "1 solution" :
+                            runResult.solutions.size() + " solutions";
+                        System.out.println("done (" + runResult.executionTimeMs + "ms, " + solCount + ")");
+
+                    } catch (Exception e) {
+                        System.out.println("FAILED: " + e.getMessage());
+                        algoResult.runs.add(new AlgorithmRunResult(algoId, getStrategyName(algoId),
+                            iter, seed, e));
+                    }
                 }
             }
 
@@ -494,6 +561,78 @@ public class FlexibleExperimentMain {
         List<double[]> solutions = extractSolutions(taskStrategy, taskExecutionStep, energyCalculationStep);
 
         // Verify non-dominance for this run
+        boolean nonDominated = verifyNonDominance(solutions);
+
+        return new AlgorithmRunResult(
+            algoId, getStrategyName(algoId), iteration, seed,
+            solutions, endTime - startTime, nonDominated);
+    }
+
+    /**
+     * Runs a single algorithm iteration with explicit weights.
+     * Used by EXTREME_POINTS_MODE to get extreme Pareto points.
+     *
+     * @param makespanWeight Weight for makespan objective (use 1.0 for makespan-only)
+     * @param energyWeight Weight for energy objective (use 1.0 for energy-only)
+     */
+    private static AlgorithmRunResult runSingleAlgorithmIterationWithWeights(
+            File configFile, int algoId, int iteration, long seed,
+            double makespanWeight, double energyWeight) throws Exception {
+
+        long startTime = System.currentTimeMillis();
+
+        // Parse configuration
+        FileConfigParser parser = new FileConfigParser();
+        ExperimentConfiguration config = parser.parse(configFile.getAbsolutePath());
+
+        // Initialize random generator with iteration seed
+        RandomGenerator.initialize(seed);
+
+        // Create simulation context
+        SimulationContext context = new SimulationContext();
+
+        // Create placement strategies
+        PowerAwareLoadBalancingHostPlacementStrategy hostStrategy =
+            new PowerAwareLoadBalancingHostPlacementStrategy();
+        BestFitVMPlacementStrategy vmStrategy = new BestFitVMPlacementStrategy();
+
+        // Execute simulation pipeline (Steps 1-4)
+        InitializationStep initStep = new InitializationStep(config);
+        initStep.execute(context);
+
+        HostPlacementStep hostPlacementStep = new HostPlacementStep(hostStrategy);
+        hostPlacementStep.execute(context);
+
+        UserDatacenterMappingStep userMappingStep = new UserDatacenterMappingStep();
+        userMappingStep.execute(context);
+
+        VMPlacementStep vmPlacementStep = new VMPlacementStep(vmStrategy);
+        vmPlacementStep.execute(context);
+
+        // Create task assignment strategy with explicit weights
+        TaskAssignmentStrategy taskStrategy = createStrategyWithWeights(
+            algoId, context.getHosts(), makespanWeight, energyWeight);
+
+        // Step 5: Task Assignment
+        TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(taskStrategy);
+        taskAssignmentStep.execute(context);
+
+        // Steps 6-8: Execution and Energy
+        VMExecutionStep vmExecutionStep = new VMExecutionStep();
+        vmExecutionStep.execute(context);
+
+        TaskExecutionStep taskExecutionStep = new TaskExecutionStep();
+        taskExecutionStep.execute(context);
+
+        EnergyCalculationStep energyCalculationStep = new EnergyCalculationStep();
+        energyCalculationStep.execute(context);
+
+        long endTime = System.currentTimeMillis();
+
+        // Extract solutions (single solution for weighted-sum methods)
+        List<double[]> solutions = extractSolutions(taskStrategy, taskExecutionStep, energyCalculationStep);
+
+        // Verify non-dominance for this run (trivially true for single solution)
         boolean nonDominated = verifyNonDominance(solutions);
 
         return new AlgorithmRunResult(
@@ -625,6 +764,90 @@ public class FlexibleExperimentMain {
         }
 
         return new LocalSearchTaskSchedulingStrategy(builder.build());
+    }
+
+    // =========================================================================
+    // OVERLOADED STRATEGY CREATORS FOR EXTREME POINTS MODE
+    // =========================================================================
+
+    /**
+     * Creates GA strategy with explicit weights (used by EXTREME_POINTS_MODE).
+     */
+    private static TaskAssignmentStrategy createGAStrategyWithWeights(List<Host> hosts,
+            double makespanWeight, double energyWeight) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .eliteCount(GA_ELITE_COUNT)
+            .tournamentSize(GA_TOURNAMENT_SIZE)
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .verboseLogging(VERBOSE_LOGGING);
+
+        MakespanObjective makespan = new MakespanObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        builder.addWeightedObjective(makespan, makespanWeight);
+        builder.addWeightedObjective(energy, energyWeight);
+
+        return new GenerationalGATaskSchedulingStrategy(builder.build());
+    }
+
+    /**
+     * Creates SA strategy with explicit weights (used by EXTREME_POINTS_MODE).
+     */
+    private static TaskAssignmentStrategy createSAStrategyWithWeights(List<Host> hosts,
+            double makespanWeight, double energyWeight) {
+        SAConfiguration.Builder builder = SAConfiguration.builder()
+            .initialTemperature(SA_INITIAL_TEMPERATURE)
+            .coolingSchedule(new GeometricCoolingSchedule(SA_COOLING_RATE))
+            .terminationCondition(new FitnessEvaluationsTermination(TOTAL_EVALUATIONS))
+            .verboseLogging(VERBOSE_LOGGING);
+
+        MakespanObjective makespan = new MakespanObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        builder.addWeightedObjective(makespan, makespanWeight);
+        builder.addWeightedObjective(energy, energyWeight);
+
+        return new SimulatedAnnealingTaskSchedulingStrategy(builder.build());
+    }
+
+    /**
+     * Creates LocalSearch strategy with explicit weights (used by EXTREME_POINTS_MODE).
+     */
+    private static TaskAssignmentStrategy createLocalSearchStrategyWithWeights(List<Host> hosts,
+            double makespanWeight, double energyWeight) {
+        LocalSearchConfiguration.Builder builder = LocalSearchConfiguration.builder()
+            .neighborSelectionStrategy(new FirstImprovementStrategy())
+            .neighborhoodType(NeighborhoodGenerator.NeighborhoodType.COMBINED)
+            .maxIterations(LS_MAX_ITERATIONS)
+            .maxIterationsWithoutImprovement(LS_MAX_NO_IMPROVEMENT)
+            .verboseLogging(VERBOSE_LOGGING);
+
+        MakespanObjective makespan = new MakespanObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        builder.addWeightedObjective(makespan, makespanWeight);
+        builder.addWeightedObjective(energy, energyWeight);
+
+        return new LocalSearchTaskSchedulingStrategy(builder.build());
+    }
+
+    /**
+     * Creates strategy for a given algorithm with explicit weights.
+     * Used by EXTREME_POINTS_MODE for running with (1.0, 0.0) and (0.0, 1.0).
+     */
+    private static TaskAssignmentStrategy createStrategyWithWeights(int algoId, List<Host> hosts,
+            double makespanWeight, double energyWeight) {
+        switch (algoId) {
+            case 4: return createGAStrategyWithWeights(hosts, makespanWeight, energyWeight);
+            case 5: return createSAStrategyWithWeights(hosts, makespanWeight, energyWeight);
+            case 6: return createLocalSearchStrategyWithWeights(hosts, makespanWeight, energyWeight);
+            default:
+                throw new IllegalArgumentException(
+                    "createStrategyWithWeights only supports algorithms 4-6, got: " + algoId);
+        }
     }
 
     private static TaskAssignmentStrategy createMOEA_NSGAIIStrategy(List<Host> hosts,
