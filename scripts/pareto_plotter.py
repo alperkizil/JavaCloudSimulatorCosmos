@@ -5,6 +5,12 @@ Pareto Front Plotter for JavaCloudSimulatorCosmos
 This script generates 2D Pareto front visualizations from CSV data
 produced by FlexibleExperimentMain.java.
 
+Features:
+    - Distinct colors for each algorithm
+    - Per-algorithm Pareto lines connecting non-dominated points
+    - All non-dominated points displayed for every algorithm
+    - Universal Pareto front overlay
+
 Usage:
     python pareto_plotter.py <reports_directory>
 
@@ -14,33 +20,86 @@ Example:
 
 Requirements:
     pip install matplotlib pandas
-
-Output:
-    Generates pareto_front.png in each config folder.
 """
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import sys
 import os
 from pathlib import Path
 
 # Algorithm colors and markers for consistent visualization
+# Each algorithm has a distinct color, marker, and size
 ALGORITHM_STYLES = {
-    'FirstAvailable':   {'color': '#1f77b4', 'marker': 'o', 'size': 60},
-    'ShortestQueue':    {'color': '#ff7f0e', 'marker': 's', 'size': 60},
-    'WorkloadAware':    {'color': '#2ca02c', 'marker': '^', 'size': 70},
-    'GA':               {'color': '#d62728', 'marker': 'v', 'size': 70},
-    'SA':               {'color': '#9467bd', 'marker': 'D', 'size': 60},
-    'LocalSearch':      {'color': '#8c564b', 'marker': 'P', 'size': 80},
-    'MOEA_NSGAII':      {'color': '#e377c2', 'marker': '*', 'size': 120},
-    'MOEA_SPEA2':       {'color': '#7f7f7f', 'marker': 'X', 'size': 80},
-    'Universal_Pareto': {'color': '#000000', 'marker': 'o', 'size': 100},
+    'FirstAvailable':   {'color': '#1f77b4', 'marker': 'o', 'size': 80},   # Blue
+    'ShortestQueue':    {'color': '#ff7f0e', 'marker': 's', 'size': 80},   # Orange
+    'WorkloadAware':    {'color': '#2ca02c', 'marker': '^', 'size': 90},   # Green
+    'GA':               {'color': '#d62728', 'marker': 'v', 'size': 90},   # Red
+    'SA':               {'color': '#9467bd', 'marker': 'D', 'size': 80},   # Purple
+    'LocalSearch':      {'color': '#8c564b', 'marker': 'P', 'size': 100},  # Brown
+    'MOEA_NSGAII':      {'color': '#e377c2', 'marker': '*', 'size': 150},  # Pink
+    'MOEA_SPEA2':       {'color': '#7f7f7f', 'marker': 'X', 'size': 100},  # Gray
+    'Universal_Pareto': {'color': '#000000', 'marker': 'o', 'size': 120},  # Black
 }
+
+
+def is_dominated(point, other_points):
+    """
+    Check if a point is dominated by any other point.
+    A point is dominated if another point is at least as good in all objectives
+    and strictly better in at least one.
+    Both objectives are minimization (lower is better).
+    """
+    for other in other_points:
+        if other[0] == point[0] and other[1] == point[1]:
+            continue  # Skip same point
+        # other dominates point if: other <= point in all and other < point in at least one
+        if other[0] <= point[0] and other[1] <= point[1]:
+            if other[0] < point[0] or other[1] < point[1]:
+                return True
+    return False
+
+
+def get_non_dominated(points):
+    """
+    Filter points to return only non-dominated solutions.
+    Returns points sorted by first objective (makespan).
+    """
+    if len(points) == 0:
+        return np.array([])
+
+    points = np.array(points)
+    non_dominated = []
+
+    for i, point in enumerate(points):
+        if not is_dominated(point, points):
+            # Check for duplicates
+            is_duplicate = False
+            for nd in non_dominated:
+                if abs(nd[0] - point[0]) < 1e-9 and abs(nd[1] - point[1]) < 1e-9:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                non_dominated.append(point)
+
+    if len(non_dominated) == 0:
+        return np.array([])
+
+    # Sort by first objective (makespan)
+    non_dominated = np.array(non_dominated)
+    sorted_indices = np.argsort(non_dominated[:, 0])
+    return non_dominated[sorted_indices]
+
 
 def plot_pareto_front(csv_path: str, output_path: str, show_legend: bool = True) -> None:
     """
     Generate Pareto front plot from CSV data.
+
+    Features:
+    - Each algorithm has distinct color and marker
+    - Each algorithm's non-dominated points are connected with a Pareto line
+    - Universal Pareto front is shown as a thick black line
 
     Args:
         csv_path: Path to pareto_graph_data.csv
@@ -49,65 +108,90 @@ def plot_pareto_front(csv_path: str, output_path: str, show_legend: bool = True)
     """
     df = pd.read_csv(csv_path)
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(14, 10))
 
     # Get unique algorithms (excluding Universal_Pareto for now)
     algorithms = [a for a in df['Algorithm'].unique() if a != 'Universal_Pareto']
 
-    # Plot each algorithm's solutions
+    # Plot each algorithm's solutions with their Pareto line
     for algo in algorithms:
         algo_data = df[df['Algorithm'] == algo]
-        style = ALGORITHM_STYLES.get(algo, {'color': 'gray', 'marker': 'o', 'size': 60})
+        style = ALGORITHM_STYLES.get(algo, {'color': 'gray', 'marker': 'o', 'size': 80})
 
-        ax.scatter(
-            algo_data['Makespan'],
-            algo_data['Energy'],
-            c=style['color'],
-            marker=style['marker'],
-            s=style['size'],
-            label=algo,
-            alpha=0.7,
-            edgecolors='black',
-            linewidths=0.5
-        )
+        # Get all points for this algorithm
+        points = algo_data[['Makespan', 'Energy']].values
 
-    # Plot Universal Pareto as connected line with highlighted points
+        # Get non-dominated points for this algorithm
+        non_dominated = get_non_dominated(points)
+
+        # Plot all non-dominated points
+        if len(non_dominated) > 0:
+            ax.scatter(
+                non_dominated[:, 0],
+                non_dominated[:, 1],
+                c=style['color'],
+                marker=style['marker'],
+                s=style['size'],
+                label=algo,
+                alpha=0.8,
+                edgecolors='black',
+                linewidths=0.5,
+                zorder=3
+            )
+
+            # Draw Pareto line connecting non-dominated points for this algorithm
+            if len(non_dominated) > 1:
+                ax.plot(
+                    non_dominated[:, 0],
+                    non_dominated[:, 1],
+                    color=style['color'],
+                    linewidth=1.5,
+                    alpha=0.6,
+                    linestyle='-',
+                    zorder=2
+                )
+
+    # Plot Universal Pareto as thick black connected line
     universal = df[df['Algorithm'] == 'Universal_Pareto'].sort_values('Makespan')
     if not universal.empty:
-        # Draw connecting line
+        # Draw thick connecting line
         ax.plot(
             universal['Makespan'],
             universal['Energy'],
             'k-',
-            linewidth=2,
-            alpha=0.8,
+            linewidth=3,
+            alpha=0.9,
             label='Universal Pareto',
             zorder=4
         )
-        # Draw points
+        # Draw prominent points
         ax.scatter(
             universal['Makespan'],
             universal['Energy'],
             c='black',
             marker='o',
-            s=100,
+            s=120,
             zorder=5,
             edgecolors='white',
             linewidths=2
         )
 
     # Formatting
-    ax.set_xlabel('Makespan (seconds)', fontsize=12)
-    ax.set_ylabel('Energy (kWh)', fontsize=12)
-    ax.set_title('Multi-Algorithm Pareto Front Comparison', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Makespan (seconds)', fontsize=14)
+    ax.set_ylabel('Energy (kWh)', fontsize=14)
+    ax.set_title('Multi-Algorithm Pareto Front Comparison', fontsize=16, fontweight='bold')
     ax.grid(True, alpha=0.3, linestyle='--')
+
+    # Improve tick label size
+    ax.tick_params(axis='both', which='major', labelsize=11)
 
     if show_legend:
         ax.legend(
             bbox_to_anchor=(1.05, 1),
             loc='upper left',
-            fontsize=10,
-            framealpha=0.9
+            fontsize=11,
+            framealpha=0.95,
+            edgecolor='black'
         )
 
     plt.tight_layout()
@@ -130,17 +214,19 @@ def plot_metrics_comparison(csv_path: str, output_path: str) -> None:
     # Filter out Universal_Pareto for comparison
     df = df[df['Algorithm'] != 'Universal_Pareto']
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6))
 
     metrics = ['HV', 'GD', 'IGD']
     titles = ['Hypervolume (higher is better)', 'GD (lower is better)', 'IGD (lower is better)']
-    colors = ['#2ecc71', '#e74c3c', '#3498db']
 
-    for ax, metric, title, color in zip(axes, metrics, titles, colors):
-        bars = ax.bar(df['Algorithm'], df[metric], color=color, alpha=0.7, edgecolor='black')
-        ax.set_title(title, fontsize=11, fontweight='bold')
-        ax.set_ylabel(metric)
-        ax.tick_params(axis='x', rotation=45)
+    for ax, metric, title in zip(axes, metrics, titles):
+        # Get colors from ALGORITHM_STYLES
+        colors = [ALGORITHM_STYLES.get(algo, {'color': 'gray'})['color'] for algo in df['Algorithm']]
+
+        bars = ax.bar(df['Algorithm'], df[metric], color=colors, alpha=0.8, edgecolor='black')
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.set_ylabel(metric, fontsize=11)
+        ax.tick_params(axis='x', rotation=45, labelsize=9)
 
         # Add value labels on bars
         for bar, val in zip(bars, df[metric]):
@@ -152,7 +238,8 @@ def plot_metrics_comparison(csv_path: str, output_path: str) -> None:
                 textcoords="offset points",
                 ha='center',
                 va='bottom',
-                fontsize=8
+                fontsize=8,
+                fontweight='bold'
             )
 
     plt.tight_layout()
