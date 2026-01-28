@@ -1,4 +1,4 @@
-"C:\Program Files\Java\jdk-21\bin\java.exe" "-javaagent:C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.6.1\lib\idea_rt.jar=63754" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -classpath C:\Users\Alper\IdeaProjects\JavaCloudSimulatorCosmos\target\classes;C:\Users\Alper\.m2\repository\org\openjfx\javafx-controls\21.0.1\javafx-controls-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-controls\21.0.1\javafx-controls-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-graphics\21.0.1\javafx-graphics-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-graphics\21.0.1\javafx-graphics-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-base\21.0.1\javafx-base-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-base\21.0.1\javafx-base-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-fxml\21.0.1\javafx-fxml-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-fxml\21.0.1\javafx-fxml-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\moeaframework\moeaframework\4.5\moeaframework-4.5.jar;C:\Users\Alper\.m2\repository\commons-cli\commons-cli\1.8.0\commons-cli-1.8.0.jar;C:\Users\Alper\.m2\repository\commons-io\commons-io\2.16.1\commons-io-2.16.1.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-text\1.12.0\commons-text-1.12.0.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-lang3\3.15.0\commons-lang3-3.15.0.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-math3\3.6.1\commons-math3-3.6.1.jar;C:\Users\Alper\.m2\repository\org\jfree\jcommon\1.0.24\jcommon-1.0.24.jar;C:\Users\Alper\.m2\repository\org\jfree\jfreechart\1.5.5\jfreechart-1.5.5.jar;C:\Users\Alper\.m2\repository\net\java\dev\jna\jna\5.14.0\jna-5.14.0.jar;C:\Users\Alper\.m2\repository\com\fifesoft\rsyntaxtextarea\3.5.1\rsyntaxtextarea-3.5.1.jar com.cloudsimulator.FlexibleExperimentMain
+"C:\Program Files\Java\jdk-21\bin\java.exe" "-javaagent:C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.6.1\lib\idea_rt.jar=63910" -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -classpath C:\Users\Alper\IdeaProjects\JavaCloudSimulatorCosmos\target\classes;C:\Users\Alper\.m2\repository\org\openjfx\javafx-controls\21.0.1\javafx-controls-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-controls\21.0.1\javafx-controls-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-graphics\21.0.1\javafx-graphics-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-graphics\21.0.1\javafx-graphics-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-base\21.0.1\javafx-base-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-base\21.0.1\javafx-base-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-fxml\21.0.1\javafx-fxml-21.0.1.jar;C:\Users\Alper\.m2\repository\org\openjfx\javafx-fxml\21.0.1\javafx-fxml-21.0.1-win.jar;C:\Users\Alper\.m2\repository\org\moeaframework\moeaframework\4.5\moeaframework-4.5.jar;C:\Users\Alper\.m2\repository\commons-cli\commons-cli\1.8.0\commons-cli-1.8.0.jar;C:\Users\Alper\.m2\repository\commons-io\commons-io\2.16.1\commons-io-2.16.1.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-text\1.12.0\commons-text-1.12.0.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-lang3\3.15.0\commons-lang3-3.15.0.jar;C:\Users\Alper\.m2\repository\org\apache\commons\commons-math3\3.6.1\commons-math3-3.6.1.jar;C:\Users\Alper\.m2\repository\org\jfree\jcommon\1.0.24\jcommon-1.0.24.jar;C:\Users\Alper\.m2\repository\org\jfree\jfreechart\1.5.5\jfreechart-1.5.5.jar;C:\Users\Alper\.m2\repository\net\java\dev\jna\jna\5.14.0\jna-5.14.0.jar;C:\Users\Alper\.m2\repository\com\fifesoft\rsyntaxtextarea\3.5.1\rsyntaxtextarea-3.5.1.jar com.cloudsimulator.FlexibleExperimentMain
 ========================================================
   Multi-Algorithm Experiment Runner
 ========================================================
@@ -48,14 +48,14 @@ Total runs: 10
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.90 kWh (6834040 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.85 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 87615.90 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 10642.06 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 308480.79 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.1960 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2848
 [INFO] EnergyCalculationStep:   Energy per Task: 5125.53 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.49e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.8983 kWh
-done (21306ms, 6 solutions)
+done (20999ms, 6 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 8/5: MOEA_SPEA2
@@ -85,14 +85,14 @@ done (21306ms, 6 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.92 kWh (6894439 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.87 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 91925.85 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9986.96 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 298067.92 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2065 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2873
 [INFO] EnergyCalculationStep:   Energy per Task: 5170.83 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.42e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9151 kWh
-done (21275ms, 9 solutions)
+done (21010ms, 9 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 9/5: MOEA_MOEAD
@@ -123,14 +123,14 @@ done (21275ms, 9 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.98 kWh (7124328 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.97 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 92523.74 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9023.85 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 322599.69 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2468 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2968
 [INFO] EnergyCalculationStep:   Energy per Task: 5343.25 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.14e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9790 kWh
-done (17572ms, 5 solutions)
+done (17385ms, 5 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 10/5: MOEA_OMOPSO
@@ -160,14 +160,14 @@ done (17572ms, 5 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.99 kWh (7159474 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.98 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 81357.66 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9764.35 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 321755.07 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2529 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2983
 [INFO] EnergyCalculationStep:   Energy per Task: 5369.61 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.10e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9887 kWh
-done (16797ms, 3 solutions)
+done (16740ms, 3 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 11/5: MOEA_AMOSA
@@ -197,14 +197,14 @@ done (16797ms, 3 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.92 kWh (6921191 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.88 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 93529.60 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9548.10 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 318783.34 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2112 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2884
 [INFO] EnergyCalculationStep:   Energy per Task: 5190.89 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.38e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9226 kWh
-done (19307ms, 7 solutions)
+done (19237ms, 7 solutions)
   Non-dominance verified: PASS
 
 Computing Universal Pareto Set...
@@ -266,14 +266,14 @@ Universal       | 0.8403  | 0.0000  | 0.0000  | -       | 11     | 11     | REF
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.99 kWh (7180182 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.99 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 99724.75 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9394.10 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 312394.27 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2565 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2992
 [INFO] EnergyCalculationStep:   Energy per Task: 5385.14 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.14e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9945 kWh
-done (19749ms, 11 solutions)
+done (19574ms, 11 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 8/5: MOEA_SPEA2
@@ -303,14 +303,14 @@ done (19749ms, 11 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.89 kWh (6798153 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.83 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 83927.81 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9678.96 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 312787.79 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.1897 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2833
 [INFO] EnergyCalculationStep:   Energy per Task: 5098.61 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.60e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.8884 kWh
-done (24676ms, 6 solutions)
+done (20703ms, 6 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 9/5: MOEA_MOEAD
@@ -341,14 +341,14 @@ done (24676ms, 6 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.99 kWh (7154527 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.98 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 91724.70 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9240.10 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 323652.49 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2520 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2981
 [INFO] EnergyCalculationStep:   Energy per Task: 5365.90 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.17e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9874 kWh
-done (19044ms, 6 solutions)
+done (17453ms, 6 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 10/5: MOEA_OMOPSO
@@ -378,14 +378,14 @@ done (19044ms, 6 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.97 kWh (7094999 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.96 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 79719.09 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 10387.78 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 320155.43 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2416 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2956
 [INFO] EnergyCalculationStep:   Energy per Task: 5321.25 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.24e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9708 kWh
-done (16672ms, 2 solutions)
+done (16282ms, 2 solutions)
   Non-dominance verified: PASS
 ------------------------------------------------------------
   Algorithm 11/5: MOEA_AMOSA
@@ -415,14 +415,14 @@ done (16672ms, 2 solutions)
 [INFO] EnergyCalculationStep:   IT Equipment Energy: 1.97 kWh (7097860 Joules)
 [INFO] EnergyCalculationStep:   Total Facility Energy (PUE=1.50): 2.96 kWh
 [INFO] EnergyCalculationStep:   Average Power Draw: 94638.14 W
-[INFO] EnergyCalculationStep:   Peak Power Draw: 9023.85 W
+[INFO] EnergyCalculationStep:   Peak Power Draw: 319275.68 W
 [INFO] EnergyCalculationStep:   Carbon Footprint (US_AVERAGE): 1.2421 kg CO2
 [INFO] EnergyCalculationStep:   Estimated Cost ($0.1000/kWh): $0.2957
 [INFO] EnergyCalculationStep:   Energy per Task: 5323.40 Joules
 [INFO] EnergyCalculationStep:   Energy Efficiency: 8.23e+06 IPS/Watt
 [INFO] EnergyCalculationStep:   Per-Datacenter Energy:
 [INFO] EnergyCalculationStep:     Istanbul: 1.9716 kWh
-done (18953ms, 8 solutions)
+done (19090ms, 8 solutions)
   Non-dominance verified: PASS
 
 Computing Universal Pareto Set...
