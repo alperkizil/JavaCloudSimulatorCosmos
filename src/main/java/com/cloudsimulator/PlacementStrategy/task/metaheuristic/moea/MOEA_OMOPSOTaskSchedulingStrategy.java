@@ -273,22 +273,29 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
         double actualMutationProb = mutationProbability > 0 ?
             mutationProbability : 1.0 / tasks.size();
 
+        // Calculate maxIterations for non-uniform mutation scaling
+        // This is critical for OMOPSO - without it, non-uniform mutation doesn't scale properly
+        int maxIterations = maxEvaluations / config.getPopulationSize();
+
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-OMOPSO] Starting optimization with Executor");
             System.out.println("[MOEA-OMOPSO] Algorithm: OMOPSO, Evaluations: " + maxEvaluations);
             System.out.println("[MOEA-OMOPSO] Swarm Size: " + config.getPopulationSize() +
                 ", Archive Size: " + archiveSize +
+                ", Max Iterations: " + maxIterations +
                 ", Mutation Prob: " + actualMutationProb +
                 ", Perturbation: " + perturbationIndex);
         }
 
         // Build and configure the Executor using OMOPSO algorithm
+        // Note: maxIterations is required for proper non-uniform mutation scaling
         Executor executor = new Executor()
             .withProblem(problem)
             .withAlgorithm("OMOPSO")
             .withMaxEvaluations(maxEvaluations)
             .withProperty("populationSize", config.getPopulationSize())
             .withProperty("archiveSize", archiveSize)
+            .withProperty("maxIterations", maxIterations)
             .withProperty("mutationProbability", actualMutationProb)
             .withProperty("perturbationIndex", perturbationIndex);
 
@@ -365,6 +372,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
         int maxEvaluations = calculateMaxEvaluations();
         double actualMutationProb = mutationProbability > 0 ?
             mutationProbability : 1.0 / tasks.size();
+        int maxIterations = maxEvaluations / config.getPopulationSize();
 
         // Configure Executor for multiple seeds
         Executor executor = new Executor()
@@ -373,6 +381,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
             .withMaxEvaluations(maxEvaluations)
             .withProperty("populationSize", config.getPopulationSize())
             .withProperty("archiveSize", archiveSize)
+            .withProperty("maxIterations", maxIterations)
             .withProperty("mutationProbability", actualMutationProb)
             .withProperty("perturbationIndex", perturbationIndex);
 
@@ -424,6 +433,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
         int maxEvaluations = calculateMaxEvaluations();
         double actualMutationProb = mutationProbability > 0 ?
             mutationProbability : 1.0 / tasks.size();
+        int maxIterations = maxEvaluations / config.getPopulationSize();
 
         // Run OMOPSO
         Executor omopsoExecutor = new Executor()
@@ -432,6 +442,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
             .withMaxEvaluations(maxEvaluations)
             .withProperty("populationSize", config.getPopulationSize())
             .withProperty("archiveSize", archiveSize)
+            .withProperty("maxIterations", maxIterations)
             .withProperty("mutationProbability", actualMutationProb)
             .withProperty("perturbationIndex", perturbationIndex);
 
@@ -492,6 +503,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
         int maxEvaluations = calculateMaxEvaluations();
         double actualMutationProb = mutationProbability > 0 ?
             mutationProbability : 1.0 / tasks.size();
+        int maxIterations = maxEvaluations / config.getPopulationSize();
 
         // Run OMOPSO
         Executor omopsoExecutor = new Executor()
@@ -500,6 +512,7 @@ public class MOEA_OMOPSOTaskSchedulingStrategy implements MultiObjectiveTaskSche
             .withMaxEvaluations(maxEvaluations)
             .withProperty("populationSize", config.getPopulationSize())
             .withProperty("archiveSize", archiveSize)
+            .withProperty("maxIterations", maxIterations)
             .withProperty("mutationProbability", actualMutationProb)
             .withProperty("perturbationIndex", perturbationIndex);
 
