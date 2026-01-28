@@ -209,8 +209,8 @@ public class EnergyCalculationStep implements SimulationStep {
             hostEnergyJoules.put(host.getId(), hostEnergy);
             totalITEnergyJoules += hostEnergy;
 
-            // Track peak power
-            double hostPeakPower = host.getCurrentTotalPowerDraw();
+            // Track peak power (maximum observed during simulation, not current)
+            double hostPeakPower = host.getPeakTotalPowerDraw();
             hostPeakPowerWatts.put(host.getId(), hostPeakPower);
             peakTotalPowerWatts += hostPeakPower;
 
@@ -246,9 +246,9 @@ public class EnergyCalculationStep implements SimulationStep {
             double dcEnergy = dc.getTotalEnergyConsumed();
             datacenterEnergyJoules.put(dc.getName(), dcEnergy);
 
-            // Calculate peak power for datacenter
+            // Calculate peak power for datacenter (sum of host peaks)
             double dcPeakPower = dc.getHosts().stream()
-                .mapToDouble(Host::getCurrentTotalPowerDraw)
+                .mapToDouble(Host::getPeakTotalPowerDraw)
                 .sum();
             datacenterPeakPowerWatts.put(dc.getName(), dcPeakPower);
         }
