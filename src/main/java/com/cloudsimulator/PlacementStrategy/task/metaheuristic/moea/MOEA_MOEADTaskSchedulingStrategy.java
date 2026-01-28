@@ -259,6 +259,8 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
         }
 
         // Build and configure the Executor using MOEA/D algorithm
+        // Note: MOEA/D-DE uses Differential Evolution operators by default, not SBX crossover.
+        // We only set polynomial mutation (pm) parameters here.
         Executor executor = new Executor()
             .withProblem(problem)
             .withAlgorithm("MOEAD")
@@ -267,8 +269,6 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("neighborhoodSize", neighborhoodSize)
             .withProperty("delta", delta)
             .withProperty("eta", eta)
-            .withProperty("sbx.rate", config.getCrossoverRate())
-            .withProperty("sbx.distributionIndex", 15.0)
             .withProperty("pm.rate", config.getMutationRate())
             .withProperty("pm.distributionIndex", 20.0);
 
@@ -345,6 +345,7 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
         int maxEvaluations = calculateMaxEvaluations();
 
         // Configure Executor for multiple seeds
+        // Note: MOEA/D-DE uses Differential Evolution operators, not SBX crossover
         Executor executor = new Executor()
             .withProblem(problem)
             .withAlgorithm("MOEAD")
@@ -353,7 +354,6 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("neighborhoodSize", neighborhoodSize)
             .withProperty("delta", delta)
             .withProperty("eta", eta)
-            .withProperty("sbx.rate", config.getCrossoverRate())
             .withProperty("pm.rate", config.getMutationRate());
 
         // Run multiple seeds
@@ -400,6 +400,7 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
         int maxEvaluations = calculateMaxEvaluations();
 
         // Run MOEA/D
+        // Note: MOEA/D-DE uses Differential Evolution operators, not SBX crossover
         Executor moeadExecutor = new Executor()
             .withProblem(problem)
             .withAlgorithm("MOEAD")
@@ -408,7 +409,6 @@ public class MOEA_MOEADTaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("neighborhoodSize", neighborhoodSize)
             .withProperty("delta", delta)
             .withProperty("eta", eta)
-            .withProperty("sbx.rate", config.getCrossoverRate())
             .withProperty("pm.rate", config.getMutationRate());
 
         // Run NSGA-II
