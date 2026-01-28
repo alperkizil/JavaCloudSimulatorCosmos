@@ -46,6 +46,9 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.localsearch.neigh
 // MOEA Framework strategies
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_SPEA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_MOEADTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_OMOPSOTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_AMOSATaskSchedulingStrategy;
 
 // Genetic operators (for MOEA custom variation)
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
@@ -116,6 +119,9 @@ import java.util.stream.Collectors;
  * MOEA FRAMEWORK (true multi-objective, returns Pareto front):
  *   7 = MOEA_NSGAII        - MOEA Framework NSGA-II (MULTI_OBJECTIVE_MODE only)
  *   8 = MOEA_SPEA2         - MOEA Framework SPEA2 (MULTI_OBJECTIVE_MODE only)
+ *   9 = MOEA_MOEAD         - MOEA Framework MOEA/D (MULTI_OBJECTIVE_MODE only)
+ *  10 = MOEA_OMOPSO        - MOEA Framework OMOPSO (MULTI_OBJECTIVE_MODE only)
+ *  11 = MOEA_AMOSA         - MOEA Framework AMOSA (MULTI_OBJECTIVE_MODE only)
  *
  * ============================================================================
  * MULTI-ALGORITHM MODE:
@@ -171,8 +177,11 @@ public class FlexibleExperimentMain {
      *   6 = Local Search (LS)
      *   7 = MOEA_NSGAII (multi-objective only)
      *   8 = MOEA_SPEA2 (multi-objective only)
+     *   9 = MOEA_MOEAD (multi-objective only)
+     *  10 = MOEA_OMOPSO (multi-objective only)
+     *  11 = MOEA_AMOSA (multi-objective only)
      */
-    private static final int[] ALGORITHMS = {1, 2, 3, 4, 5, 6, 7, 8};
+    private static final int[] ALGORITHMS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
     /**
      * Number of iterations per algorithm per config file.
@@ -337,17 +346,17 @@ public class FlexibleExperimentMain {
 
     /**
      * Validates and filters algorithms based on mode.
-     * MOEA strategies (7-8) require MULTI_OBJECTIVE_MODE = true.
+     * MOEA strategies (7-11) require MULTI_OBJECTIVE_MODE = true.
      */
     private static int[] validateAlgorithms() {
         List<Integer> valid = new ArrayList<>();
 
         for (int algo : ALGORITHMS) {
-            if (algo < 1 || algo > 8) {
+            if (algo < 1 || algo > 11) {
                 System.err.println("WARNING: Invalid algorithm ID " + algo + ", skipping.");
                 continue;
             }
-            if ((algo == 7 || algo == 8) && !MULTI_OBJECTIVE_MODE) {
+            if ((algo >= 7 && algo <= 11) && !MULTI_OBJECTIVE_MODE) {
                 System.err.println("WARNING: Algorithm " + algo + " (" + getStrategyName(algo) +
                     ") requires MULTI_OBJECTIVE_MODE=true, skipping.");
                 continue;
@@ -383,6 +392,9 @@ public class FlexibleExperimentMain {
             case 6: return "LocalSearch";
             case 7: return "MOEA_NSGAII";
             case 8: return "MOEA_SPEA2";
+            case 9: return "MOEA_MOEAD";
+            case 10: return "MOEA_OMOPSO";
+            case 11: return "MOEA_AMOSA";
             default: return "Unknown";
         }
     }
@@ -670,6 +682,36 @@ public class FlexibleExperimentMain {
                     }
                 }
             }
+        } else if (strategy instanceof MOEA_MOEADTaskSchedulingStrategy) {
+            ParetoFront front = ((MOEA_MOEADTaskSchedulingStrategy) strategy).getLastParetoFront();
+            if (front != null && !front.isEmpty()) {
+                for (SchedulingSolution sol : front.getSolutions()) {
+                    double[] objs = sol.getObjectiveValues();
+                    if (objs != null && objs.length >= 2) {
+                        solutions.add(new double[]{objs[0], objs[1]});
+                    }
+                }
+            }
+        } else if (strategy instanceof MOEA_OMOPSOTaskSchedulingStrategy) {
+            ParetoFront front = ((MOEA_OMOPSOTaskSchedulingStrategy) strategy).getLastParetoFront();
+            if (front != null && !front.isEmpty()) {
+                for (SchedulingSolution sol : front.getSolutions()) {
+                    double[] objs = sol.getObjectiveValues();
+                    if (objs != null && objs.length >= 2) {
+                        solutions.add(new double[]{objs[0], objs[1]});
+                    }
+                }
+            }
+        } else if (strategy instanceof MOEA_AMOSATaskSchedulingStrategy) {
+            ParetoFront front = ((MOEA_AMOSATaskSchedulingStrategy) strategy).getLastParetoFront();
+            if (front != null && !front.isEmpty()) {
+                for (SchedulingSolution sol : front.getSolutions()) {
+                    double[] objs = sol.getObjectiveValues();
+                    if (objs != null && objs.length >= 2) {
+                        solutions.add(new double[]{objs[0], objs[1]});
+                    }
+                }
+            }
         }
 
         // If no Pareto front (single-solution algorithms), use actual execution results
@@ -697,6 +739,9 @@ public class FlexibleExperimentMain {
             case 6: return createLocalSearchStrategy(hosts);
             case 7: return createMOEA_NSGAIIStrategy(hosts, tasks, vms);
             case 8: return createMOEA_SPEA2Strategy(hosts, tasks, vms);
+            case 9: return createMOEA_MOEADStrategy(hosts, tasks, vms);
+            case 10: return createMOEA_OMOPSOStrategy(hosts, tasks, vms);
+            case 11: return createMOEA_AMOSAStrategy(hosts, tasks, vms);
             default: return new FirstAvailableTaskAssignmentStrategy();
         }
     }
@@ -864,6 +909,33 @@ public class FlexibleExperimentMain {
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
         strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
+        return strategy;
+    }
+
+    private static TaskAssignmentStrategy createMOEA_MOEADStrategy(List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
+        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MOEA_MOEADTaskSchedulingStrategy strategy = new MOEA_MOEADTaskSchedulingStrategy(config);
+        strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        strategy.setSelectionMethod(MOEA_MOEADTaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
+        return strategy;
+    }
+
+    private static TaskAssignmentStrategy createMOEA_OMOPSOStrategy(List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
+        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MOEA_OMOPSOTaskSchedulingStrategy strategy = new MOEA_OMOPSOTaskSchedulingStrategy(config);
+        strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        strategy.setSelectionMethod(MOEA_OMOPSOTaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
+        return strategy;
+    }
+
+    private static TaskAssignmentStrategy createMOEA_AMOSAStrategy(List<Host> hosts,
+            List<Task> tasks, List<VM> vms) {
+        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
+        strategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
         return strategy;
     }
 
