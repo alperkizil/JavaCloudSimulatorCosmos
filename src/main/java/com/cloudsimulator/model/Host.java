@@ -37,6 +37,7 @@ public class Host {
 
     // Power consumption tracking
     private double currentTotalPowerDraw;    // Watts
+    private double peakTotalPowerDraw;       // Watts - maximum observed during simulation
     private double currentCpuPowerDraw;      // Watts
     private double currentGpuPowerDraw;      // Watts
     private double otherComponentsPowerDraw; // Watts
@@ -89,6 +90,7 @@ public class Host {
         this.assignedVMs = new ArrayList<>();
 
         this.currentTotalPowerDraw = 0.0;
+        this.peakTotalPowerDraw = 0.0;
         this.currentCpuPowerDraw = 0.0;
         this.currentGpuPowerDraw = 0.0;
         this.otherComponentsPowerDraw = 0.0;
@@ -374,9 +376,14 @@ public class Host {
     /**
      * Updates energy consumption for this simulation second.
      * Energy = Power * Time (1 second)
+     * Also tracks peak power draw observed during simulation.
      */
     public void updateEnergyConsumption() {
         totalEnergyConsumedJoules += currentTotalPowerDraw;
+        // Track peak power
+        if (currentTotalPowerDraw > peakTotalPowerDraw) {
+            peakTotalPowerDraw = currentTotalPowerDraw;
+        }
     }
 
     /**
@@ -533,6 +540,14 @@ public class Host {
         this.currentTotalPowerDraw = currentTotalPowerDraw;
     }
 
+    /**
+     * Gets the peak (maximum) total power draw observed during simulation.
+     * This represents the highest instantaneous power consumption across all ticks.
+     */
+    public double getPeakTotalPowerDraw() {
+        return peakTotalPowerDraw;
+    }
+
     public double getCurrentCpuPowerDraw() {
         return currentCpuPowerDraw;
     }
@@ -641,6 +656,7 @@ public class Host {
 
         // Reset power tracking
         this.currentTotalPowerDraw = 0.0;
+        this.peakTotalPowerDraw = 0.0;
         this.currentCpuPowerDraw = 0.0;
         this.currentGpuPowerDraw = 0.0;
         this.otherComponentsPowerDraw = 0.0;
