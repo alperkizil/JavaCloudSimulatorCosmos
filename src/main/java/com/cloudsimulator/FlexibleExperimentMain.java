@@ -256,6 +256,34 @@ public class FlexibleExperimentMain {
     private static final int LS_MAX_NO_IMPROVEMENT = 200;
 
     // =========================================================================
+    // PLOT OPTIONS CONFIGURATION
+    // =========================================================================
+
+    /** DPI (dots per inch) for output images. Higher = better quality but larger files */
+    private static final int PLOT_DPI = 300;
+
+    /** Figure width in inches */
+    private static final int PLOT_WIDTH = 14;
+
+    /** Figure height in inches */
+    private static final int PLOT_HEIGHT = 10;
+
+    /** Base marker size for algorithm points */
+    private static final int PLOT_MARKER_SIZE = 10;
+
+    /** Marker shape: circle, square, triangle, diamond, star */
+    private static final String PLOT_MARKER_SHAPE = "circle";
+
+    /** Whether to show legend on plots */
+    private static final boolean PLOT_SHOW_LEGEND = true;
+
+    /** Whether to show labels on individual points */
+    private static final boolean PLOT_SHOW_LABELS = false;
+
+    /** XMode: Only show single-objective points if they are in Universal Pareto */
+    private static final boolean PLOT_XMODE = false;
+
+    // =========================================================================
     // DIRECTORY CONFIGURATION
     // =========================================================================
 
@@ -1251,6 +1279,9 @@ public class FlexibleExperimentMain {
         // Generate performance metrics CSV
         generatePerformanceMetricsCSV(outputDir, configResult);
 
+        // Generate plot options JSON for Python plotter
+        generatePlotOptionsJSON(outputDir);
+
         System.out.println("  CSV outputs saved to: " + outputDir);
     }
 
@@ -1392,6 +1423,27 @@ public class FlexibleExperimentMain {
         }
     }
 
+    /**
+     * Generates plot_options.json with visualization configuration for the Python plotter.
+     */
+    private static void generatePlotOptionsJSON(Path outputDir) {
+        Path filePath = outputDir.resolve("plot_options.json");
+
+        try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
+            writer.println("{");
+            writer.println("  \"dpi\": " + PLOT_DPI + ",");
+            writer.println("  \"width\": " + PLOT_WIDTH + ",");
+            writer.println("  \"height\": " + PLOT_HEIGHT + ",");
+            writer.println("  \"marker_size\": " + PLOT_MARKER_SIZE + ",");
+            writer.println("  \"marker_shape\": \"" + PLOT_MARKER_SHAPE + "\",");
+            writer.println("  \"show_legend\": " + PLOT_SHOW_LEGEND + ",");
+            writer.println("  \"show_labels\": " + PLOT_SHOW_LABELS + ",");
+            writer.println("  \"xmode\": " + PLOT_XMODE);
+            writer.println("}");
+        } catch (IOException e) {
+            System.err.println("ERROR: Could not write plot_options.json: " + e.getMessage());
+        }
+    }
 
     /**
      * Executes the Python plotting script to generate Pareto front visualizations.
