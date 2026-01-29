@@ -1,7 +1,6 @@
 package com.cloudsimulator.multiobjectivePerformance.PerfMet;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 
 /**
