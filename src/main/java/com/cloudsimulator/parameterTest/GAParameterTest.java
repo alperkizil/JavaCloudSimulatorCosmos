@@ -325,7 +325,7 @@ public class GAParameterTest {
 
         // Set hosts for energy objective if multi-objective
         if (MULTI_OBJECTIVE) {
-            for (var obj : gaConfig.getWeightedObjectives().keySet()) {
+            for (var obj : gaConfig.getObjectiveWeights().keySet()) {
                 if (obj instanceof EnergyObjective) {
                     ((EnergyObjective) obj).setHosts(context.getHosts());
                 }

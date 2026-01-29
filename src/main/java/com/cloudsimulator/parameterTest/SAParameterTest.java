@@ -315,7 +315,7 @@ public class SAParameterTest {
 
         // Set hosts for energy objective if multi-objective
         if (MULTI_OBJECTIVE) {
-            for (var obj : saConfig.getWeightedObjectives().keySet()) {
+            for (var obj : saConfig.getObjectiveWeights().keySet()) {
                 if (obj instanceof EnergyObjective) {
                     ((EnergyObjective) obj).setHosts(context.getHosts());
                 }
