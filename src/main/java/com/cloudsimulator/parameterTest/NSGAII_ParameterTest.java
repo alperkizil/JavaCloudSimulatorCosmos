@@ -1,4 +1,4 @@
-package parameterTest;
+package com.cloudsimulator.parameterTest;
 
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.config.FileConfigParser;
@@ -22,10 +22,11 @@ import com.cloudsimulator.steps.EnergyCalculationStep;
 import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancingHostPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 
-// Metaheuristics - MOEA AMOSA
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_AMOSATaskSchedulingStrategy;
+// Metaheuristics - MOEA NSGA-II
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 
 // Objectives
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
@@ -46,35 +47,29 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Parameter Testing for MOEA Framework AMOSA
- * (Archived Multi-Objective Simulated Annealing)
+ * Parameter Testing for MOEA Framework NSGA-II
  *
- * Tests various AMOSA parameters on the same dataset to find optimal configurations.
+ * Tests various NSGA-II parameters on the same dataset to find optimal configurations.
  *
  * Fixed parameters (for fair comparison - 40,000 total fitness evaluations):
- *   - Population Size (Archive Limit): 200
+ *   - Population Size: 200
  *   - Generations: 200
  *   - Total Evaluations: 200 x 200 = 40,000
  *
  * Parameters tested:
- *   - Initial Temperature
- *   - Cooling Rate (Alpha)
+ *   - Crossover Rate
  *   - Mutation Rate
  *
- * AMOSA is a simulated annealing-based multi-objective optimization algorithm
- * that uses an archive to store non-dominated solutions. Key features:
- *   - Single-solution based search
- *   - Temperature-controlled acceptance of worse solutions
- *   - Archive for maintaining Pareto front
- *   - Clustering-based archive truncation
+ * This uses the MOEA Framework implementation which provides true multi-objective
+ * optimization with Pareto front output.
  *
  * Usage:
- *   Compile: javac -d target/classes parameterTest/AMOSA_ParameterTest.java
- *   Run:     java -cp target/classes parameterTest.AMOSA_ParameterTest
+ *   Compile: javac -d target/classes parameterTest/NSGAII_ParameterTest.java
+ *   Run:     java -cp target/classes parameterTest.NSGAII_ParameterTest
  *
  * Note: Requires MOEA Framework library on classpath.
  */
-public class AMOSA_ParameterTest {
+public class NSGAII_ParameterTest {
 
     // =========================================================================
     // CONFIGURATION - Modify these to test different parameters
@@ -84,7 +79,7 @@ public class AMOSA_ParameterTest {
     private static final String CONFIG_FILE = "configs/experiment1new/1_seed_123.cosc";
 
     /** Output directory for results */
-    private static final String OUTPUT_DIR = "reports/amosa_parameter_tests";
+    private static final String OUTPUT_DIR = "reports/nsgaii_parameter_tests";
 
     /** Number of iterations per parameter configuration for statistical significance */
     private static final int ITERATIONS_PER_CONFIG = 5;
@@ -95,7 +90,7 @@ public class AMOSA_ParameterTest {
     /** Enable verbose logging during optimization */
     private static final boolean VERBOSE_LOGGING = false;
 
-    /** Solution selection weights */
+    /** Solution selection method for choosing a single solution from Pareto front */
     private static final double WEIGHT_MAKESPAN = 0.7;
     private static final double WEIGHT_ENERGY = 0.3;
 
@@ -103,7 +98,7 @@ public class AMOSA_ParameterTest {
     // FIXED PARAMETERS (40,000 total fitness evaluations)
     // =========================================================================
 
-    /** Fixed population size (archive limit) */
+    /** Fixed population size */
     private static final int POPULATION_SIZE = 200;
 
     /** Fixed number of generations */
@@ -116,18 +111,14 @@ public class AMOSA_ParameterTest {
     // PARAMETER RANGES TO TEST
     // =========================================================================
 
-    /** Initial temperatures to test */
-    private static final double[] INITIAL_TEMPERATURES = {100.0, 500.0, 1000.0, 5000.0};
+    /** Crossover rates to test */
+    private static final double[] CROSSOVER_RATES = {0.6, 0.7, 0.8, 0.9, 0.95};
 
-    /** Cooling rates (alpha) to test */
-    private static final double[] COOLING_RATES = {0.80, 0.85, 0.90, 0.95, 0.99};
-
-    /** Mutation rates to test (affects neighbor generation) */
-    private static final double[] MUTATION_RATES = {0.05, 0.1, 0.15, 0.2, 0.3};
+    /** Mutation rates to test */
+    private static final double[] MUTATION_RATES = {0.01, 0.05, 0.1, 0.15, 0.2};
 
     // Default values when testing other parameters
-    private static final double DEFAULT_INITIAL_TEMPERATURE = 1000.0;
-    private static final double DEFAULT_COOLING_RATE = 0.95;
+    private static final double DEFAULT_CROSSOVER_RATE = 0.9;
     private static final double DEFAULT_MUTATION_RATE = 0.1;
 
     // =========================================================================
@@ -136,11 +127,8 @@ public class AMOSA_ParameterTest {
 
     public static void main(String[] args) {
         System.out.println("========================================================");
-        System.out.println("  MOEA AMOSA Parameter Testing");
+        System.out.println("  MOEA NSGA-II Parameter Testing");
         System.out.println("========================================================");
-        System.out.println();
-        System.out.println("Note: AMOSA is a simulated annealing-based multi-objective");
-        System.out.println("optimizer with archive for Pareto front maintenance.");
         System.out.println();
 
         // Validate config file exists
@@ -161,7 +149,7 @@ public class AMOSA_ParameterTest {
 
         // Print fixed parameters
         System.out.println("Fixed Parameters:");
-        System.out.println("  Population Size (Archive Limit): " + POPULATION_SIZE);
+        System.out.println("  Population Size: " + POPULATION_SIZE);
         System.out.println("  Generations: " + GENERATIONS);
         System.out.println("  Total Evaluations: " + TOTAL_EVALUATIONS);
         System.out.println();
@@ -169,11 +157,8 @@ public class AMOSA_ParameterTest {
         List<ParameterTestResult> allResults = new ArrayList<>();
 
         // Test each parameter category
-        System.out.println("Testing Initial Temperatures...");
-        allResults.addAll(testInitialTemperatures());
-
-        System.out.println("\nTesting Cooling Rates...");
-        allResults.addAll(testCoolingRates());
+        System.out.println("Testing Crossover Rates...");
+        allResults.addAll(testCrossoverRates());
 
         System.out.println("\nTesting Mutation Rates...");
         allResults.addAll(testMutationRates());
@@ -185,7 +170,7 @@ public class AMOSA_ParameterTest {
         printSummary(allResults);
 
         System.out.println("\n========================================================");
-        System.out.println("  MOEA AMOSA Parameter Testing Complete");
+        System.out.println("  MOEA NSGA-II Parameter Testing Complete");
         System.out.println("  Results saved to: " + OUTPUT_DIR);
         System.out.println("========================================================");
     }
@@ -194,25 +179,12 @@ public class AMOSA_ParameterTest {
     // PARAMETER TEST METHODS
     // =========================================================================
 
-    private static List<ParameterTestResult> testInitialTemperatures() {
+    private static List<ParameterTestResult> testCrossoverRates() {
         List<ParameterTestResult> results = new ArrayList<>();
-        for (double initTemp : INITIAL_TEMPERATURES) {
-            System.out.println("  Initial Temperature: " + initTemp);
-            NSGA2Configuration config = createConfig(DEFAULT_MUTATION_RATE);
-            ParameterTestResult result = runParameterTest("InitialTemperature", String.valueOf(initTemp), config,
-                initTemp, DEFAULT_COOLING_RATE);
-            results.add(result);
-        }
-        return results;
-    }
-
-    private static List<ParameterTestResult> testCoolingRates() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (double coolingRate : COOLING_RATES) {
-            System.out.println("  Cooling Rate: " + coolingRate);
-            NSGA2Configuration config = createConfig(DEFAULT_MUTATION_RATE);
-            ParameterTestResult result = runParameterTest("CoolingRate", String.valueOf(coolingRate), config,
-                DEFAULT_INITIAL_TEMPERATURE, coolingRate);
+        for (double crossoverRate : CROSSOVER_RATES) {
+            System.out.println("  Crossover Rate: " + crossoverRate);
+            NSGA2Configuration config = createConfig(crossoverRate, DEFAULT_MUTATION_RATE);
+            ParameterTestResult result = runParameterTest("CrossoverRate", String.valueOf(crossoverRate), config);
             results.add(result);
         }
         return results;
@@ -222,23 +194,23 @@ public class AMOSA_ParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double mutationRate : MUTATION_RATES) {
             System.out.println("  Mutation Rate: " + mutationRate);
-            NSGA2Configuration config = createConfig(mutationRate);
-            ParameterTestResult result = runParameterTest("MutationRate", String.valueOf(mutationRate), config,
-                DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE);
+            NSGA2Configuration config = createConfig(DEFAULT_CROSSOVER_RATE, mutationRate);
+            ParameterTestResult result = runParameterTest("MutationRate", String.valueOf(mutationRate), config);
             results.add(result);
         }
         return results;
     }
 
     // =========================================================================
-    // AMOSA CONFIGURATION BUILDER
+    // NSGA-II CONFIGURATION BUILDER
     // =========================================================================
 
-    private static NSGA2Configuration createConfig(double mutationRate) {
+    private static NSGA2Configuration createConfig(double crossoverRate, double mutationRate) {
+
         return NSGA2Configuration.builder()
-            .populationSize(POPULATION_SIZE)  // Fixed at 200 (archive soft limit)
-            .crossoverRate(0.9)               // Not used in AMOSA but kept for compatibility
-            .mutationRate(mutationRate)       // Affects neighbor generation
+            .populationSize(POPULATION_SIZE)  // Fixed at 200
+            .crossoverRate(crossoverRate)
+            .mutationRate(mutationRate)
             .addObjective(new MakespanObjective())
             .addObjective(new EnergyObjective())
             .terminationCondition(new GenerationCountTermination(GENERATIONS))  // Fixed at 200
@@ -251,7 +223,7 @@ public class AMOSA_ParameterTest {
     // =========================================================================
 
     private static ParameterTestResult runParameterTest(String parameterName, String parameterValue,
-            NSGA2Configuration amosaConfig, double initialTemperature, double coolingRate) {
+            NSGA2Configuration nsga2Config) {
 
         ParameterTestResult result = new ParameterTestResult(parameterName, parameterValue);
 
@@ -265,7 +237,7 @@ public class AMOSA_ParameterTest {
                 long seed = baseSeed + (iter - 1) * SEED_INCREMENT;
 
                 try {
-                    SingleRunResult runResult = runSingleIteration(amosaConfig, seed, initialTemperature, coolingRate);
+                    SingleRunResult runResult = runSingleIteration(nsga2Config, seed);
                     result.addRun(runResult);
                 } catch (Exception e) {
                     System.err.println("    Iteration " + iter + " failed: " + e.getMessage());
@@ -278,8 +250,7 @@ public class AMOSA_ParameterTest {
         return result;
     }
 
-    private static SingleRunResult runSingleIteration(NSGA2Configuration amosaConfig, long seed,
-            double initialTemperature, double coolingRate) throws Exception {
+    private static SingleRunResult runSingleIteration(NSGA2Configuration nsga2Config, long seed) throws Exception {
         long startTime = System.currentTimeMillis();
 
         // Parse configuration
@@ -311,24 +282,20 @@ public class AMOSA_ParameterTest {
         vmPlacementStep.execute(context);
 
         // Set hosts for energy objective
-        for (var obj : amosaConfig.getObjectives()) {
+        for (var obj : nsga2Config.getObjectives()) {
             if (obj instanceof EnergyObjective) {
                 ((EnergyObjective) obj).setHosts(context.getHosts());
             }
         }
 
-        // Create MOEA AMOSA strategy
-        MOEA_AMOSATaskSchedulingStrategy amosaStrategy =
-            new MOEA_AMOSATaskSchedulingStrategy(amosaConfig);
-        amosaStrategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
-        amosaStrategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
-
-        // Set AMOSA-specific parameters
-        amosaStrategy.setInitialTemperature(initialTemperature);
-        amosaStrategy.setAlpha(coolingRate);
+        // Create MOEA NSGA-II strategy
+        MOEA_NSGA2TaskSchedulingStrategy nsgaStrategy =
+            new MOEA_NSGA2TaskSchedulingStrategy(nsga2Config);
+        nsgaStrategy.setSelectionWeights(new double[]{WEIGHT_MAKESPAN, WEIGHT_ENERGY});
+        nsgaStrategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.WEIGHTED_SUM);
 
         // Step 5: Task Assignment
-        TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(amosaStrategy);
+        TaskAssignmentStep taskAssignmentStep = new TaskAssignmentStep(nsgaStrategy);
         taskAssignmentStep.execute(context);
 
         // Steps 6-8: Execution and Energy
@@ -347,8 +314,8 @@ public class AMOSA_ParameterTest {
         double makespan = taskExecutionStep.getMakespan();
         double energy = energyCalculationStep.getTotalITEnergyKWh();
 
-        // Get Pareto front size (archive size)
-        ParetoFront paretoFront = amosaStrategy.getLastParetoFront();
+        // Get Pareto front size
+        ParetoFront paretoFront = nsgaStrategy.getLastParetoFront();
         int paretoSize = paretoFront != null ? paretoFront.size() : 0;
 
         return new SingleRunResult(seed, makespan, energy, endTime - startTime, paretoSize);
@@ -359,11 +326,11 @@ public class AMOSA_ParameterTest {
     // =========================================================================
 
     private static void saveResultsToCSV(List<ParameterTestResult> results) {
-        Path filePath = Paths.get(OUTPUT_DIR, "amosa_parameter_results.csv");
+        Path filePath = Paths.get(OUTPUT_DIR, "nsgaii_parameter_results.csv");
 
         try (PrintWriter writer = new PrintWriter(new FileWriter(filePath.toFile()))) {
             writer.println("Parameter,Value,AvgMakespan,StdMakespan,MinMakespan,MaxMakespan," +
-                          "AvgEnergy,StdEnergy,MinEnergy,MaxEnergy,AvgArchiveSize,AvgTimeMs,Iterations");
+                          "AvgEnergy,StdEnergy,MinEnergy,MaxEnergy,AvgParetoSize,AvgTimeMs,Iterations");
 
             for (ParameterTestResult result : results) {
                 if (result.runs.isEmpty()) continue;
@@ -389,9 +356,9 @@ public class AMOSA_ParameterTest {
         }
 
         // Also save detailed per-run results
-        Path detailedPath = Paths.get(OUTPUT_DIR, "amosa_parameter_detailed.csv");
+        Path detailedPath = Paths.get(OUTPUT_DIR, "nsgaii_parameter_detailed.csv");
         try (PrintWriter writer = new PrintWriter(new FileWriter(detailedPath.toFile()))) {
-            writer.println("Parameter,Value,Seed,Makespan,Energy,ArchiveSize,TimeMs");
+            writer.println("Parameter,Value,Seed,Makespan,Energy,ParetoSize,TimeMs");
 
             for (ParameterTestResult result : results) {
                 for (SingleRunResult run : result.runs) {
@@ -424,7 +391,7 @@ public class AMOSA_ParameterTest {
                 if (bestForParam != null) {
                     double[] makespans = bestForParam.runs.stream().mapToDouble(r -> r.makespan).toArray();
                     double[] paretoSizes = bestForParam.runs.stream().mapToDouble(r -> r.paretoSize).toArray();
-                    System.out.printf("  %s: Best = %s (Avg Makespan: %.2f, Avg Archive Size: %.1f)%n",
+                    System.out.printf("  %s: Best = %s (Avg Makespan: %.2f, Avg Pareto Size: %.1f)%n",
                         currentParam, bestForParam.parameterValue, mean(makespans), mean(paretoSizes));
                 }
                 currentParam = result.parameterName;
@@ -444,7 +411,7 @@ public class AMOSA_ParameterTest {
         if (bestForParam != null) {
             double[] makespans = bestForParam.runs.stream().mapToDouble(r -> r.makespan).toArray();
             double[] paretoSizes = bestForParam.runs.stream().mapToDouble(r -> r.paretoSize).toArray();
-            System.out.printf("  %s: Best = %s (Avg Makespan: %.2f, Avg Archive Size: %.1f)%n",
+            System.out.printf("  %s: Best = %s (Avg Makespan: %.2f, Avg Pareto Size: %.1f)%n",
                 currentParam, bestForParam.parameterValue, mean(makespans), mean(paretoSizes));
         }
     }
