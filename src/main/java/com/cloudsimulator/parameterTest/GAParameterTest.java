@@ -1,4 +1,4 @@
-package parameterTest;
+package com.cloudsimulator.parameterTest;
 
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.config.FileConfigParser;
