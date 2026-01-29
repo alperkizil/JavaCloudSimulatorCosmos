@@ -3,7 +3,6 @@ package com.cloudsimulator.parameterTest;
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.config.FileConfigParser;
 import com.cloudsimulator.engine.SimulationContext;
-import com.cloudsimulator.model.Host;
 import com.cloudsimulator.utils.RandomGenerator;
 
 // Steps
@@ -19,7 +18,6 @@ import com.cloudsimulator.steps.EnergyCalculationStep;
 // Placement strategies
 import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancingHostPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
-import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 
 // Metaheuristics - SA
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
