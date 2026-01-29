@@ -3,9 +3,6 @@ package com.cloudsimulator.parameterTest;
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.config.FileConfigParser;
 import com.cloudsimulator.engine.SimulationContext;
-import com.cloudsimulator.model.Host;
-import com.cloudsimulator.model.Task;
-import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 
 // Steps
@@ -21,12 +18,10 @@ import com.cloudsimulator.steps.EnergyCalculationStep;
 // Placement strategies
 import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancingHostPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
-import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 
 // Metaheuristics - GA
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 
 // Objectives
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
@@ -330,7 +325,7 @@ public class GAParameterTest {
 
         // Set hosts for energy objective if multi-objective
         if (MULTI_OBJECTIVE) {
-            for (var obj : gaConfig.getWeightedObjectives().keySet()) {
+            for (var obj : gaConfig.getObjectiveWeights().keySet()) {
                 if (obj instanceof EnergyObjective) {
                     ((EnergyObjective) obj).setHosts(context.getHosts());
                 }
