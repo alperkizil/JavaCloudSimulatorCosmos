@@ -53,11 +53,14 @@ import java.util.List;
  * Parameter Testing for Simulated Annealing (SA)
  *
  * Tests various SA parameters on the same dataset to find optimal configurations.
+ *
+ * Fixed parameters (for fair comparison - 40,000 total fitness evaluations):
+ *   - Total Evaluations: 40,000
+ *
  * Parameters tested:
  *   - Initial Temperature
  *   - Cooling Rate (for Geometric Cooling)
  *   - Cooling Schedule Type (Geometric, Linear, Adaptive)
- *   - Total Evaluations
  *
  * Usage:
  *   Compile: javac -d target/classes parameterTest/SAParameterTest.java
@@ -90,6 +93,13 @@ public class SAParameterTest {
     private static final double WEIGHT_ENERGY = 0.3;
 
     // =========================================================================
+    // FIXED PARAMETERS (40,000 total fitness evaluations)
+    // =========================================================================
+
+    /** Fixed total number of fitness evaluations */
+    private static final int TOTAL_EVALUATIONS = 40000;
+
+    // =========================================================================
     // PARAMETER RANGES TO TEST
     // =========================================================================
 
@@ -99,16 +109,12 @@ public class SAParameterTest {
     /** Cooling rates to test (for Geometric Cooling) */
     private static final double[] COOLING_RATES = {0.80, 0.85, 0.90, 0.95, 0.99};
 
-    /** Total evaluations to test */
-    private static final int[] TOTAL_EVALUATIONS = {10000, 20000, 40000, 80000};
-
     /** Cooling schedule types to test: 0=Geometric, 1=Linear, 2=Adaptive */
     private static final int[] COOLING_SCHEDULE_TYPES = {0, 1, 2};
 
     // Default values when testing other parameters
     private static final double DEFAULT_INITIAL_TEMPERATURE = 1000.0;
     private static final double DEFAULT_COOLING_RATE = 0.95;
-    private static final int DEFAULT_TOTAL_EVALUATIONS = 40000;
 
     // =========================================================================
     // MAIN ENTRY POINT
@@ -136,6 +142,11 @@ public class SAParameterTest {
             System.exit(1);
         }
 
+        // Print fixed parameters
+        System.out.println("Fixed Parameters:");
+        System.out.println("  Total Evaluations: " + TOTAL_EVALUATIONS);
+        System.out.println();
+
         List<ParameterTestResult> allResults = new ArrayList<>();
 
         // Test each parameter category
@@ -144,9 +155,6 @@ public class SAParameterTest {
 
         System.out.println("\nTesting Cooling Rates (Geometric)...");
         allResults.addAll(testCoolingRates());
-
-        System.out.println("\nTesting Total Evaluations...");
-        allResults.addAll(testTotalEvaluations());
 
         System.out.println("\nTesting Cooling Schedule Types...");
         allResults.addAll(testCoolingScheduleTypes());
@@ -171,8 +179,7 @@ public class SAParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double initTemp : INITIAL_TEMPERATURES) {
             System.out.println("  Initial Temperature: " + initTemp);
-            SAConfiguration config = createConfig(initTemp, DEFAULT_COOLING_RATE,
-                DEFAULT_TOTAL_EVALUATIONS, new GeometricCoolingSchedule(DEFAULT_COOLING_RATE));
+            SAConfiguration config = createConfig(initTemp, new GeometricCoolingSchedule(DEFAULT_COOLING_RATE));
             ParameterTestResult result = runParameterTest("InitialTemperature", String.valueOf(initTemp), config);
             results.add(result);
         }
@@ -183,21 +190,8 @@ public class SAParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double coolingRate : COOLING_RATES) {
             System.out.println("  Cooling Rate: " + coolingRate);
-            SAConfiguration config = createConfig(DEFAULT_INITIAL_TEMPERATURE, coolingRate,
-                DEFAULT_TOTAL_EVALUATIONS, new GeometricCoolingSchedule(coolingRate));
+            SAConfiguration config = createConfig(DEFAULT_INITIAL_TEMPERATURE, new GeometricCoolingSchedule(coolingRate));
             ParameterTestResult result = runParameterTest("CoolingRate", String.valueOf(coolingRate), config);
-            results.add(result);
-        }
-        return results;
-    }
-
-    private static List<ParameterTestResult> testTotalEvaluations() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int evaluations : TOTAL_EVALUATIONS) {
-            System.out.println("  Total Evaluations: " + evaluations);
-            SAConfiguration config = createConfig(DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE,
-                evaluations, new GeometricCoolingSchedule(DEFAULT_COOLING_RATE));
-            ParameterTestResult result = runParameterTest("TotalEvaluations", String.valueOf(evaluations), config);
             results.add(result);
         }
         return results;
@@ -211,8 +205,7 @@ public class SAParameterTest {
             CoolingSchedule schedule = createCoolingSchedule(scheduleType);
             System.out.println("  Cooling Schedule: " + scheduleName);
 
-            SAConfiguration config = createConfig(DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE,
-                DEFAULT_TOTAL_EVALUATIONS, schedule);
+            SAConfiguration config = createConfig(DEFAULT_INITIAL_TEMPERATURE, schedule);
             ParameterTestResult result = runParameterTest("CoolingSchedule", scheduleName, config);
             results.add(result);
         }
@@ -241,13 +234,12 @@ public class SAParameterTest {
     // SA CONFIGURATION BUILDER
     // =========================================================================
 
-    private static SAConfiguration createConfig(double initialTemperature, double coolingRate,
-            int totalEvaluations, CoolingSchedule coolingSchedule) {
+    private static SAConfiguration createConfig(double initialTemperature, CoolingSchedule coolingSchedule) {
 
         SAConfiguration.Builder builder = SAConfiguration.builder()
             .initialTemperature(initialTemperature)
             .coolingSchedule(coolingSchedule)
-            .terminationCondition(new FitnessEvaluationsTermination(totalEvaluations))
+            .terminationCondition(new FitnessEvaluationsTermination(TOTAL_EVALUATIONS))  // Fixed at 40,000
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE) {

@@ -50,13 +50,17 @@ import java.util.List;
  * Parameter Testing for Standard Genetic Algorithm (GA)
  *
  * Tests various GA parameters on the same dataset to find optimal configurations.
+ *
+ * Fixed parameters (for fair comparison - 40,000 total fitness evaluations):
+ *   - Population Size: 200
+ *   - Generations: 200
+ *   - Total Evaluations: 200 x 200 = 40,000
+ *
  * Parameters tested:
- *   - Population Size
  *   - Crossover Rate
  *   - Mutation Rate
- *   - Elite Count / Elite Percentage
+ *   - Elite Percentage
  *   - Tournament Size
- *   - Number of Generations
  *
  * Usage:
  *   Compile: javac -d target/classes parameterTest/GAParameterTest.java
@@ -89,11 +93,21 @@ public class GAParameterTest {
     private static final double WEIGHT_ENERGY = 0.3;
 
     // =========================================================================
-    // PARAMETER RANGES TO TEST
+    // FIXED PARAMETERS (40,000 total fitness evaluations)
     // =========================================================================
 
-    /** Population sizes to test */
-    private static final int[] POPULATION_SIZES = {50, 100, 200, 300};
+    /** Fixed population size */
+    private static final int POPULATION_SIZE = 200;
+
+    /** Fixed number of generations */
+    private static final int GENERATIONS = 200;
+
+    /** Total fitness evaluations = POPULATION_SIZE x GENERATIONS = 40,000 */
+    private static final int TOTAL_EVALUATIONS = POPULATION_SIZE * GENERATIONS;
+
+    // =========================================================================
+    // PARAMETER RANGES TO TEST
+    // =========================================================================
 
     /** Crossover rates to test */
     private static final double[] CROSSOVER_RATES = {0.6, 0.7, 0.8, 0.9, 0.95};
@@ -107,16 +121,11 @@ public class GAParameterTest {
     /** Tournament sizes to test */
     private static final int[] TOURNAMENT_SIZES = {2, 3, 5, 7};
 
-    /** Number of generations to test */
-    private static final int[] GENERATION_COUNTS = {50, 100, 200, 300};
-
     // Default values when testing other parameters
-    private static final int DEFAULT_POPULATION_SIZE = 100;
     private static final double DEFAULT_CROSSOVER_RATE = 0.9;
     private static final double DEFAULT_MUTATION_RATE = 0.1;
     private static final double DEFAULT_ELITE_PERCENTAGE = 0.1;
     private static final int DEFAULT_TOURNAMENT_SIZE = 3;
-    private static final int DEFAULT_GENERATIONS = 100;
 
     // =========================================================================
     // MAIN ENTRY POINT
@@ -144,13 +153,17 @@ public class GAParameterTest {
             System.exit(1);
         }
 
+        // Print fixed parameters
+        System.out.println("Fixed Parameters:");
+        System.out.println("  Population Size: " + POPULATION_SIZE);
+        System.out.println("  Generations: " + GENERATIONS);
+        System.out.println("  Total Evaluations: " + TOTAL_EVALUATIONS);
+        System.out.println();
+
         List<ParameterTestResult> allResults = new ArrayList<>();
 
         // Test each parameter category
-        System.out.println("Testing Population Sizes...");
-        allResults.addAll(testPopulationSizes());
-
-        System.out.println("\nTesting Crossover Rates...");
+        System.out.println("Testing Crossover Rates...");
         allResults.addAll(testCrossoverRates());
 
         System.out.println("\nTesting Mutation Rates...");
@@ -161,9 +174,6 @@ public class GAParameterTest {
 
         System.out.println("\nTesting Tournament Sizes...");
         allResults.addAll(testTournamentSizes());
-
-        System.out.println("\nTesting Generation Counts...");
-        allResults.addAll(testGenerationCounts());
 
         // Save results to CSV
         saveResultsToCSV(allResults);
@@ -181,26 +191,12 @@ public class GAParameterTest {
     // PARAMETER TEST METHODS
     // =========================================================================
 
-    private static List<ParameterTestResult> testPopulationSizes() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int popSize : POPULATION_SIZES) {
-            System.out.println("  Population Size: " + popSize);
-            GAConfiguration config = createConfig(
-                popSize, DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
-                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE, DEFAULT_GENERATIONS);
-            ParameterTestResult result = runParameterTest("PopulationSize", String.valueOf(popSize), config);
-            results.add(result);
-        }
-        return results;
-    }
-
     private static List<ParameterTestResult> testCrossoverRates() {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double crossoverRate : CROSSOVER_RATES) {
             System.out.println("  Crossover Rate: " + crossoverRate);
-            GAConfiguration config = createConfig(
-                DEFAULT_POPULATION_SIZE, crossoverRate, DEFAULT_MUTATION_RATE,
-                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE, DEFAULT_GENERATIONS);
+            GAConfiguration config = createConfig(crossoverRate, DEFAULT_MUTATION_RATE,
+                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE);
             ParameterTestResult result = runParameterTest("CrossoverRate", String.valueOf(crossoverRate), config);
             results.add(result);
         }
@@ -211,9 +207,8 @@ public class GAParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double mutationRate : MUTATION_RATES) {
             System.out.println("  Mutation Rate: " + mutationRate);
-            GAConfiguration config = createConfig(
-                DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE, mutationRate,
-                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE, DEFAULT_GENERATIONS);
+            GAConfiguration config = createConfig(DEFAULT_CROSSOVER_RATE, mutationRate,
+                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE);
             ParameterTestResult result = runParameterTest("MutationRate", String.valueOf(mutationRate), config);
             results.add(result);
         }
@@ -224,9 +219,8 @@ public class GAParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double elitePct : ELITE_PERCENTAGES) {
             System.out.println("  Elite Percentage: " + elitePct);
-            GAConfiguration config = createConfig(
-                DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
-                elitePct, DEFAULT_TOURNAMENT_SIZE, DEFAULT_GENERATIONS);
+            GAConfiguration config = createConfig(DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
+                elitePct, DEFAULT_TOURNAMENT_SIZE);
             ParameterTestResult result = runParameterTest("ElitePercentage", String.valueOf(elitePct), config);
             results.add(result);
         }
@@ -237,23 +231,9 @@ public class GAParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (int tournamentSize : TOURNAMENT_SIZES) {
             System.out.println("  Tournament Size: " + tournamentSize);
-            GAConfiguration config = createConfig(
-                DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
-                DEFAULT_ELITE_PERCENTAGE, tournamentSize, DEFAULT_GENERATIONS);
+            GAConfiguration config = createConfig(DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
+                DEFAULT_ELITE_PERCENTAGE, tournamentSize);
             ParameterTestResult result = runParameterTest("TournamentSize", String.valueOf(tournamentSize), config);
-            results.add(result);
-        }
-        return results;
-    }
-
-    private static List<ParameterTestResult> testGenerationCounts() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int generations : GENERATION_COUNTS) {
-            System.out.println("  Generations: " + generations);
-            GAConfiguration config = createConfig(
-                DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE, DEFAULT_MUTATION_RATE,
-                DEFAULT_ELITE_PERCENTAGE, DEFAULT_TOURNAMENT_SIZE, generations);
-            ParameterTestResult result = runParameterTest("Generations", String.valueOf(generations), config);
             results.add(result);
         }
         return results;
@@ -263,16 +243,16 @@ public class GAParameterTest {
     // GA CONFIGURATION BUILDER
     // =========================================================================
 
-    private static GAConfiguration createConfig(int populationSize, double crossoverRate,
-            double mutationRate, double elitePercentage, int tournamentSize, int generations) {
+    private static GAConfiguration createConfig(double crossoverRate, double mutationRate,
+            double elitePercentage, int tournamentSize) {
 
         GAConfiguration.Builder builder = GAConfiguration.builder()
-            .populationSize(populationSize)
+            .populationSize(POPULATION_SIZE)  // Fixed at 200
             .crossoverRate(crossoverRate)
             .mutationRate(mutationRate)
             .elitePercentage(elitePercentage)
             .tournamentSize(tournamentSize)
-            .terminationCondition(new GenerationCountTermination(generations))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))  // Fixed at 200
             .verboseLogging(VERBOSE_LOGGING);
 
         if (MULTI_OBJECTIVE) {

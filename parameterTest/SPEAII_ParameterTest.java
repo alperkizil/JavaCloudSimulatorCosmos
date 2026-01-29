@@ -49,11 +49,15 @@ import java.util.List;
  * Parameter Testing for MOEA Framework SPEA2 (Strength Pareto Evolutionary Algorithm 2)
  *
  * Tests various SPEA2 parameters on the same dataset to find optimal configurations.
+ *
+ * Fixed parameters (for fair comparison - 40,000 total fitness evaluations):
+ *   - Population Size: 200
+ *   - Generations: 200
+ *   - Total Evaluations: 200 x 200 = 40,000
+ *
  * Parameters tested:
- *   - Population Size
  *   - Crossover Rate
  *   - Mutation Rate
- *   - Number of Generations
  *
  * SPEA2 is a multi-objective evolutionary algorithm that uses:
  * - Strength-based fitness assignment (fitness based on how many solutions it dominates)
@@ -92,11 +96,21 @@ public class SPEAII_ParameterTest {
     private static final double WEIGHT_ENERGY = 0.3;
 
     // =========================================================================
-    // PARAMETER RANGES TO TEST
+    // FIXED PARAMETERS (40,000 total fitness evaluations)
     // =========================================================================
 
-    /** Population sizes to test */
-    private static final int[] POPULATION_SIZES = {50, 100, 200, 300, 500};
+    /** Fixed population size */
+    private static final int POPULATION_SIZE = 200;
+
+    /** Fixed number of generations */
+    private static final int GENERATIONS = 200;
+
+    /** Total fitness evaluations = POPULATION_SIZE x GENERATIONS = 40,000 */
+    private static final int TOTAL_EVALUATIONS = POPULATION_SIZE * GENERATIONS;
+
+    // =========================================================================
+    // PARAMETER RANGES TO TEST
+    // =========================================================================
 
     /** Crossover rates to test */
     private static final double[] CROSSOVER_RATES = {0.6, 0.7, 0.8, 0.9, 0.95};
@@ -104,14 +118,9 @@ public class SPEAII_ParameterTest {
     /** Mutation rates to test */
     private static final double[] MUTATION_RATES = {0.01, 0.05, 0.1, 0.15, 0.2};
 
-    /** Number of generations to test */
-    private static final int[] GENERATION_COUNTS = {50, 100, 200, 300};
-
     // Default values when testing other parameters
-    private static final int DEFAULT_POPULATION_SIZE = 100;
     private static final double DEFAULT_CROSSOVER_RATE = 0.9;
     private static final double DEFAULT_MUTATION_RATE = 0.1;
-    private static final int DEFAULT_GENERATIONS = 100;
 
     // =========================================================================
     // MAIN ENTRY POINT
@@ -139,20 +148,21 @@ public class SPEAII_ParameterTest {
             System.exit(1);
         }
 
+        // Print fixed parameters
+        System.out.println("Fixed Parameters:");
+        System.out.println("  Population Size: " + POPULATION_SIZE);
+        System.out.println("  Generations: " + GENERATIONS);
+        System.out.println("  Total Evaluations: " + TOTAL_EVALUATIONS);
+        System.out.println();
+
         List<ParameterTestResult> allResults = new ArrayList<>();
 
         // Test each parameter category
-        System.out.println("Testing Population Sizes...");
-        allResults.addAll(testPopulationSizes());
-
-        System.out.println("\nTesting Crossover Rates...");
+        System.out.println("Testing Crossover Rates...");
         allResults.addAll(testCrossoverRates());
 
         System.out.println("\nTesting Mutation Rates...");
         allResults.addAll(testMutationRates());
-
-        System.out.println("\nTesting Generation Counts...");
-        allResults.addAll(testGenerationCounts());
 
         // Save results to CSV
         saveResultsToCSV(allResults);
@@ -170,24 +180,11 @@ public class SPEAII_ParameterTest {
     // PARAMETER TEST METHODS
     // =========================================================================
 
-    private static List<ParameterTestResult> testPopulationSizes() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int popSize : POPULATION_SIZES) {
-            System.out.println("  Population Size: " + popSize);
-            NSGA2Configuration config = createConfig(popSize, DEFAULT_CROSSOVER_RATE,
-                DEFAULT_MUTATION_RATE, DEFAULT_GENERATIONS);
-            ParameterTestResult result = runParameterTest("PopulationSize", String.valueOf(popSize), config);
-            results.add(result);
-        }
-        return results;
-    }
-
     private static List<ParameterTestResult> testCrossoverRates() {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double crossoverRate : CROSSOVER_RATES) {
             System.out.println("  Crossover Rate: " + crossoverRate);
-            NSGA2Configuration config = createConfig(DEFAULT_POPULATION_SIZE, crossoverRate,
-                DEFAULT_MUTATION_RATE, DEFAULT_GENERATIONS);
+            NSGA2Configuration config = createConfig(crossoverRate, DEFAULT_MUTATION_RATE);
             ParameterTestResult result = runParameterTest("CrossoverRate", String.valueOf(crossoverRate), config);
             results.add(result);
         }
@@ -198,21 +195,8 @@ public class SPEAII_ParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double mutationRate : MUTATION_RATES) {
             System.out.println("  Mutation Rate: " + mutationRate);
-            NSGA2Configuration config = createConfig(DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE,
-                mutationRate, DEFAULT_GENERATIONS);
+            NSGA2Configuration config = createConfig(DEFAULT_CROSSOVER_RATE, mutationRate);
             ParameterTestResult result = runParameterTest("MutationRate", String.valueOf(mutationRate), config);
-            results.add(result);
-        }
-        return results;
-    }
-
-    private static List<ParameterTestResult> testGenerationCounts() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int generations : GENERATION_COUNTS) {
-            System.out.println("  Generations: " + generations);
-            NSGA2Configuration config = createConfig(DEFAULT_POPULATION_SIZE, DEFAULT_CROSSOVER_RATE,
-                DEFAULT_MUTATION_RATE, generations);
-            ParameterTestResult result = runParameterTest("Generations", String.valueOf(generations), config);
             results.add(result);
         }
         return results;
@@ -222,16 +206,15 @@ public class SPEAII_ParameterTest {
     // SPEA2 CONFIGURATION BUILDER
     // =========================================================================
 
-    private static NSGA2Configuration createConfig(int populationSize, double crossoverRate,
-            double mutationRate, int generations) {
+    private static NSGA2Configuration createConfig(double crossoverRate, double mutationRate) {
 
         return NSGA2Configuration.builder()
-            .populationSize(populationSize)
+            .populationSize(POPULATION_SIZE)  // Fixed at 200
             .crossoverRate(crossoverRate)
             .mutationRate(mutationRate)
             .addObjective(new MakespanObjective())
             .addObjective(new EnergyObjective())
-            .terminationCondition(new GenerationCountTermination(generations))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))  // Fixed at 200
             .verboseLogging(VERBOSE_LOGGING)
             .build();
     }

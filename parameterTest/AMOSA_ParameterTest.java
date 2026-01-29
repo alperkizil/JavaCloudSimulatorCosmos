@@ -50,11 +50,16 @@ import java.util.List;
  * (Archived Multi-Objective Simulated Annealing)
  *
  * Tests various AMOSA parameters on the same dataset to find optimal configurations.
+ *
+ * Fixed parameters (for fair comparison - 40,000 total fitness evaluations):
+ *   - Population Size (Archive Limit): 200
+ *   - Generations: 200
+ *   - Total Evaluations: 200 x 200 = 40,000
+ *
  * Parameters tested:
- *   - Archive Soft Limit (population size used as archive limit)
  *   - Initial Temperature
  *   - Cooling Rate (Alpha)
- *   - Number of Generations (temperature steps)
+ *   - Mutation Rate
  *
  * AMOSA is a simulated annealing-based multi-objective optimization algorithm
  * that uses an archive to store non-dominated solutions. Key features:
@@ -95,11 +100,21 @@ public class AMOSA_ParameterTest {
     private static final double WEIGHT_ENERGY = 0.3;
 
     // =========================================================================
-    // PARAMETER RANGES TO TEST
+    // FIXED PARAMETERS (40,000 total fitness evaluations)
     // =========================================================================
 
-    /** Archive sizes (soft limit) to test - uses populationSize as proxy */
-    private static final int[] ARCHIVE_SIZES = {50, 100, 200, 300};
+    /** Fixed population size (archive limit) */
+    private static final int POPULATION_SIZE = 200;
+
+    /** Fixed number of generations */
+    private static final int GENERATIONS = 200;
+
+    /** Total fitness evaluations = POPULATION_SIZE x GENERATIONS = 40,000 */
+    private static final int TOTAL_EVALUATIONS = POPULATION_SIZE * GENERATIONS;
+
+    // =========================================================================
+    // PARAMETER RANGES TO TEST
+    // =========================================================================
 
     /** Initial temperatures to test */
     private static final double[] INITIAL_TEMPERATURES = {100.0, 500.0, 1000.0, 5000.0};
@@ -107,17 +122,12 @@ public class AMOSA_ParameterTest {
     /** Cooling rates (alpha) to test */
     private static final double[] COOLING_RATES = {0.80, 0.85, 0.90, 0.95, 0.99};
 
-    /** Number of generations (temperature steps) to test */
-    private static final int[] GENERATION_COUNTS = {50, 100, 200, 300};
-
     /** Mutation rates to test (affects neighbor generation) */
     private static final double[] MUTATION_RATES = {0.05, 0.1, 0.15, 0.2, 0.3};
 
     // Default values when testing other parameters
-    private static final int DEFAULT_ARCHIVE_SIZE = 100;
     private static final double DEFAULT_INITIAL_TEMPERATURE = 1000.0;
     private static final double DEFAULT_COOLING_RATE = 0.95;
-    private static final int DEFAULT_GENERATIONS = 100;
     private static final double DEFAULT_MUTATION_RATE = 0.1;
 
     // =========================================================================
@@ -149,20 +159,21 @@ public class AMOSA_ParameterTest {
             System.exit(1);
         }
 
+        // Print fixed parameters
+        System.out.println("Fixed Parameters:");
+        System.out.println("  Population Size (Archive Limit): " + POPULATION_SIZE);
+        System.out.println("  Generations: " + GENERATIONS);
+        System.out.println("  Total Evaluations: " + TOTAL_EVALUATIONS);
+        System.out.println();
+
         List<ParameterTestResult> allResults = new ArrayList<>();
 
         // Test each parameter category
-        System.out.println("Testing Archive Sizes...");
-        allResults.addAll(testArchiveSizes());
-
-        System.out.println("\nTesting Initial Temperatures...");
+        System.out.println("Testing Initial Temperatures...");
         allResults.addAll(testInitialTemperatures());
 
         System.out.println("\nTesting Cooling Rates...");
         allResults.addAll(testCoolingRates());
-
-        System.out.println("\nTesting Generation Counts...");
-        allResults.addAll(testGenerationCounts());
 
         System.out.println("\nTesting Mutation Rates...");
         allResults.addAll(testMutationRates());
@@ -183,23 +194,11 @@ public class AMOSA_ParameterTest {
     // PARAMETER TEST METHODS
     // =========================================================================
 
-    private static List<ParameterTestResult> testArchiveSizes() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int archiveSize : ARCHIVE_SIZES) {
-            System.out.println("  Archive Size: " + archiveSize);
-            NSGA2Configuration config = createConfig(archiveSize, DEFAULT_MUTATION_RATE, DEFAULT_GENERATIONS);
-            ParameterTestResult result = runParameterTest("ArchiveSize", String.valueOf(archiveSize), config,
-                DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE);
-            results.add(result);
-        }
-        return results;
-    }
-
     private static List<ParameterTestResult> testInitialTemperatures() {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double initTemp : INITIAL_TEMPERATURES) {
             System.out.println("  Initial Temperature: " + initTemp);
-            NSGA2Configuration config = createConfig(DEFAULT_ARCHIVE_SIZE, DEFAULT_MUTATION_RATE, DEFAULT_GENERATIONS);
+            NSGA2Configuration config = createConfig(DEFAULT_MUTATION_RATE);
             ParameterTestResult result = runParameterTest("InitialTemperature", String.valueOf(initTemp), config,
                 initTemp, DEFAULT_COOLING_RATE);
             results.add(result);
@@ -211,21 +210,9 @@ public class AMOSA_ParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double coolingRate : COOLING_RATES) {
             System.out.println("  Cooling Rate: " + coolingRate);
-            NSGA2Configuration config = createConfig(DEFAULT_ARCHIVE_SIZE, DEFAULT_MUTATION_RATE, DEFAULT_GENERATIONS);
+            NSGA2Configuration config = createConfig(DEFAULT_MUTATION_RATE);
             ParameterTestResult result = runParameterTest("CoolingRate", String.valueOf(coolingRate), config,
                 DEFAULT_INITIAL_TEMPERATURE, coolingRate);
-            results.add(result);
-        }
-        return results;
-    }
-
-    private static List<ParameterTestResult> testGenerationCounts() {
-        List<ParameterTestResult> results = new ArrayList<>();
-        for (int generations : GENERATION_COUNTS) {
-            System.out.println("  Generations: " + generations);
-            NSGA2Configuration config = createConfig(DEFAULT_ARCHIVE_SIZE, DEFAULT_MUTATION_RATE, generations);
-            ParameterTestResult result = runParameterTest("Generations", String.valueOf(generations), config,
-                DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE);
             results.add(result);
         }
         return results;
@@ -235,7 +222,7 @@ public class AMOSA_ParameterTest {
         List<ParameterTestResult> results = new ArrayList<>();
         for (double mutationRate : MUTATION_RATES) {
             System.out.println("  Mutation Rate: " + mutationRate);
-            NSGA2Configuration config = createConfig(DEFAULT_ARCHIVE_SIZE, mutationRate, DEFAULT_GENERATIONS);
+            NSGA2Configuration config = createConfig(mutationRate);
             ParameterTestResult result = runParameterTest("MutationRate", String.valueOf(mutationRate), config,
                 DEFAULT_INITIAL_TEMPERATURE, DEFAULT_COOLING_RATE);
             results.add(result);
@@ -247,14 +234,14 @@ public class AMOSA_ParameterTest {
     // AMOSA CONFIGURATION BUILDER
     // =========================================================================
 
-    private static NSGA2Configuration createConfig(int archiveSize, double mutationRate, int generations) {
+    private static NSGA2Configuration createConfig(double mutationRate) {
         return NSGA2Configuration.builder()
-            .populationSize(archiveSize)  // Used as archive soft limit in AMOSA
-            .crossoverRate(0.9)           // Not used in AMOSA but kept for compatibility
-            .mutationRate(mutationRate)   // Affects neighbor generation
+            .populationSize(POPULATION_SIZE)  // Fixed at 200 (archive soft limit)
+            .crossoverRate(0.9)               // Not used in AMOSA but kept for compatibility
+            .mutationRate(mutationRate)       // Affects neighbor generation
             .addObjective(new MakespanObjective())
             .addObjective(new EnergyObjective())
-            .terminationCondition(new GenerationCountTermination(generations))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))  // Fixed at 200
             .verboseLogging(VERBOSE_LOGGING)
             .build();
     }
