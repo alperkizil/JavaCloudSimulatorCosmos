@@ -368,7 +368,7 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("numberOfHillClimbingIterationsForRefinement", hillClimbingIterations)
             // Use polynomial mutation
             .withProperty("pm.rate", config.getMutationRate())
-            .withProperty("pm.distributionIndex", 20.0);
+            .withProperty("pm.distributionIndex", 5.0);
 
         // Optional: distribute evaluation across cores (limited benefit for AMOSA)
         if (useDistributedEvaluation) {

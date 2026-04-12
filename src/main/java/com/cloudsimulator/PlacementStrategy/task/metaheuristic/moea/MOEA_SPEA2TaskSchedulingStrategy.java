@@ -223,9 +223,9 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withMaxEvaluations(maxEvaluations)
             .withProperty("populationSize", config.getPopulationSize())
             .withProperty("sbx.rate", config.getCrossoverRate())
-            .withProperty("sbx.distributionIndex", 15.0)
+            .withProperty("sbx.distributionIndex", 5.0)
             .withProperty("pm.rate", config.getMutationRate())
-            .withProperty("pm.distributionIndex", 20.0);
+            .withProperty("pm.distributionIndex", 5.0);
 
         // Optional: distribute evaluation across cores
         if (useDistributedEvaluation) {

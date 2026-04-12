@@ -76,6 +76,15 @@ public class ScenarioComparisonExperimentRunner {
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
+    // AMOSA-specific parameters (validated by SA tuning: temp=1000, cool=0.95 were best)
+    private static final double AMOSA_INITIAL_TEMPERATURE = 1000.0;
+    private static final double AMOSA_ALPHA = 0.95;
+    private static final int AMOSA_HARD_LIMIT = 100;
+    private static final int AMOSA_SOFT_LIMIT = 100;
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 20;
+    private static final double AMOSA_GAMMA = 2.0;
+
     private static final String REPORTS_DIR = "reports/scenario_comparison";
 
     private static final String[] ALGORITHM_LABELS = {
@@ -406,11 +415,11 @@ public class ScenarioComparisonExperimentRunner {
         return new SimulatedAnnealingTaskSchedulingStrategy(config);
     }
 
-    private static NSGA2Configuration createMOEAConfiguration(List<Host> hosts) {
+    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        return NSGA2Configuration.builder()
+        NSGA2Configuration config = NSGA2Configuration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -420,26 +429,53 @@ public class ScenarioComparisonExperimentRunner {
             .randomSeed(RANDOM_SEED)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
-    }
-
-    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts) {
-        NSGA2Configuration config = createMOEAConfiguration(hosts);
         MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
     private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts) {
-        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MakespanObjective makespan = new MakespanObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration config = NSGA2Configuration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .addObjective(makespan)
+            .addObjective(energy)
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .randomSeed(RANDOM_SEED)
+            .verboseLogging(VERBOSE_LOGGING)
+            .build();
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
     private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts) {
-        NSGA2Configuration config = createMOEAConfiguration(hosts);
+        MakespanObjective makespan = new MakespanObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration config = NSGA2Configuration.builder()
+            .populationSize(AMOSA_SOFT_LIMIT)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .addObjective(makespan)
+            .addObjective(energy)
+            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .randomSeed(RANDOM_SEED)
+            .verboseLogging(VERBOSE_LOGGING)
+            .build();
         MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
         strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
+        strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
+        strategy.setAlpha(AMOSA_ALPHA);
+        strategy.setSoftLimit(AMOSA_SOFT_LIMIT);
+        strategy.setHardLimit(AMOSA_HARD_LIMIT);
+        strategy.setGamma(AMOSA_GAMMA);
+        strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
+        strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
         return strategy;
     }
 
