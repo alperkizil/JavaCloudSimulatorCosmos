@@ -67,7 +67,7 @@ public class ScenarioComparisonExperimentRunner {
     private static final int GENERATIONS = 200;
     private static final double CROSSOVER_RATE = 0.95;
     private static final double MUTATION_RATE = 0.05;
-    private static final int GA_ELITE_COUNT = 40;
+    private static final double GA_ELITE_PERCENTAGE = 0.20;  // 20% of population
     private static final int GA_TOURNAMENT_SIZE = 5;
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
     private static final double SA_COOLING_RATE = 0.90;
@@ -382,7 +382,7 @@ public class ScenarioComparisonExperimentRunner {
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
-            .eliteCount(GA_ELITE_COUNT)
+            .elitePercentage(GA_ELITE_PERCENTAGE)
             .tournamentSize(GA_TOURNAMENT_SIZE)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
