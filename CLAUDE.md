@@ -48,6 +48,18 @@ The core simulation framework compiles and works fine:
 - Reporters (`reporter/`)
 - All utility classes (`utils/`)
 
+### Large Files & Required Reading
+
+`README.md` exceeds the default read token limit. **At the start of every session, read `README.md` in chunks to understand the full project context:**
+
+```
+Read(file_path="README.md", offset=0, limit=100)
+Read(file_path="README.md", offset=100, limit=100)
+Read(file_path="README.md", offset=200, limit=100)
+```
+
+Continue reading until the entire file has been consumed. This is essential for understanding the simulation architecture, model classes, scheduling strategies, and configuration system before making any changes.
+
 ## Project Architecture
 
 - **Metaheuristics location:** `src/main/java/com/cloudsimulator/PlacementStrategy/task/metaheuristic/`
