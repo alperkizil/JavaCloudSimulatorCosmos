@@ -399,7 +399,7 @@ public class ScenarioComparisonExperimentRunner {
             .tournamentSize(GA_TOURNAMENT_SIZE)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
-            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .terminationCondition(new GenerationCountTermination(GENERATIONS - 1)) // -1: initial pop eval counts toward 40k budget
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         return new GenerationalGATaskSchedulingStrategy(config);
@@ -468,7 +468,7 @@ public class ScenarioComparisonExperimentRunner {
             .mutationRate(AMOSA_MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
-            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
             .randomSeed(RANDOM_SEED)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
