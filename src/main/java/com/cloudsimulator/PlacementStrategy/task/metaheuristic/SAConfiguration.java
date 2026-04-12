@@ -70,6 +70,9 @@ public class SAConfiguration {
     // Equilibrium parameters
     private final int iterationsPerTemperature;
 
+    // Multi-start restart
+    private final int numberOfRestarts;
+
     // Neighbor generation
     private final MutationOperator.MutationType neighborType;
 
@@ -95,6 +98,7 @@ public class SAConfiguration {
         this.temperatureSampleSize = builder.temperatureSampleSize;
         this.coolingSchedule = builder.coolingSchedule;
         this.iterationsPerTemperature = builder.iterationsPerTemperature;
+        this.numberOfRestarts = builder.numberOfRestarts;
         this.neighborType = builder.neighborType;
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
@@ -152,6 +156,10 @@ public class SAConfiguration {
 
     public int getIterationsPerTemperature() {
         return iterationsPerTemperature;
+    }
+
+    public int getNumberOfRestarts() {
+        return numberOfRestarts;
     }
 
     public MutationOperator.MutationType getNeighborType() {
@@ -248,6 +256,9 @@ public class SAConfiguration {
         sb.append(", Tmin=").append(finalTemperature);
         sb.append(", cooling=").append(coolingSchedule.getName());
         sb.append(", itersPerT=").append(iterationsPerTemperature);
+        if (numberOfRestarts > 1) {
+            sb.append(", restarts=").append(numberOfRestarts);
+        }
         sb.append(", neighbor=").append(neighborType);
         sb.append(", objectives=[");
         for (int i = 0; i < objectives.size(); i++) {
@@ -280,6 +291,9 @@ public class SAConfiguration {
 
         // Equilibrium default
         private int iterationsPerTemperature = 100;
+
+        // Multi-start default (1 = single run, no restarts)
+        private int numberOfRestarts = 1;
 
         // Neighbor generation default
         private MutationOperator.MutationType neighborType = MutationOperator.MutationType.COMBINED;
@@ -390,6 +404,23 @@ public class SAConfiguration {
                 throw new IllegalArgumentException("Iterations per temperature must be at least 1");
             }
             this.iterationsPerTemperature = iterations;
+            return this;
+        }
+
+        /**
+         * Sets the number of independent restarts (multi-start SA).
+         * The evaluation budget is divided equally among restarts.
+         * Each restart begins from a new random solution at full temperature.
+         * The global best across all restarts is returned.
+         *
+         * @param numberOfRestarts Number of restarts (must be at least 1)
+         * @return this builder
+         */
+        public Builder numberOfRestarts(int numberOfRestarts) {
+            if (numberOfRestarts < 1) {
+                throw new IllegalArgumentException("Number of restarts must be at least 1");
+            }
+            this.numberOfRestarts = numberOfRestarts;
             return this;
         }
 

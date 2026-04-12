@@ -131,120 +131,157 @@ public class SimulatedAnnealingAlgorithm {
         // Create algorithm statistics for termination condition
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
 
-        // Step 1: Generate initial solution (s = s0)
-        currentSolution = generateInitialSolution();
-        currentFitness = evaluateFitness(currentSolution);
-        statistics.incrementEvaluations();
+        int numberOfRestarts = config.getNumberOfRestarts();
 
-        // Keep track of best solution
-        bestSolution = currentSolution.copy();
-        bestFitness = currentFitness;
+        // Initialize global best (across all restarts)
+        bestSolution = null;
+        bestFitness = isMinimization() ? Double.MAX_VALUE : -Double.MAX_VALUE;
 
-        // Step 2: Initialize temperature (T = Tmax)
-        if (config.isAutoInitialTemperature()) {
-            temperature = calculateInitialTemperature();
-        } else {
-            temperature = config.getInitialTemperature();
-        }
+        // === Multi-start outer loop ===
+        for (int restart = 0; restart < numberOfRestarts; restart++) {
 
-        // Store initial temperature for statistics
-        algoStats.setInitialTemperature(temperature);
-        algoStats.setCurrentTemperature(temperature);
-
-        // Update termination condition if temperature-based
-        if (config.getTerminationCondition() instanceof TemperatureTermination) {
-            ((TemperatureTermination) config.getTerminationCondition()).setCurrentTemperature(temperature);
-        }
-
-        if (config.isVerboseLogging()) {
-            System.out.println("Initial temperature: " + temperature);
-            System.out.println("Initial fitness: " + currentFitness);
-            System.out.println();
-        }
-
-        // Step 3: Main SA loop
-        int temperatureStep = 0;
-        CoolingSchedule coolingSchedule = config.getCoolingSchedule();
-
-        while (!config.getTerminationCondition().shouldTerminate(algoStats)) {
-            temperatureStep++;
-
-            // Track acceptance statistics for this temperature step
-            int accepted = 0;
-            int rejected = 0;
-            int improving = 0;
-
-            // Inner loop: equilibrium at fixed temperature
-            for (int i = 0; i < config.getIterationsPerTemperature(); i++) {
-                // Generate random neighbor s'
-                SchedulingSolution neighbor = generateNeighbor(currentSolution);
-
-                // Evaluate neighbor
-                double neighborFitness = evaluateFitness(neighbor);
-                statistics.incrementEvaluations();
-
-                // Calculate ΔE = f(s') - f(s)
-                double deltaE = neighborFitness - currentFitness;
-
-                // Accept or reject
-                boolean accept = false;
-
-                if (deltaE <= 0) {
-                    // Better solution (for minimization) - always accept
-                    accept = true;
-                    improving++;
-                } else {
-                    // Worse solution - accept with probability e^(-ΔE/T)
-                    double probability = Math.exp(-deltaE / temperature);
-                    if (random.nextDouble() < probability) {
-                        accept = true;
-                    }
-                }
-
-                if (accept) {
-                    currentSolution = neighbor;
-                    currentFitness = neighborFitness;
-                    accepted++;
-
-                    // Update best if this is a new best
-                    if (isBetter(currentFitness, bestFitness)) {
-                        bestSolution = currentSolution.copy();
-                        bestFitness = currentFitness;
-                    }
-                } else {
-                    rejected++;
-                }
+            if (config.isVerboseLogging() && numberOfRestarts > 1) {
+                System.out.println("--- Restart " + (restart + 1) + " of " + numberOfRestarts + " ---");
             }
 
-            // Calculate acceptance rate for this temperature step
-            double acceptanceRate = (double) accepted / (accepted + rejected);
+            // Step 1: Generate initial solution (s = s0)
+            currentSolution = generateInitialSolution();
+            currentFitness = evaluateFitness(currentSolution);
+            statistics.incrementEvaluations();
 
-            // Update statistics
-            statistics.updateTemperatureStep(temperatureStep, temperature,
-                bestSolution, currentFitness, accepted, rejected, improving, isMinimization());
-
-            // Log progress
-            if (config.isVerboseLogging() && temperatureStep % config.getLogInterval() == 0) {
-                System.out.println(statistics.formatCurrentTemperatureStep());
+            // Update global best
+            if (bestSolution == null || isBetter(currentFitness, bestFitness)) {
+                bestSolution = currentSolution.copy();
+                bestFitness = currentFitness;
             }
 
-            // Temperature update: T = g(T)
-            if (coolingSchedule.isAdaptive()) {
-                temperature = coolingSchedule.updateTemperature(temperature, temperatureStep, acceptanceRate);
+            // Step 2: Initialize temperature (T = Tmax)
+            if (config.isAutoInitialTemperature()) {
+                temperature = calculateInitialTemperature();
             } else {
-                temperature = coolingSchedule.updateTemperature(temperature, temperatureStep);
+                temperature = config.getInitialTemperature();
             }
 
-            // Update algorithm statistics for termination check
-            algoStats.setCurrentGeneration(temperatureStep);
+            // Store initial temperature for statistics
+            algoStats.setInitialTemperature(temperature);
             algoStats.setCurrentTemperature(temperature);
-            algoStats.setTotalFitnessEvaluations(statistics.getTotalFitnessEvaluations());
-            algoStats.setElapsedTimeMillis(statistics.getElapsedTimeMillis());
-            algoStats.setBestObjectiveValues(new double[]{bestFitness});
 
             // Update termination condition if temperature-based
             if (config.getTerminationCondition() instanceof TemperatureTermination) {
                 ((TemperatureTermination) config.getTerminationCondition()).setCurrentTemperature(temperature);
+            }
+
+            if (config.isVerboseLogging()) {
+                System.out.println("Initial temperature: " + temperature);
+                System.out.println("Initial fitness: " + currentFitness);
+                System.out.println();
+            }
+
+            // Calculate the evaluation budget for this restart
+            long evalsAtRestartStart = statistics.getTotalFitnessEvaluations();
+            long remainingBudget = 0;
+            if (config.getTerminationCondition() instanceof
+                    com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination) {
+                com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination fet =
+                    (com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination)
+                        config.getTerminationCondition();
+                long totalBudget = fet.getMaxEvaluations();
+                remainingBudget = totalBudget - evalsAtRestartStart;
+            }
+            long evalsPerRestart = (numberOfRestarts > 1 && remainingBudget > 0)
+                ? remainingBudget / (numberOfRestarts - restart)
+                : Long.MAX_VALUE;
+
+            // Step 3: Main SA loop for this restart
+            int temperatureStep = 0;
+            CoolingSchedule coolingSchedule = config.getCoolingSchedule();
+
+            while (!config.getTerminationCondition().shouldTerminate(algoStats)) {
+                // Check per-restart budget
+                long evalsUsedThisRestart = statistics.getTotalFitnessEvaluations() - evalsAtRestartStart;
+                if (numberOfRestarts > 1 && evalsUsedThisRestart >= evalsPerRestart) {
+                    break; // Move to next restart
+                }
+
+                temperatureStep++;
+
+                // Track acceptance statistics for this temperature step
+                int accepted = 0;
+                int rejected = 0;
+                int improving = 0;
+
+                // Inner loop: equilibrium at fixed temperature
+                for (int i = 0; i < config.getIterationsPerTemperature(); i++) {
+                    // Generate random neighbor s'
+                    SchedulingSolution neighbor = generateNeighbor(currentSolution);
+
+                    // Evaluate neighbor
+                    double neighborFitness = evaluateFitness(neighbor);
+                    statistics.incrementEvaluations();
+
+                    // Calculate ΔE = f(s') - f(s)
+                    double deltaE = neighborFitness - currentFitness;
+
+                    // Accept or reject
+                    boolean accept = false;
+
+                    if (deltaE <= 0) {
+                        // Better solution (for minimization) - always accept
+                        accept = true;
+                        improving++;
+                    } else {
+                        // Worse solution - accept with probability e^(-ΔE/T)
+                        double probability = Math.exp(-deltaE / temperature);
+                        if (random.nextDouble() < probability) {
+                            accept = true;
+                        }
+                    }
+
+                    if (accept) {
+                        currentSolution = neighbor;
+                        currentFitness = neighborFitness;
+                        accepted++;
+
+                        // Update global best if this is a new best
+                        if (isBetter(currentFitness, bestFitness)) {
+                            bestSolution = currentSolution.copy();
+                            bestFitness = currentFitness;
+                        }
+                    } else {
+                        rejected++;
+                    }
+                }
+
+                // Calculate acceptance rate for this temperature step
+                double acceptanceRate = (double) accepted / (accepted + rejected);
+
+                // Update statistics
+                statistics.updateTemperatureStep(temperatureStep, temperature,
+                    bestSolution, currentFitness, accepted, rejected, improving, isMinimization());
+
+                // Log progress
+                if (config.isVerboseLogging() && temperatureStep % config.getLogInterval() == 0) {
+                    System.out.println(statistics.formatCurrentTemperatureStep());
+                }
+
+                // Temperature update: T = g(T)
+                if (coolingSchedule.isAdaptive()) {
+                    temperature = coolingSchedule.updateTemperature(temperature, temperatureStep, acceptanceRate);
+                } else {
+                    temperature = coolingSchedule.updateTemperature(temperature, temperatureStep);
+                }
+
+                // Update algorithm statistics for termination check
+                algoStats.setCurrentGeneration(temperatureStep);
+                algoStats.setCurrentTemperature(temperature);
+                algoStats.setTotalFitnessEvaluations(statistics.getTotalFitnessEvaluations());
+                algoStats.setElapsedTimeMillis(statistics.getElapsedTimeMillis());
+                algoStats.setBestObjectiveValues(new double[]{bestFitness});
+
+                // Update termination condition if temperature-based
+                if (config.getTerminationCondition() instanceof TemperatureTermination) {
+                    ((TemperatureTermination) config.getTerminationCondition()).setCurrentTemperature(temperature);
+                }
             }
         }
 
