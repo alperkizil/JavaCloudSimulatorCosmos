@@ -101,10 +101,11 @@ public class ScenarioComparisonExperimentRunner {
     };
 
     // Scenario task distributions: [cpuTasks, gpuTasks]
+    // More tasks than VMs to create contention and force real trade-offs
     private static final int[][] SCENARIO_TASK_COUNTS = {
-        {25, 25},  // Scenario 1: Balanced
-        {8, 42},   // Scenario 2: GPU Stress
-        {42, 8}    // Scenario 3: CPU Stress
+        {50, 50},   // Scenario 1: Balanced
+        {20, 80},   // Scenario 2: GPU Stress
+        {80, 20}    // Scenario 3: CPU Stress
     };
 
     private static final String[] SCENARIO_NAMES = {
@@ -268,19 +269,44 @@ public class ScenarioComparisonExperimentRunner {
                 65536, 10000, 1048576, "HighPerformancePowerModel"));
         }
 
-        // 20 VMs (7 CPU, 7 GPU, 6 MIXED)
-        for (int i = 0; i < 7; i++) {
-            config.addVMConfig(new VMConfig("ExperimentUser",
-                2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));
-        }
-        for (int i = 0; i < 7; i++) {
-            config.addVMConfig(new VMConfig("ExperimentUser",
-                2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));
-        }
-        for (int i = 0; i < 6; i++) {
-            config.addVMConfig(new VMConfig("ExperimentUser",
-                2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));
-        }
+        // 15 VMs with DIVERSE speeds to create makespan-energy trade-off
+        // Fast VMs: finish tasks quickly but consume more power (speed scaling ^1.5)
+        // Slow VMs: take longer but are energy-efficient
+        // CPU VMs: 2 fast + 2 medium + 1 slow = 5
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 16B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 16B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 4B IPS (slow)
+
+        // GPU VMs: 2 fast + 2 medium + 1 slow = 5
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 16B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 16B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 4B IPS (slow)
+
+        // Mixed VMs: 2 fast + 2 medium + 1 slow = 5
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 14B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 14B IPS (fast)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 8B IPS (medium)
+        config.addVMConfig(new VMConfig("ExperimentUser",
+            1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 4B IPS (slow)
 
         // Tasks — scenario-specific distribution
         int idx = scenario - 1;
@@ -300,7 +326,7 @@ public class ScenarioComparisonExperimentRunner {
             taskCounts.merge(tc.getWorkloadType(), 1, Integer::sum);
         }
         config.addUserConfig(new UserConfig("ExperimentUser",
-            List.of("DC-Experiment"), 7, 7, 6, taskCounts));
+            List.of("DC-Experiment"), 5, 5, 5, taskCounts));
 
         return config;
     }
@@ -471,6 +497,12 @@ public class ScenarioComparisonExperimentRunner {
 
         long endTime = System.currentTimeMillis();
 
+        // Debug: compare objective estimate vs actual simulation
+        double actualMakespan = taskExecStep.getMakespan();
+        double actualEnergyKWh = energyCalcStep.getTotalITEnergyKWh();
+        System.out.printf("  [DEBUG] Actual simulation: makespan=%d s, energy=%.6f kWh%n",
+            (long) actualMakespan, actualEnergyKWh);
+
         // Extract solutions
         List<double[]> solutions = extractSolutions(
             strategy, taskExecStep, energyCalcStep);
@@ -489,7 +521,7 @@ public class ScenarioComparisonExperimentRunner {
 
         List<double[]> solutions = new ArrayList<>();
 
-        // MOEA strategies: get full Pareto front
+        // MOEA strategies: get full Pareto front from optimizer
         if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_NSGA2TaskSchedulingStrategy) strategy).getLastParetoFront();
             addParetoSolutions(front, solutions);
@@ -501,12 +533,11 @@ public class ScenarioComparisonExperimentRunner {
             addParetoSolutions(front, solutions);
         }
 
-        // Fallback: use actual simulated values if no Pareto front
-        if (solutions.isEmpty()) {
-            double makespan = taskStep.getMakespan();
-            double energy = energyStep.getTotalITEnergyKWh();
-            solutions.add(new double[]{makespan, energy});
-        }
+        // Always add the actual simulation result for the selected/executed solution.
+        // This ensures consistent measurement across all algorithms (GA, SA, MOEA).
+        double actualMakespan = taskStep.getMakespan();
+        double actualEnergy = energyStep.getTotalITEnergyKWh();
+        solutions.add(new double[]{actualMakespan, actualEnergy});
 
         return solutions;
     }
