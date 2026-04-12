@@ -48,6 +48,14 @@ The core simulation framework compiles and works fine:
 - Reporters (`reporter/`)
 - All utility classes (`utils/`)
 
+### Large Files
+
+`README.md` exceeds the default read token limit. Always use `offset` and `limit` parameters when reading it:
+
+```
+Read(file_path="README.md", offset=0, limit=100)
+```
+
 ## Project Architecture
 
 - **Metaheuristics location:** `src/main/java/com/cloudsimulator/PlacementStrategy/task/metaheuristic/`
