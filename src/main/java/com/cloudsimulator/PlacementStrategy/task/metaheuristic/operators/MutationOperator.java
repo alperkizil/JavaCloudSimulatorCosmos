@@ -180,7 +180,31 @@ public class MutationOperator {
      */
     public boolean mutateSingle(SchedulingSolution solution) {
         int taskIdx = random.nextInt(solution.getNumTasks());
-        return mutate(solution, 1.0 / solution.getNumTasks());
+
+        MutationType actualType = type;
+        if (type == MutationType.COMBINED) {
+            actualType = random.nextBoolean() ? MutationType.REASSIGN : MutationType.SWAP_ORDER;
+        }
+
+        boolean mutated;
+        switch (actualType) {
+            case REASSIGN:
+                mutated = reassignMutation(solution, taskIdx);
+                break;
+            case SWAP_ORDER:
+                mutated = swapOrderMutation(solution, taskIdx);
+                break;
+            case MOVE:
+                mutated = moveMutation(solution, taskIdx);
+                break;
+            default:
+                mutated = reassignMutation(solution, taskIdx);
+        }
+
+        if (mutated) {
+            solution.invalidate();
+        }
+        return mutated;
     }
 
     public MutationType getType() {
