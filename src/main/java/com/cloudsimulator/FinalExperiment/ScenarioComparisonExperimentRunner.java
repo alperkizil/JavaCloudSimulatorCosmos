@@ -193,7 +193,7 @@ public class ScenarioComparisonExperimentRunner {
                     scenarioResult.algorithmResults.put(label, result);
                     System.out.println("  Completed in " + result.executionTimeMs + " ms, " +
                         result.solutions.size() + " solution(s)");
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     System.err.println("  ERROR running " + label + ": " + e.getMessage());
                     e.printStackTrace();
                     // Add empty result so we can continue
@@ -501,7 +501,7 @@ public class ScenarioComparisonExperimentRunner {
             addParetoSolutions(front, solutions);
         }
 
-        // Single-objective (GA/SA): use actual simulated values
+        // Fallback: use actual simulated values if no Pareto front
         if (solutions.isEmpty()) {
             double makespan = taskStep.getMakespan();
             double energy = energyStep.getTotalITEnergyKWh();
@@ -513,11 +513,17 @@ public class ScenarioComparisonExperimentRunner {
 
     private static void addParetoSolutions(ParetoFront front, List<double[]> solutions) {
         if (front != null && !front.isEmpty()) {
+            int skipped = 0;
             for (SchedulingSolution sol : front.getSolutions()) {
                 double[] objs = sol.getObjectiveValues();
                 if (objs != null && objs.length >= 2) {
                     solutions.add(new double[]{objs[0], objs[1]});
+                } else {
+                    skipped++;
                 }
+            }
+            if (skipped > 0) {
+                System.out.println("  [DEBUG] Skipped " + skipped + " solutions with null/short objectives");
             }
         }
     }
