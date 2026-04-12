@@ -65,12 +65,12 @@ public class ScenarioComparisonExperimentRunner {
     // =========================================================================
     private static final int POPULATION_SIZE = 200;
     private static final int GENERATIONS = 200;
-    private static final double CROSSOVER_RATE = 0.9;
-    private static final double MUTATION_RATE = 0.1;
-    private static final int GA_ELITE_COUNT = 20;
-    private static final int GA_TOURNAMENT_SIZE = 3;
+    private static final double CROSSOVER_RATE = 0.95;
+    private static final double MUTATION_RATE = 0.05;
+    private static final int GA_ELITE_COUNT = 40;
+    private static final int GA_TOURNAMENT_SIZE = 5;
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
-    private static final double SA_COOLING_RATE = 0.95;
+    private static final double SA_COOLING_RATE = 0.90;
     private static final int SA_TOTAL_EVALUATIONS = 40000;
     private static final long RANDOM_SEED = 42L;
     private static final boolean VERBOSE_LOGGING = true;
