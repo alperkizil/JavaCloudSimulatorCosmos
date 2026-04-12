@@ -45,6 +45,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.Energy
 // Termination & cooling
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.cooling.AdaptiveCoolingSchedule;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.cooling.GeometricCoolingSchedule;
 
 // Performance metrics
@@ -70,7 +71,8 @@ public class ScenarioComparisonExperimentRunner {
     private static final double GA_ELITE_PERCENTAGE = 0.20;  // 20% of population
     private static final int GA_TOURNAMENT_SIZE = 5;
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
-    private static final double SA_COOLING_RATE = 0.90;
+    private static final double SA_COOLING_RATE = 0.95;
+    private static final int SA_ITERATIONS_PER_TEMP = 200;
     private static final int SA_TOTAL_EVALUATIONS = 40000;
     private static final long RANDOM_SEED = 42L;
     private static final boolean VERBOSE_LOGGING = true;
@@ -408,7 +410,8 @@ public class ScenarioComparisonExperimentRunner {
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
         SAConfiguration config = SAConfiguration.builder()
             .initialTemperature(SA_INITIAL_TEMPERATURE)
-            .coolingSchedule(new GeometricCoolingSchedule(SA_COOLING_RATE))
+            .coolingSchedule(new AdaptiveCoolingSchedule(0.4, 0.1, 0.85, SA_COOLING_RATE, 0.99))
+            .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
             .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
