@@ -489,23 +489,31 @@ public class ScenarioComparisonExperimentRunner {
 
         List<double[]> solutions = new ArrayList<>();
 
+        System.out.println("  [DEBUG] Strategy type: " + strategy.getClass().getSimpleName());
+
         // MOEA strategies: get full Pareto front
         if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_NSGA2TaskSchedulingStrategy) strategy).getLastParetoFront();
+            System.out.println("  [DEBUG] NSGA-II front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_SPEA2TaskSchedulingStrategy) strategy).getLastParetoFront();
+            System.out.println("  [DEBUG] SPEA-II front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         } else if (strategy instanceof MOEA_AMOSATaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_AMOSATaskSchedulingStrategy) strategy).getLastParetoFront();
+            System.out.println("  [DEBUG] AMOSA front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         }
 
-        // Single-objective (GA/SA): use actual simulated values
+        System.out.println("  [DEBUG] Pareto solutions extracted: " + solutions.size());
+
+        // Fallback: use actual simulated values if no Pareto front
         if (solutions.isEmpty()) {
             double makespan = taskStep.getMakespan();
             double energy = energyStep.getTotalITEnergyKWh();
             solutions.add(new double[]{makespan, energy});
+            System.out.println("  [DEBUG] Using simulated values: makespan=" + makespan + ", energy=" + energy);
         }
 
         return solutions;
@@ -513,11 +521,17 @@ public class ScenarioComparisonExperimentRunner {
 
     private static void addParetoSolutions(ParetoFront front, List<double[]> solutions) {
         if (front != null && !front.isEmpty()) {
+            int skipped = 0;
             for (SchedulingSolution sol : front.getSolutions()) {
                 double[] objs = sol.getObjectiveValues();
                 if (objs != null && objs.length >= 2) {
                     solutions.add(new double[]{objs[0], objs[1]});
+                } else {
+                    skipped++;
                 }
+            }
+            if (skipped > 0) {
+                System.out.println("  [DEBUG] Skipped " + skipped + " solutions with null/short objectives");
             }
         }
     }
