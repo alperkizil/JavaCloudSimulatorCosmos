@@ -7,6 +7,7 @@ import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStr
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.TerminationCondition;
@@ -19,6 +20,7 @@ import org.moeaframework.analysis.plot.Plot;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
+import org.moeaframework.core.initialization.RandomInitialization;
 
 import javax.swing.JFrame;
 import java.io.File;
@@ -353,49 +355,39 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
                 ", Hill Climbing: " + hillClimbingIterations);
         }
 
-        // Build and configure the Executor using AMOSA algorithm
-        Executor executor = new Executor()
-            .withProblem(problem)
-            .withAlgorithm("AMOSA")
-            .withMaxEvaluations(maxEvaluations)
-            .withProperty("gamma", gamma)
-            .withProperty("softLimit", softLimit)
-            .withProperty("hardLimit", hardLimit)
-            .withProperty("initialTemperature", initialTemperature)
-            .withProperty("stoppingTemperature", stoppingTemperature)
-            .withProperty("alpha", alpha)
-            .withProperty("numberOfIterationsPerTemperature", iterationsPerTemperature)
-            .withProperty("numberOfHillClimbingIterationsForRefinement", hillClimbingIterations)
-            // Use polynomial mutation
-            .withProperty("pm.rate", config.getMutationRate())
-            .withProperty("pm.distributionIndex", 5.0);
+        // Create domain-specific mutation operator (COMBINED: ~50% REASSIGN, ~50% SWAP_ORDER)
+        // SWAP_ORDER doesn't directly affect objectives but acts as rate dampener,
+        // effectively halving the reassignment rate for gentler perturbations
+        MutationOperator domainMutation = new MutationOperator(
+            vms.size(), repairOperator, PRNG.getRandom());
+        TaskSchedulingMutation mutation = new TaskSchedulingMutation(
+            domainMutation, repairOperator, config.getMutationRate(),
+            tasks.size(), vms.size());
 
-        // Optional: distribute evaluation across cores (limited benefit for AMOSA)
-        if (useDistributedEvaluation) {
-            executor.distributeOnAllCores();
+        // Create FixedAMOSA directly with domain-specific mutation
+        // FixedAMOSA extends AMOSA with corrected deltaDominance calculation
+        FixedAMOSA amosa = new FixedAMOSA(problem,
+            new RandomInitialization(problem),
+            mutation,
+            gamma,
+            softLimit,
+            hardLimit,
+            stoppingTemperature,
+            initialTemperature,
+            alpha,
+            iterationsPerTemperature,
+            hillClimbingIterations);
+
+        // Run the optimization (step until max evaluations or termination)
+        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
+            amosa.step();
         }
-
-        // Optional: collect runtime data
-        Instrumenter instrumenter = null;
-        if (collectRuntimeData) {
-            instrumenter = new Instrumenter()
-                .withProblem(problem)
-                .withFrequency(iterationsPerTemperature)
-                .attachElapsedTimeCollector()
-                .attachGenerationalDistanceCollector()
-                .attachHypervolumeCollector();
-            executor.withInstrumenter(instrumenter);
+        if (!amosa.isTerminated()) {
+            amosa.terminate();
         }
-
-        // Run the optimization
-        NondominatedPopulation result = executor.run();
+        NondominatedPopulation result = amosa.getResult();
         lastMoeaResult = result;
         lastEvaluationCount = maxEvaluations;
-
-        // Store runtime observations if collected
-        if (instrumenter != null) {
-            lastObservations = instrumenter.getObservations();
-        }
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA] Optimization completed");
@@ -450,7 +442,8 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("alpha", alpha)
             .withProperty("numberOfIterationsPerTemperature", iterationsPerTemperature)
             .withProperty("numberOfHillClimbingIterationsForRefinement", hillClimbingIterations)
-            .withProperty("pm.rate", config.getMutationRate());
+            .withProperty("pm.rate", config.getMutationRate())
+            .withProperty("pm.distributionIndex", 5.0);
 
         // Run multiple seeds
         List<NondominatedPopulation> results = executor.runSeeds(numSeeds);
@@ -508,7 +501,8 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             .withProperty("alpha", alpha)
             .withProperty("numberOfIterationsPerTemperature", iterationsPerTemperature)
             .withProperty("numberOfHillClimbingIterationsForRefinement", hillClimbingIterations)
-            .withProperty("pm.rate", config.getMutationRate());
+            .withProperty("pm.rate", config.getMutationRate())
+            .withProperty("pm.distributionIndex", 5.0);
 
         // Run NSGA-II
         Executor nsgaiiExecutor = new Executor()

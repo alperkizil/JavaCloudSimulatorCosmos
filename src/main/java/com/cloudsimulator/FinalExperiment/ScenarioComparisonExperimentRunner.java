@@ -76,14 +76,16 @@ public class ScenarioComparisonExperimentRunner {
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
-    // AMOSA-specific parameters (validated by SA tuning: temp=1000, cool=0.95 were best)
-    private static final double AMOSA_INITIAL_TEMPERATURE = 1000.0;
-    private static final double AMOSA_ALPHA = 0.95;
+    // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
+    // so high T means LESS acceptance — T=5 gives ~38% acceptance for ΔDom=0.1)
+    private static final double AMOSA_INITIAL_TEMPERATURE = 5.0;
+    private static final double AMOSA_ALPHA = 0.98;  // Slower cooling — more exploitation per temperature
     private static final int AMOSA_HARD_LIMIT = 100;
     private static final int AMOSA_SOFT_LIMIT = 100;
-    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;
-    private static final int AMOSA_HILL_CLIMBING_ITERS = 20;
-    private static final double AMOSA_GAMMA = 2.0;
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 500;
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;  // Better refined initial solutions (was 20)
+    private static final double AMOSA_GAMMA = 3.0;  // More diverse initialization (was 2.0)
+    private static final double AMOSA_MUTATION_RATE = 0.10; // Moderate mutation — less destructive for SA refinement
 
     private static final String REPORTS_DIR = "reports/scenario_comparison";
 
@@ -460,7 +462,7 @@ public class ScenarioComparisonExperimentRunner {
         NSGA2Configuration config = NSGA2Configuration.builder()
             .populationSize(AMOSA_SOFT_LIMIT)
             .crossoverRate(CROSSOVER_RATE)
-            .mutationRate(MUTATION_RATE)
+            .mutationRate(AMOSA_MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(GENERATIONS))
