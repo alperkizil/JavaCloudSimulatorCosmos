@@ -193,7 +193,7 @@ public class ScenarioComparisonExperimentRunner {
                     scenarioResult.algorithmResults.put(label, result);
                     System.out.println("  Completed in " + result.executionTimeMs + " ms, " +
                         result.solutions.size() + " solution(s)");
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     System.err.println("  ERROR running " + label + ": " + e.getMessage());
                     e.printStackTrace();
                     // Add empty result so we can continue
@@ -489,31 +489,23 @@ public class ScenarioComparisonExperimentRunner {
 
         List<double[]> solutions = new ArrayList<>();
 
-        System.out.println("  [DEBUG] Strategy type: " + strategy.getClass().getSimpleName());
-
         // MOEA strategies: get full Pareto front
         if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_NSGA2TaskSchedulingStrategy) strategy).getLastParetoFront();
-            System.out.println("  [DEBUG] NSGA-II front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_SPEA2TaskSchedulingStrategy) strategy).getLastParetoFront();
-            System.out.println("  [DEBUG] SPEA-II front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         } else if (strategy instanceof MOEA_AMOSATaskSchedulingStrategy) {
             ParetoFront front = ((MOEA_AMOSATaskSchedulingStrategy) strategy).getLastParetoFront();
-            System.out.println("  [DEBUG] AMOSA front: " + (front == null ? "null" : "size=" + front.size()));
             addParetoSolutions(front, solutions);
         }
-
-        System.out.println("  [DEBUG] Pareto solutions extracted: " + solutions.size());
 
         // Fallback: use actual simulated values if no Pareto front
         if (solutions.isEmpty()) {
             double makespan = taskStep.getMakespan();
             double energy = energyStep.getTotalITEnergyKWh();
             solutions.add(new double[]{makespan, energy});
-            System.out.println("  [DEBUG] Using simulated values: makespan=" + makespan + ", energy=" + energy);
         }
 
         return solutions;
