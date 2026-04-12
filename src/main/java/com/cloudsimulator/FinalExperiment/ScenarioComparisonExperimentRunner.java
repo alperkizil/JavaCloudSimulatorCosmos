@@ -73,7 +73,6 @@ public class ScenarioComparisonExperimentRunner {
     private static final double SA_INITIAL_TEMPERATURE = 1000.0;
     private static final double SA_COOLING_RATE = 0.95;
     private static final int SA_ITERATIONS_PER_TEMP = 200;
-    private static final int SA_RESTARTS = 5;
     private static final int SA_TOTAL_EVALUATIONS = 40000;
     private static final long RANDOM_SEED = 42L;
     private static final boolean VERBOSE_LOGGING = true;
@@ -413,7 +412,6 @@ public class ScenarioComparisonExperimentRunner {
             .initialTemperature(SA_INITIAL_TEMPERATURE)
             .coolingSchedule(new AdaptiveCoolingSchedule(0.4, 0.1, 0.85, SA_COOLING_RATE, 0.99))
             .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
-            .numberOfRestarts(SA_RESTARTS)
             .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
