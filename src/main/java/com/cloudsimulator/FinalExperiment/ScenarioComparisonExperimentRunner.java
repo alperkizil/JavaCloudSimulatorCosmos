@@ -74,6 +74,7 @@ public class ScenarioComparisonExperimentRunner {
     private static final int SA_TOTAL_EVALUATIONS = 40000;
     private static final long RANDOM_SEED = 42L;
     private static final boolean VERBOSE_LOGGING = true;
+    private static final double TIEBREAKER_WEIGHT = 0.001;
 
     private static final String REPORTS_DIR = "reports/scenario_comparison";
 
@@ -350,13 +351,13 @@ public class ScenarioComparisonExperimentRunner {
     private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts) {
         switch (label) {
             case "GA_Makespan":
-                return createGAStrategy(new MakespanObjective(), hosts);
+                return createGAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
             case "GA_Energy":
-                return createGAStrategy(createEnergyObjective(hosts), hosts);
+                return createGAStrategy(createEnergyObjective(hosts), new MakespanObjective());
             case "SA_Makespan":
-                return createSAStrategy(new MakespanObjective(), hosts);
+                return createSAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
             case "SA_Energy":
-                return createSAStrategy(createEnergyObjective(hosts), hosts);
+                return createSAStrategy(createEnergyObjective(hosts), new MakespanObjective());
             case "NSGA-II":
                 return createNSGA2Strategy(hosts);
             case "SPEA-II":
@@ -375,15 +376,16 @@ public class ScenarioComparisonExperimentRunner {
     }
 
     private static TaskAssignmentStrategy createGAStrategy(
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective objective,
-            List<Host> hosts) {
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
         GAConfiguration config = GAConfiguration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
             .eliteCount(GA_ELITE_COUNT)
             .tournamentSize(GA_TOURNAMENT_SIZE)
-            .objective(objective)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
             .terminationCondition(new GenerationCountTermination(GENERATIONS))
             .verboseLogging(VERBOSE_LOGGING)
             .build();
@@ -391,13 +393,14 @@ public class ScenarioComparisonExperimentRunner {
     }
 
     private static TaskAssignmentStrategy createSAStrategy(
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective objective,
-            List<Host> hosts) {
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
         SAConfiguration config = SAConfiguration.builder()
             .initialTemperature(SA_INITIAL_TEMPERATURE)
             .coolingSchedule(new GeometricCoolingSchedule(SA_COOLING_RATE))
             .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
-            .objective(objective)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         return new SimulatedAnnealingTaskSchedulingStrategy(config);
