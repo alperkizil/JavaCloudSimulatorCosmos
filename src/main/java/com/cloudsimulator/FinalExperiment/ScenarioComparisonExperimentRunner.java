@@ -574,11 +574,12 @@ public class ScenarioComparisonExperimentRunner {
             addParetoSolutions(front, solutions);
         }
 
-        // Always add the actual simulation result for the selected/executed solution.
-        // This ensures consistent measurement across all algorithms (GA, SA, MOEA).
-        double actualMakespan = taskStep.getMakespan();
-        double actualEnergy = energyStep.getTotalITEnergyKWh();
-        solutions.add(new double[]{actualMakespan, actualEnergy});
+        // If no Pareto front (single-solution algorithms like GA, SA), use actual execution results
+        if (solutions.isEmpty()) {
+            double actualMakespan = taskStep.getMakespan();
+            double actualEnergy = energyStep.getTotalITEnergyKWh();
+            solutions.add(new double[]{actualMakespan, actualEnergy});
+        }
 
         return solutions;
     }
