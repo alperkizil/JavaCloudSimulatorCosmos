@@ -30,6 +30,7 @@ import org.moeaframework.util.clustering.Clustering;
 public class FixedAMOSA extends AMOSA {
 
     private final DominanceComparator comparator;
+    private int maxEvaluations = Integer.MAX_VALUE;
 
     public FixedAMOSA(Problem problem, Initialization initialization, Mutation mutation,
                       double gamma, int softLimit, int hardLimit,
@@ -42,6 +43,15 @@ public class FixedAMOSA extends AMOSA {
         this.comparator = new ParetoDominanceComparator();
     }
 
+    /**
+     * Sets the maximum number of fitness evaluations. The iterate loop will
+     * break early when this budget is reached, ensuring fair comparison
+     * across algorithms.
+     */
+    public void setMaxEvaluations(int maxEvaluations) {
+        this.maxEvaluations = maxEvaluations;
+    }
+
     @Override
     protected void iterate(double temperature) {
         int iterationsPerTemp = getNumberOfIterationsPerTemperature();
@@ -49,6 +59,7 @@ public class FixedAMOSA extends AMOSA {
         int hl = getHardLimit();
 
         for (int i = 0; i < iterationsPerTemp; i++) {
+            if (getNumberOfEvaluations() >= maxEvaluations) break;
             Solution newPoint = mutation.mutate(currentPoint);
             evaluate(newPoint);
 

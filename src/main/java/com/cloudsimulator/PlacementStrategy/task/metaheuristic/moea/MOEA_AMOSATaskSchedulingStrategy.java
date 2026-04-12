@@ -9,6 +9,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.FitnessEvaluationsTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.TerminationCondition;
 
@@ -377,6 +378,7 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             alpha,
             iterationsPerTemperature,
             hillClimbingIterations);
+        amosa.setMaxEvaluations(maxEvaluations);
 
         // Run the optimization (step until max evaluations or termination)
         while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
@@ -387,10 +389,10 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
         }
         NondominatedPopulation result = amosa.getResult();
         lastMoeaResult = result;
-        lastEvaluationCount = maxEvaluations;
+        lastEvaluationCount = amosa.getNumberOfEvaluations();
 
         if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-AMOSA] Optimization completed");
+            System.out.println("[MOEA-AMOSA] Optimization completed (evaluations: " + lastEvaluationCount + ")");
         }
 
         // Convert to our ParetoFront format
@@ -573,6 +575,11 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
      */
     private int calculateMaxEvaluations() {
         TerminationCondition termination = config.getTerminationCondition();
+
+        // Direct fitness evaluation budget (preferred for fair algorithm comparison)
+        if (termination instanceof FitnessEvaluationsTermination) {
+            return (int) ((FitnessEvaluationsTermination) termination).getMaxEvaluations();
+        }
 
         // Direct access to generation count if using GenerationCountTermination
         if (termination instanceof GenerationCountTermination) {
