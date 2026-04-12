@@ -15,7 +15,6 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.Termi
 import org.moeaframework.Analyzer;
 import org.moeaframework.Executor;
 import org.moeaframework.Instrumenter;
-import org.moeaframework.algorithm.sa.AMOSA;
 import org.moeaframework.analysis.collector.Observations;
 import org.moeaframework.analysis.plot.Plot;
 import org.moeaframework.core.NondominatedPopulation;
@@ -365,8 +364,9 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());
 
-        // Create AMOSA directly with domain-specific mutation
-        AMOSA amosa = new AMOSA(problem,
+        // Create FixedAMOSA directly with domain-specific mutation
+        // FixedAMOSA extends AMOSA with corrected deltaDominance calculation
+        FixedAMOSA amosa = new FixedAMOSA(problem,
             new RandomInitialization(problem),
             mutation,
             gamma,

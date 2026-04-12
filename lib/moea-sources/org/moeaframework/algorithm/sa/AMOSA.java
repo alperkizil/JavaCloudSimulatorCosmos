@@ -370,13 +370,10 @@ public class AMOSA extends AbstractSimulatedAnnealingAlgorithm {
 	 * @return the calculated delta dominance value
 	 */
 	private double calculateDeltaDominance(Solution solutionA, Solution solutionB, double[] r) {
-		double deltaDominance = 1.0;
+		double deltaDominance = 0.0;
 
 		for (int i = 0; i < solutionA.getNumberOfObjectives(); i++) {
-			if (r[i] > 1e-10) {
-				deltaDominance *= Math.abs(solutionA.getObjective(i) - solutionB.getObjective(i)) / r[i];
-			}
-			// Skip dimensions with zero range to avoid NaN/Infinity
+			deltaDominance *= Math.abs(solutionA.getObjective(i) - solutionB.getObjective(i)) / r[i];
 		}
 
 		return deltaDominance;
