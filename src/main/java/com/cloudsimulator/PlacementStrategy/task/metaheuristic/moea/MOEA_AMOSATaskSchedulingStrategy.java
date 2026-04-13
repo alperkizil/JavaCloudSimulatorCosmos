@@ -356,11 +356,13 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
                 ", Hill Climbing: " + hillClimbingIterations);
         }
 
-        // Create domain-specific mutation operator (COMBINED: ~50% REASSIGN, ~50% SWAP_ORDER)
-        // SWAP_ORDER doesn't directly affect objectives but acts as rate dampener,
-        // effectively halving the reassignment rate for gentler perturbations
+        // Create domain-specific mutation operator (REASSIGN only for AMOSA).
+        // SWAP_ORDER changes task execution order within a VM but doesn't affect
+        // objectives (makespan/energy depend on task-to-VM assignment, not ordering).
+        // For AMOSA's single-trajectory search, every mutation must change objectives
+        // to avoid wasting evaluations on identical neighbors.
         MutationOperator domainMutation = new MutationOperator(
-            vms.size(), repairOperator, PRNG.getRandom());
+            MutationOperator.MutationType.REASSIGN, vms.size(), repairOperator, PRNG.getRandom());
         TaskSchedulingMutation mutation = new TaskSchedulingMutation(
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());

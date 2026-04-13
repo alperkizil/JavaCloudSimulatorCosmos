@@ -168,14 +168,27 @@ public class FixedAMOSA extends AMOSA {
      * FIX: Product initialized at 1.0 (not 0.0), and division-by-zero guarded.
      *
      * Per the AMOSA paper: ΔDom(a,b) = ∏(|f_i(a) - f_i(b)| / r_i)
+     *
+     * FIX 2: Uses geometric mean (product^(1/k)) instead of raw product.
+     * For k=2 objectives, product compresses to near-zero (e.g. 0.3×0.3=0.09),
+     * making the sigmoid 1/(1+exp(ΔDom×T)) nearly flat at ~40-50% regardless
+     * of temperature. Geometric mean preserves the scale of individual normalized
+     * differences, giving the sigmoid proper discrimination across the T range.
      */
     private double calculateDeltaDominance(Solution solutionA, Solution solutionB, double[] r) {
-        double deltaDominance = 1.0;  // FIX: was 0.0 in original
+        double deltaDominance = 1.0;  // FIX 1: was 0.0 in original
+        int effectiveObjectives = 0;
 
         for (int i = 0; i < solutionA.getNumberOfObjectives(); i++) {
-            if (r[i] > 1e-10) {  // FIX: guard against division by zero
+            if (r[i] > 1e-10) {  // FIX 1: guard against division by zero
                 deltaDominance *= Math.abs(solutionA.getObjective(i) - solutionB.getObjective(i)) / r[i];
+                effectiveObjectives++;
             }
+        }
+
+        // FIX 2: geometric mean — take kth root of product
+        if (effectiveObjectives > 1) {
+            deltaDominance = Math.pow(deltaDominance, 1.0 / effectiveObjectives);
         }
 
         return deltaDominance;

@@ -97,13 +97,15 @@ public class ScenarioComparisonExperimentRunner {
 
     // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
     // so high T means LESS acceptance of worse solutions).
-    // ΔDom is a PRODUCT of normalized diffs — for 2 objectives with 30% diffs, ΔDom ≈ 0.09.
+    // ΔDom now uses GEOMETRIC MEAN of normalized diffs (not raw product) — for 2 objectives
+    // with 30% diffs, geo-mean ΔDom ≈ 0.3 (vs product 0.09). This gives the sigmoid proper
+    // discrimination: at T=15, acceptance ranges from 1% (large gaps) to 18% (small gaps).
     //
     // Budget allocation (gamma=2.0, SL=100, hillClimbing=50):
     //   Init: 200 solutions × 50 hill-climb iters = ~10,200 evals (25% of budget)
-    //   Main loop: ~29,800 evals → 149 temp steps at 200 iters/step
-    //   T sweep: 30 × 0.95^149 ≈ 0.014 (acceptance: 6% → 50%)
-    private static final double AMOSA_INITIAL_TEMPERATURE = 30.0;  // ~6% acceptance at start (not frozen like T=100)
+    //   Main loop: ~29,800 evals → 142 temp steps at 200 iters/step
+    //   T sweep: 15 × 0.95^142 ≈ 0.011 (acceptance: 1-18% → ~50%)
+    private static final double AMOSA_INITIAL_TEMPERATURE = 15.0;  // Recalibrated for geometric mean ΔDom
     private static final double AMOSA_ALPHA = 0.95;  // Sweep from selective→permissive within budget
     private static final int AMOSA_HARD_LIMIT = 50;   // Proper HL < SL for clustering to prune effectively
     private static final int AMOSA_SOFT_LIMIT = 100;
