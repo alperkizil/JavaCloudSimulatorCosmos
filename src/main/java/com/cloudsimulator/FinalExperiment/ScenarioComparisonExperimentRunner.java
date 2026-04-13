@@ -96,15 +96,18 @@ public class ScenarioComparisonExperimentRunner {
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
     // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
-    // so high T means LESS acceptance — T=5 gives ~38% acceptance for ΔDom=0.1)
-    private static final double AMOSA_INITIAL_TEMPERATURE = 5.0;
-    private static final double AMOSA_ALPHA = 0.98;  // Slower cooling — more exploitation per temperature
-    private static final int AMOSA_HARD_LIMIT = 100;
+    // so high T means LESS acceptance of worse solutions).
+    // Key insight: ΔDom is a PRODUCT of normalized objective differences — for 2 objectives
+    // with 30% differences, ΔDom ≈ 0.09. We need ΔDom*T in the 1-10 range for the sigmoid
+    // to actually differentiate solutions, requiring T in the 10-100 range.
+    private static final double AMOSA_INITIAL_TEMPERATURE = 100.0;  // Was 5.0 — now gives meaningful selection pressure
+    private static final double AMOSA_ALPHA = 0.95;  // Was 0.98 — faster cooling sweeps useful T range within 40k budget
+    private static final int AMOSA_HARD_LIMIT = 50;   // Was 100 — proper HL < SL for clustering to actually prune
     private static final int AMOSA_SOFT_LIMIT = 100;
-    private static final int AMOSA_ITERATIONS_PER_TEMP = 500;
-    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;  // Better refined initial solutions (was 20)
-    private static final double AMOSA_GAMMA = 3.0;  // More diverse initialization (was 2.0)
-    private static final double AMOSA_MUTATION_RATE = 0.10; // Moderate mutation — less destructive for SA refinement
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;  // Was 500 — more temp steps (200 vs 80) = smoother cooling
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 100;  // Was 50 — better initial archive quality
+    private static final double AMOSA_GAMMA = 2.0;  // Was 3.0 — smaller initial archive focuses hill climbing effort
+    private static final double AMOSA_MUTATION_RATE = 0.01; // Was 0.10 — ~1 task/mutation, appropriate for SA-based search
 
     private static final String REPORTS_DIR = "reports/scenario_comparison";
 
