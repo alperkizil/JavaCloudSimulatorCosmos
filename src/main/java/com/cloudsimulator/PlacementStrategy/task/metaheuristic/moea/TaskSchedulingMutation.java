@@ -48,7 +48,14 @@ public class TaskSchedulingMutation implements Mutation {
         SchedulingSolution schedulingSolution = decode(child);
 
         // Apply domain-specific mutation (reassign to valid VMs, swap ordering)
-        mutationOperator.mutate(schedulingSolution, mutationRate);
+        boolean mutated = mutationOperator.mutate(schedulingSolution, mutationRate);
+
+        // Guarantee at least one mutation. With rate=0.01 and 100 tasks,
+        // P(0 mutations) = e^(-1) ≈ 37%. For SA-based search (AMOSA),
+        // every neighbor must be distinct to avoid wasting evaluations.
+        if (!mutated) {
+            mutationOperator.mutateSingle(schedulingSolution);
+        }
 
         // Repair any constraint violations
         repairOperator.repair(schedulingSolution);
