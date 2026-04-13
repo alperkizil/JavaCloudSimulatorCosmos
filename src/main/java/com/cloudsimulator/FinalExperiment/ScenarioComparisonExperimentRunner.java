@@ -70,10 +70,27 @@ public class ScenarioComparisonExperimentRunner {
     private static final double MUTATION_RATE = 0.05;
     private static final double GA_ELITE_PERCENTAGE = 0.20;  // 20% of population
     private static final int GA_TOURNAMENT_SIZE = 5;
-    private static final double SA_INITIAL_TEMPERATURE = 1000.0;
-    private static final double SA_COOLING_RATE = 0.95;
-    private static final int SA_ITERATIONS_PER_TEMP = 200;
+    // SA temperature: auto-calibrated from fitness landscape (T0 set so 80% of uphill moves accepted)
+    private static final boolean SA_AUTO_TEMPERATURE = true;
+    private static final double SA_INITIAL_ACCEPTANCE_PROBABILITY = 0.8;
+    private static final int SA_TEMPERATURE_SAMPLE_SIZE = 100;
+    private static final int SA_ITERATIONS_PER_TEMP = 200; // Base (overridden by adaptive iterations)
     private static final int SA_TOTAL_EVALUATIONS = 40000;
+
+    // SA reheating: escape local optima when stagnating
+    private static final boolean SA_REHEAT_ENABLED = true;
+    private static final double SA_REHEAT_FACTOR = 5.0;
+    private static final int SA_REHEAT_STAGNATION_THRESHOLD = 15;
+    private static final int SA_MAX_REHEATS = 3;
+
+    // SA adaptive iterations-per-temperature
+    private static final boolean SA_ADAPTIVE_ITERATIONS = true;
+    private static final int SA_MIN_ITERS_PER_TEMP = 50;
+    private static final int SA_MAX_ITERS_PER_TEMP = 400;
+
+    // SA temperature-scaled perturbation
+    private static final boolean SA_SCALED_PERTURBATION = true;
+    private static final int SA_MAX_PERTURBATION_MUTATIONS = 4;
     private static final long RANDOM_SEED = 42L;
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
@@ -408,15 +425,46 @@ public class ScenarioComparisonExperimentRunner {
     private static TaskAssignmentStrategy createSAStrategy(
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
-        SAConfiguration config = SAConfiguration.builder()
-            .initialTemperature(SA_INITIAL_TEMPERATURE)
-            .coolingSchedule(new AdaptiveCoolingSchedule(0.4, 0.1, 0.85, SA_COOLING_RATE, 0.99))
-            .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
-            .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
-            .addWeightedObjective(primaryObjective, 1.0)
-            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
+        SAConfiguration.Builder builder = SAConfiguration.builder();
+
+        // Temperature initialization: auto-calibrate from fitness landscape
+        if (SA_AUTO_TEMPERATURE) {
+            builder.autoInitialTemperature(true)
+                   .initialAcceptanceProbability(SA_INITIAL_ACCEPTANCE_PROBABILITY)
+                   .temperatureSampleSize(SA_TEMPERATURE_SAMPLE_SIZE);
+        }
+
+        // Retuned adaptive cooling: higher target, slower rates for more thorough search
+        builder.coolingSchedule(new AdaptiveCoolingSchedule(0.5, 0.15, 0.90, 0.97, 0.995))
+               .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
+               .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS));
+
+        // Reheating on stagnation
+        if (SA_REHEAT_ENABLED) {
+            builder.reheatEnabled(true)
+                   .reheatFactor(SA_REHEAT_FACTOR)
+                   .reheatStagnationThreshold(SA_REHEAT_STAGNATION_THRESHOLD)
+                   .maxReheats(SA_MAX_REHEATS);
+        }
+
+        // Adaptive iterations-per-temperature
+        if (SA_ADAPTIVE_ITERATIONS) {
+            builder.adaptiveIterationsEnabled(true)
+                   .adaptiveIterationsBounds(SA_MIN_ITERS_PER_TEMP, SA_MAX_ITERS_PER_TEMP)
+                   .adaptiveIterationsThresholds(0.7, 0.1);
+        }
+
+        // Temperature-scaled perturbation
+        if (SA_SCALED_PERTURBATION) {
+            builder.temperatureScaledPerturbation(true)
+                   .maxPerturbationMutations(SA_MAX_PERTURBATION_MUTATIONS);
+        }
+
+        builder.addWeightedObjective(primaryObjective, 1.0)
+               .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+               .verboseLogging(VERBOSE_LOGGING);
+
+        SAConfiguration config = builder.build();
         return new SimulatedAnnealingTaskSchedulingStrategy(config);
     }
 

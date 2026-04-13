@@ -80,6 +80,23 @@ public class SAConfiguration {
     // Termination
     private final TerminationCondition terminationCondition;
 
+    // Reheating parameters
+    private final boolean reheatEnabled;
+    private final double reheatFactor;
+    private final int reheatStagnationThreshold;
+    private final int maxReheats;
+
+    // Adaptive iterations-per-temperature
+    private final boolean adaptiveIterationsEnabled;
+    private final int minIterationsPerTemperature;
+    private final int maxIterationsPerTemperature;
+    private final double adaptiveIterHighAcceptanceThreshold;
+    private final double adaptiveIterLowAcceptanceThreshold;
+
+    // Temperature-scaled perturbation
+    private final boolean temperatureScaledPerturbation;
+    private final int maxPerturbationMutations;
+
     // Logging
     private final boolean verboseLogging;
     private final int logInterval;
@@ -99,6 +116,17 @@ public class SAConfiguration {
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
         this.terminationCondition = builder.terminationCondition;
+        this.reheatEnabled = builder.reheatEnabled;
+        this.reheatFactor = builder.reheatFactor;
+        this.reheatStagnationThreshold = builder.reheatStagnationThreshold;
+        this.maxReheats = builder.maxReheats;
+        this.adaptiveIterationsEnabled = builder.adaptiveIterationsEnabled;
+        this.minIterationsPerTemperature = builder.minIterationsPerTemperature;
+        this.maxIterationsPerTemperature = builder.maxIterationsPerTemperature;
+        this.adaptiveIterHighAcceptanceThreshold = builder.adaptiveIterHighAcceptanceThreshold;
+        this.adaptiveIterLowAcceptanceThreshold = builder.adaptiveIterLowAcceptanceThreshold;
+        this.temperatureScaledPerturbation = builder.temperatureScaledPerturbation;
+        this.maxPerturbationMutations = builder.maxPerturbationMutations;
         this.verboseLogging = builder.verboseLogging;
         this.logInterval = builder.logInterval;
     }
@@ -206,6 +234,56 @@ public class SAConfiguration {
         return logInterval;
     }
 
+    // Reheating getters
+
+    public boolean isReheatEnabled() {
+        return reheatEnabled;
+    }
+
+    public double getReheatFactor() {
+        return reheatFactor;
+    }
+
+    public int getReheatStagnationThreshold() {
+        return reheatStagnationThreshold;
+    }
+
+    public int getMaxReheats() {
+        return maxReheats;
+    }
+
+    // Adaptive iterations getters
+
+    public boolean isAdaptiveIterationsEnabled() {
+        return adaptiveIterationsEnabled;
+    }
+
+    public int getMinIterationsPerTemperature() {
+        return minIterationsPerTemperature;
+    }
+
+    public int getMaxIterationsPerTemperature() {
+        return maxIterationsPerTemperature;
+    }
+
+    public double getAdaptiveIterHighAcceptanceThreshold() {
+        return adaptiveIterHighAcceptanceThreshold;
+    }
+
+    public double getAdaptiveIterLowAcceptanceThreshold() {
+        return adaptiveIterLowAcceptanceThreshold;
+    }
+
+    // Temperature-scaled perturbation getters
+
+    public boolean isTemperatureScaledPerturbation() {
+        return temperatureScaledPerturbation;
+    }
+
+    public int getMaxPerturbationMutations() {
+        return maxPerturbationMutations;
+    }
+
     /**
      * Gets the primary objective (first objective for single-objective,
      * or the objective with highest weight for weighted sum).
@@ -260,6 +338,18 @@ public class SAConfiguration {
         }
         sb.append("]");
         sb.append(", termination=").append(terminationCondition.getDescription());
+        if (reheatEnabled) {
+            sb.append(", reheat=factor:").append(reheatFactor)
+              .append("/threshold:").append(reheatStagnationThreshold)
+              .append("/max:").append(maxReheats);
+        }
+        if (adaptiveIterationsEnabled) {
+            sb.append(", adaptiveIters=[").append(minIterationsPerTemperature)
+              .append("-").append(maxIterationsPerTemperature).append("]");
+        }
+        if (temperatureScaledPerturbation) {
+            sb.append(", scaledPerturb=max:").append(maxPerturbationMutations);
+        }
         sb.append('}');
         return sb.toString();
     }
@@ -290,6 +380,23 @@ public class SAConfiguration {
 
         // Termination default (temperature-based)
         private TerminationCondition terminationCondition = null; // Will be set in build()
+
+        // Reheating defaults
+        private boolean reheatEnabled = false;
+        private double reheatFactor = 5.0;
+        private int reheatStagnationThreshold = 15;
+        private int maxReheats = 3;
+
+        // Adaptive iterations defaults
+        private boolean adaptiveIterationsEnabled = false;
+        private int minIterationsPerTemperature = 50;
+        private int maxIterationsPerTemperature = 400;
+        private double adaptiveIterHighAcceptanceThreshold = 0.7;
+        private double adaptiveIterLowAcceptanceThreshold = 0.1;
+
+        // Temperature-scaled perturbation defaults
+        private boolean temperatureScaledPerturbation = false;
+        private int maxPerturbationMutations = 4;
 
         // Logging defaults
         private boolean verboseLogging = false;
@@ -469,6 +576,136 @@ public class SAConfiguration {
                 throw new IllegalArgumentException("Log interval must be at least 1");
             }
             this.logInterval = logInterval;
+            return this;
+        }
+
+        /**
+         * Enables reheating when SA stagnates (no improvement for N temperature steps).
+         * Reheating multiplies current temperature by reheatFactor to escape local optima.
+         *
+         * @param enabled true to enable reheating
+         * @return this builder
+         */
+        public Builder reheatEnabled(boolean enabled) {
+            this.reheatEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the reheat factor. Temperature is multiplied by this when reheating.
+         *
+         * @param factor Reheat multiplier (typically 3-10)
+         * @return this builder
+         */
+        public Builder reheatFactor(double factor) {
+            if (factor <= 1.0) {
+                throw new IllegalArgumentException("Reheat factor must be > 1.0");
+            }
+            this.reheatFactor = factor;
+            return this;
+        }
+
+        /**
+         * Sets the number of no-improvement temperature steps before a reheat triggers.
+         *
+         * @param threshold Stagnation threshold in temperature steps
+         * @return this builder
+         */
+        public Builder reheatStagnationThreshold(int threshold) {
+            if (threshold < 1) {
+                throw new IllegalArgumentException("Stagnation threshold must be >= 1");
+            }
+            this.reheatStagnationThreshold = threshold;
+            return this;
+        }
+
+        /**
+         * Sets the maximum number of reheats allowed per run.
+         *
+         * @param maxReheats Maximum reheats (typically 2-5)
+         * @return this builder
+         */
+        public Builder maxReheats(int maxReheats) {
+            if (maxReheats < 1) {
+                throw new IllegalArgumentException("Max reheats must be >= 1");
+            }
+            this.maxReheats = maxReheats;
+            return this;
+        }
+
+        /**
+         * Enables adaptive iterations-per-temperature. Instead of fixed iterations,
+         * the count is adjusted based on acceptance rate:
+         * - High acceptance (random walk) -> fewer iterations (don't waste budget)
+         * - Moderate acceptance (productive) -> more iterations (exploit this range)
+         * - Low acceptance (stuck) -> fewer iterations (move to next temperature)
+         *
+         * @param enabled true to enable adaptive iterations
+         * @return this builder
+         */
+        public Builder adaptiveIterationsEnabled(boolean enabled) {
+            this.adaptiveIterationsEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the min/max bounds for adaptive iterations-per-temperature.
+         *
+         * @param min Minimum iterations per temperature step
+         * @param max Maximum iterations per temperature step
+         * @return this builder
+         */
+        public Builder adaptiveIterationsBounds(int min, int max) {
+            if (min < 1 || max < min) {
+                throw new IllegalArgumentException("Bounds must satisfy 1 <= min <= max");
+            }
+            this.minIterationsPerTemperature = min;
+            this.maxIterationsPerTemperature = max;
+            return this;
+        }
+
+        /**
+         * Sets the acceptance rate thresholds for adaptive iteration adjustment.
+         *
+         * @param highThreshold Above this, reduce iterations (random walk phase)
+         * @param lowThreshold  Below this, reduce iterations (stuck phase)
+         * @return this builder
+         */
+        public Builder adaptiveIterationsThresholds(double highThreshold, double lowThreshold) {
+            if (lowThreshold < 0 || highThreshold > 1.0 || lowThreshold >= highThreshold) {
+                throw new IllegalArgumentException(
+                    "Thresholds must satisfy 0 <= low < high <= 1.0");
+            }
+            this.adaptiveIterHighAcceptanceThreshold = highThreshold;
+            this.adaptiveIterLowAcceptanceThreshold = lowThreshold;
+            return this;
+        }
+
+        /**
+         * Enables temperature-scaled perturbation. At high temperatures, multiple
+         * mutations are applied per neighbor to create larger jumps. At low temperatures,
+         * single mutations are used for fine-grained search.
+         *
+         * @param enabled true to enable temperature-scaled perturbation
+         * @return this builder
+         */
+        public Builder temperatureScaledPerturbation(boolean enabled) {
+            this.temperatureScaledPerturbation = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the maximum number of mutations applied per neighbor at the highest temperature.
+         * The actual count scales linearly from maxMutations (at T_initial) to 1 (at T_final).
+         *
+         * @param maxMutations Maximum mutations per neighbor (typically 3-5)
+         * @return this builder
+         */
+        public Builder maxPerturbationMutations(int maxMutations) {
+            if (maxMutations < 1) {
+                throw new IllegalArgumentException("Max perturbation mutations must be >= 1");
+            }
+            this.maxPerturbationMutations = maxMutations;
             return this;
         }
 
