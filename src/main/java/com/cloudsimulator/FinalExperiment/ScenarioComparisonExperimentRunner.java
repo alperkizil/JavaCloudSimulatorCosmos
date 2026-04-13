@@ -4,6 +4,7 @@ import com.cloudsimulator.config.*;
 import com.cloudsimulator.engine.SimulationContext;
 import com.cloudsimulator.enums.ComputeType;
 import com.cloudsimulator.enums.WorkloadType;
+import com.cloudsimulator.model.CloudDatacenter;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
@@ -23,6 +24,7 @@ import com.cloudsimulator.steps.EnergyCalculationStep;
 import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancingHostPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
@@ -583,7 +585,7 @@ public class ScenarioComparisonExperimentRunner {
         long assignTime = System.currentTimeMillis() - assignStart;
         System.out.println("  Task assignment took: " + assignTime + " ms");
 
-        // Step 6: VM Execution
+        // Step 6: VM Execution (for the selected/single solution)
         VMExecutionStep vmExecStep = new VMExecutionStep();
         vmExecStep.execute(context);
 
@@ -595,69 +597,110 @@ public class ScenarioComparisonExperimentRunner {
         EnergyCalculationStep energyCalcStep = new EnergyCalculationStep();
         energyCalcStep.execute(context);
 
-        long endTime = System.currentTimeMillis();
-
-        // Debug: compare objective estimate vs actual simulation
+        // Debug: show actual simulation result for the selected solution
         double actualMakespan = taskExecStep.getMakespan();
         double actualEnergyKWh = energyCalcStep.getTotalITEnergyKWh();
-        System.out.printf("  [DEBUG] Actual simulation: makespan=%d s, energy=%.6f kWh%n",
+        System.out.printf("  [DEBUG] Selected solution simulation: makespan=%d s, energy=%.6f kWh%n",
             (long) actualMakespan, actualEnergyKWh);
 
-        // Extract solutions
-        List<double[]> solutions = extractSolutions(
-            strategy, taskExecStep, energyCalcStep);
+        // Extract solutions: simulate all Pareto front solutions for MO algorithms
+        List<double[]> solutions;
+        if (strategy instanceof MultiObjectiveTaskSchedulingStrategy) {
+            solutions = simulateAllParetoSolutions(strategy, context);
+            if (solutions.isEmpty()) {
+                // Fallback: use actual simulation result from the selected solution
+                solutions = new ArrayList<>();
+                solutions.add(new double[]{actualMakespan, actualEnergyKWh});
+            }
+        } else {
+            // Single-objective: use actual simulation result
+            solutions = new ArrayList<>();
+            solutions.add(new double[]{actualMakespan, actualEnergyKWh});
+        }
 
+        long endTime = System.currentTimeMillis();
         return new AlgorithmResult(label, solutions, endTime - startTime);
     }
 
     // =========================================================================
-    // SOLUTION EXTRACTION
+    // PARETO FRONT SIMULATION
     // =========================================================================
 
-    private static List<double[]> extractSolutions(
-            TaskAssignmentStrategy strategy,
-            TaskExecutionStep taskStep,
-            EnergyCalculationStep energyStep) {
+    /**
+     * Simulates every solution in the Pareto front through Steps 6-8.
+     * For each solution: resets all simulation state (tasks, VMs, hosts,
+     * datacenters), applies the solution's task assignments, then runs
+     * the full VM execution, task analysis, and energy calculation pipeline.
+     *
+     * This ensures multi-objective algorithm results reflect actual simulation
+     * outcomes rather than the optimizer's internal estimates.
+     */
+    private static List<double[]> simulateAllParetoSolutions(
+            TaskAssignmentStrategy strategy, SimulationContext context) {
 
-        List<double[]> solutions = new ArrayList<>();
+        MultiObjectiveTaskSchedulingStrategy moStrategy =
+            (MultiObjectiveTaskSchedulingStrategy) strategy;
+        ParetoFront front = moStrategy.getLastParetoFront();
 
-        // MOEA strategies: get full Pareto front from optimizer
-        if (strategy instanceof MOEA_NSGA2TaskSchedulingStrategy) {
-            ParetoFront front = ((MOEA_NSGA2TaskSchedulingStrategy) strategy).getLastParetoFront();
-            addParetoSolutions(front, solutions);
-        } else if (strategy instanceof MOEA_SPEA2TaskSchedulingStrategy) {
-            ParetoFront front = ((MOEA_SPEA2TaskSchedulingStrategy) strategy).getLastParetoFront();
-            addParetoSolutions(front, solutions);
-        } else if (strategy instanceof MOEA_AMOSATaskSchedulingStrategy) {
-            ParetoFront front = ((MOEA_AMOSATaskSchedulingStrategy) strategy).getLastParetoFront();
-            addParetoSolutions(front, solutions);
+        if (front == null || front.isEmpty()) {
+            return new ArrayList<>();
         }
 
-        // If no Pareto front (single-solution algorithms like GA, SA), use actual execution results
-        if (solutions.isEmpty()) {
-            double actualMakespan = taskStep.getMakespan();
-            double actualEnergy = energyStep.getTotalITEnergyKWh();
-            solutions.add(new double[]{actualMakespan, actualEnergy});
-        }
+        List<SchedulingSolution> paretoSolutions = front.getSolutions();
+        List<double[]> simulatedResults = new ArrayList<>();
 
-        return solutions;
-    }
-
-    private static void addParetoSolutions(ParetoFront front, List<double[]> solutions) {
-        if (front != null && !front.isEmpty()) {
-            int skipped = 0;
-            for (SchedulingSolution sol : front.getSolutions()) {
-                double[] objs = sol.getObjectiveValues();
-                if (objs != null && objs.length >= 2) {
-                    solutions.add(new double[]{objs[0], objs[1]});
-                } else {
-                    skipped++;
-                }
-            }
-            if (skipped > 0) {
-                System.out.println("  [DEBUG] Skipped " + skipped + " solutions with null/short objectives");
+        // Pre-compute the running VMs list (order preserved across resets
+        // since resetForRescheduling preserves host-VM assignments)
+        List<VM> runningVMs = new ArrayList<>();
+        for (VM vm : context.getVms()) {
+            if (vm.isAssignedToHost()) {
+                runningVMs.add(vm);
             }
         }
+
+        System.out.println("  Simulating " + paretoSolutions.size() +
+            " Pareto front solutions through full pipeline (Steps 6-8)...");
+
+        for (int i = 0; i < paretoSolutions.size(); i++) {
+            SchedulingSolution solution = paretoSolutions.get(i);
+
+            // === FULL STATE RESET ===
+            // Reset tasks, VMs, hosts, and clock (preserves infrastructure placement)
+            context.resetForRescheduling();
+
+            // Reset datacenter statistics (not covered by context.resetForRescheduling)
+            for (CloudDatacenter dc : context.getDatacenters()) {
+                dc.setActiveSeconds(0);
+                dc.setTotalMomentaryPowerDraw(0.0);
+            }
+
+            // Apply this solution's task-to-VM assignments
+            moStrategy.applySolution(solution, context.getTasks(), runningVMs,
+                context.getCurrentTime());
+
+            // Step 6: VM Execution
+            VMExecutionStep vmExec = new VMExecutionStep();
+            vmExec.execute(context);
+
+            // Step 7: Task Execution Analysis
+            TaskExecutionStep taskExec = new TaskExecutionStep();
+            taskExec.execute(context);
+
+            // Step 8: Energy Calculation
+            EnergyCalculationStep energyCalc = new EnergyCalculationStep();
+            energyCalc.execute(context);
+
+            double simMakespan = taskExec.getMakespan();
+            double simEnergy = energyCalc.getTotalITEnergyKWh();
+            simulatedResults.add(new double[]{simMakespan, simEnergy});
+
+            if ((i + 1) % 10 == 0 || i == paretoSolutions.size() - 1) {
+                System.out.printf("    Simulated %d/%d solutions (latest: makespan=%d s, energy=%.6f kWh)%n",
+                    i + 1, paretoSolutions.size(), (long) simMakespan, simEnergy);
+            }
+        }
+
+        return simulatedResults;
     }
 
     // =========================================================================
