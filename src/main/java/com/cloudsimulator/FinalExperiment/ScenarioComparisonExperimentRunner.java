@@ -93,7 +93,8 @@ public class ScenarioComparisonExperimentRunner {
     // SA temperature-scaled perturbation
     private static final boolean SA_SCALED_PERTURBATION = true;
     private static final int SA_MAX_PERTURBATION_MUTATIONS = 4;
-    private static final long RANDOM_SEED = 42L;
+    private static final long BASE_SEED = 200L;
+    private static final int NUM_RUNS = 10;
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
@@ -144,9 +145,9 @@ public class ScenarioComparisonExperimentRunner {
     // Scenario task distributions: [cpuTasks, gpuTasks]
     // More tasks than VMs to create contention and force real trade-offs
     private static final int[][] SCENARIO_TASK_COUNTS = {
-        {50, 50},   // Scenario 1: Balanced
-        {20, 80},   // Scenario 2: GPU Stress
-        {80, 20}    // Scenario 3: CPU Stress
+        {250, 250},  // Scenario 1: Balanced
+        {100, 400},  // Scenario 2: GPU Stress
+        {400, 100}   // Scenario 3: CPU Stress
     };
 
     private static final String[] SCENARIO_NAMES = {
@@ -194,7 +195,8 @@ public class ScenarioComparisonExperimentRunner {
         System.out.println("  SCENARIO COMPARISON EXPERIMENT RUNNER");
         System.out.println("  Algorithms: GA(M), GA(E), SA(M), SA(E), NSGA-II, SPEA-II, AMOSA");
         System.out.println("  Scenarios: Balanced, GPU Stress, CPU Stress");
-        System.out.println("  Seed: " + RANDOM_SEED);
+        System.out.println("  Seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + " (" + NUM_RUNS + " runs each)");
+        System.out.println("  Infrastructure: 40 hosts, 60 VMs, 500 tasks/scenario");
         System.out.println("============================================================");
         System.out.println();
 
@@ -220,30 +222,40 @@ public class ScenarioComparisonExperimentRunner {
 
             ScenarioResult scenarioResult = new ScenarioResult(scenarioNum, scenarioName);
 
-            // Build configuration for this scenario
-            ExperimentConfiguration baseConfig = buildScenarioConfig(scenarioNum);
-
-            // Run each algorithm
+            // Run each algorithm across all seeds
             for (String label : ALGORITHM_LABELS) {
                 System.out.println();
                 System.out.println("------------------------------------------------------------");
-                System.out.println("  Running: " + label + " (Scenario " + scenarioNum + ")");
+                System.out.println("  Running: " + label + " (Scenario " + scenarioNum +
+                    ", " + NUM_RUNS + " seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + ")");
                 System.out.println("------------------------------------------------------------");
 
-                try {
-                    AlgorithmResult result = runAlgorithm(label, baseConfig);
-                    scenarioResult.algorithmResults.put(label, result);
-                    System.out.println("  Completed in " + result.executionTimeMs + " ms, " +
-                        result.solutions.size() + " solution(s)");
-                } catch (Throwable e) {
-                    System.err.println("  ERROR running " + label + ": " + e.getMessage());
-                    e.printStackTrace();
-                    // Add empty result so we can continue
-                    List<double[]> empty = new ArrayList<>();
-                    empty.add(new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
-                    scenarioResult.algorithmResults.put(label,
-                        new AlgorithmResult(label, empty, 0));
+                List<double[]> allSolutions = new ArrayList<>();
+                long totalTime = 0;
+
+                for (int run = 0; run < NUM_RUNS; run++) {
+                    long seed = BASE_SEED + run;
+                    System.out.println("  [Run " + (run + 1) + "/" + NUM_RUNS + "] seed=" + seed);
+
+                    try {
+                        ExperimentConfiguration config = buildScenarioConfig(scenarioNum, seed);
+                        AlgorithmResult runResult = runAlgorithm(label, config, seed);
+                        allSolutions.addAll(runResult.solutions);
+                        totalTime += runResult.executionTimeMs;
+                        System.out.println("    Completed in " + runResult.executionTimeMs + " ms, " +
+                            runResult.solutions.size() + " solution(s)");
+                    } catch (Throwable e) {
+                        System.err.println("    ERROR in run " + (run + 1) + " (seed=" + seed + "): " + e.getMessage());
+                        e.printStackTrace();
+                        allSolutions.add(new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
+                    }
                 }
+
+                long avgTime = totalTime / NUM_RUNS;
+                AlgorithmResult aggregated = new AlgorithmResult(label, allSolutions, avgTime);
+                scenarioResult.algorithmResults.put(label, aggregated);
+                System.out.println("  " + label + " complete: " + allSolutions.size() +
+                    " total solutions across " + NUM_RUNS + " runs, avg time " + avgTime + " ms");
             }
 
             // Compute Universal Pareto front
@@ -286,68 +298,75 @@ public class ScenarioComparisonExperimentRunner {
     // CONFIGURATION BUILDER
     // =========================================================================
 
-    private static ExperimentConfiguration buildScenarioConfig(int scenario) {
+    private static ExperimentConfiguration buildScenarioConfig(int scenario, long seed) {
         ExperimentConfiguration config = new ExperimentConfiguration();
-        config.setRandomSeed(RANDOM_SEED);
+        config.setRandomSeed(seed);
 
         // 1 Datacenter
-        config.addDatacenterConfig(new DatacenterConfig("DC-Experiment", 20, 100000.0));
+        config.addDatacenterConfig(new DatacenterConfig("DC-Experiment", 50, 400000.0));
 
-        // 10 Hosts (4 CPU, 3 GPU, 3 MIXED)
-        for (int i = 0; i < 4; i++) {
+        // 40 Hosts (16 CPU, 12 GPU, 12 MIXED)
+        // RAM, bandwidth, and storage are generous so only CPU cores and GPUs constrain placement
+        for (int i = 0; i < 16; i++) {
             config.addHostConfig(new HostConfig(
                 2_500_000_000L, 16, ComputeType.CPU_ONLY, 0,
-                32768, 10000, 1048576, "StandardPowerModel"));
+                65536, 20000, 2097152, "StandardPowerModel"));
         }
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 12; i++) {
             config.addHostConfig(new HostConfig(
                 2_800_000_000L, 8, ComputeType.GPU_ONLY, 4,
-                32768, 10000, 1048576, "HighPerformancePowerModel"));
+                65536, 20000, 2097152, "HighPerformancePowerModel"));
         }
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 12; i++) {
             config.addHostConfig(new HostConfig(
                 3_000_000_000L, 32, ComputeType.CPU_GPU_MIXED, 4,
-                65536, 10000, 1048576, "HighPerformancePowerModel"));
+                131072, 20000, 2097152, "HighPerformancePowerModel"));
         }
 
-        // 15 VMs with DIVERSE speeds to create makespan-energy trade-off
+        // 60 VMs with DIVERSE speeds to create makespan-energy trade-off
         // Fast VMs: finish tasks quickly but consume more power (speed scaling ^1.5)
         // Slow VMs: take longer but are energy-efficient
-        // CPU VMs: 2 fast + 2 medium + 1 slow = 5
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 16B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 16B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // 4B IPS (slow)
+        // CPU VMs: 8 fast + 8 medium + 4 slow = 20
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // fast
+        }
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                2_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // medium
+        }
+        for (int i = 0; i < 4; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // slow
+        }
 
-        // GPU VMs: 2 fast + 2 medium + 1 slow = 5
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 16B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 16B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // 4B IPS (slow)
+        // GPU VMs: 8 fast + 8 medium + 4 slow = 20
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // fast
+        }
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // medium
+        }
+        for (int i = 0; i < 4; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // slow
+        }
 
-        // Mixed VMs: 2 fast + 2 medium + 1 slow = 5
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 14B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 14B IPS (fast)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 8B IPS (medium)
-        config.addVMConfig(new VMConfig("ExperimentUser",
-            1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // 4B IPS (slow)
+        // Mixed VMs: 8 fast + 8 medium + 4 slow = 20
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // fast
+        }
+        for (int i = 0; i < 8; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                2_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // medium
+        }
+        for (int i = 0; i < 4; i++) {
+            config.addVMConfig(new VMConfig("ExperimentUser",
+                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // slow
+        }
 
         // Tasks — scenario-specific distribution
         int idx = scenario - 1;
@@ -388,7 +407,7 @@ public class ScenarioComparisonExperimentRunner {
     // STRATEGY CREATION
     // =========================================================================
 
-    private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts) {
+    private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
         switch (label) {
             case "GA_Makespan":
                 return createGAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
@@ -399,11 +418,11 @@ public class ScenarioComparisonExperimentRunner {
             case "SA_Energy":
                 return createSAStrategy(createEnergyObjective(hosts), new MakespanObjective());
             case "NSGA-II":
-                return createNSGA2Strategy(hosts);
+                return createNSGA2Strategy(hosts, seed);
             case "SPEA-II":
-                return createSPEA2Strategy(hosts);
+                return createSPEA2Strategy(hosts, seed);
             case "AMOSA":
-                return createAMOSAStrategy(hosts);
+                return createAMOSAStrategy(hosts, seed);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -478,7 +497,7 @@ public class ScenarioComparisonExperimentRunner {
         return new SimulatedAnnealingTaskSchedulingStrategy(config);
     }
 
-    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts) {
+    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
@@ -489,7 +508,7 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(makespan)
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(GENERATIONS))
-            .randomSeed(RANDOM_SEED)
+            .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
@@ -497,7 +516,7 @@ public class ScenarioComparisonExperimentRunner {
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts) {
+    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
@@ -508,7 +527,7 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(makespan)
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(GENERATIONS))
-            .randomSeed(RANDOM_SEED)
+            .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
@@ -516,7 +535,7 @@ public class ScenarioComparisonExperimentRunner {
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts) {
+    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
@@ -527,7 +546,7 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(makespan)
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
-            .randomSeed(RANDOM_SEED)
+            .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
@@ -547,13 +566,13 @@ public class ScenarioComparisonExperimentRunner {
     // =========================================================================
 
     private static AlgorithmResult runAlgorithm(String label,
-            ExperimentConfiguration baseConfig) {
+            ExperimentConfiguration baseConfig, long seed) {
 
         long startTime = System.currentTimeMillis();
 
         // Clone config and reinitialize random generator
         ExperimentConfiguration config = baseConfig.clone();
-        RandomGenerator.initialize(RANDOM_SEED);
+        RandomGenerator.initialize(seed);
 
         // Fresh simulation context
         SimulationContext context = new SimulationContext();
@@ -576,7 +595,7 @@ public class ScenarioComparisonExperimentRunner {
         vmStep.execute(context);
 
         // Create strategy AFTER step 4 so hosts are available for EnergyObjective
-        TaskAssignmentStrategy strategy = createStrategy(label, context.getHosts());
+        TaskAssignmentStrategy strategy = createStrategy(label, context.getHosts(), seed);
 
         // Step 5: Task Assignment (TIMED)
         long assignStart = System.currentTimeMillis();
