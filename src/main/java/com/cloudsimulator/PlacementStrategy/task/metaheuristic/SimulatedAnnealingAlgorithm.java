@@ -65,6 +65,8 @@ public class SimulatedAnnealingAlgorithm {
     private double currentFitness;
     private double bestFitness;
     private double temperature;
+    private double initialTemperatureActual; // Actual T0 used (may be auto-calculated)
+    private int reheatsPerformed;
 
     /**
      * Creates a new Simulated Annealing algorithm.
@@ -146,6 +148,8 @@ public class SimulatedAnnealingAlgorithm {
         } else {
             temperature = config.getInitialTemperature();
         }
+        initialTemperatureActual = temperature;
+        reheatsPerformed = 0;
 
         // Store initial temperature for statistics
         algoStats.setInitialTemperature(temperature);
@@ -159,15 +163,37 @@ public class SimulatedAnnealingAlgorithm {
         if (config.isVerboseLogging()) {
             System.out.println("Initial temperature: " + temperature);
             System.out.println("Initial fitness: " + currentFitness);
+            if (config.isReheatEnabled()) {
+                System.out.println("Reheating: enabled (factor=" + config.getReheatFactor() +
+                    ", threshold=" + config.getReheatStagnationThreshold() +
+                    ", maxReheats=" + config.getMaxReheats() + ")");
+            }
+            if (config.isAdaptiveIterationsEnabled()) {
+                System.out.println("Adaptive iterations: enabled [" +
+                    config.getMinIterationsPerTemperature() + "-" +
+                    config.getMaxIterationsPerTemperature() + "]");
+            }
+            if (config.isTemperatureScaledPerturbation()) {
+                System.out.println("Temperature-scaled perturbation: enabled (max=" +
+                    config.getMaxPerturbationMutations() + " mutations)");
+            }
             System.out.println();
         }
 
         // Step 3: Main SA loop
         int temperatureStep = 0;
+        int noImprovementSteps = 0;
         CoolingSchedule coolingSchedule = config.getCoolingSchedule();
+        double previousAcceptanceRate = 1.0; // Start high for adaptive iterations
 
         while (!config.getTerminationCondition().shouldTerminate(algoStats)) {
             temperatureStep++;
+
+            // === Adaptive iterations-per-temperature ===
+            int iterationsThisStep = config.getIterationsPerTemperature();
+            if (config.isAdaptiveIterationsEnabled()) {
+                iterationsThisStep = calculateAdaptiveIterations(previousAcceptanceRate);
+            }
 
             // Track acceptance statistics for this temperature step
             int accepted = 0;
@@ -175,8 +201,8 @@ public class SimulatedAnnealingAlgorithm {
             int improving = 0;
 
             // Inner loop: equilibrium at fixed temperature
-            for (int i = 0; i < config.getIterationsPerTemperature(); i++) {
-                // Generate random neighbor s'
+            for (int i = 0; i < iterationsThisStep; i++) {
+                // Generate random neighbor s' (with temperature-scaled perturbation)
                 SchedulingSolution neighbor = generateNeighbor(currentSolution);
 
                 // Evaluate neighbor
@@ -217,7 +243,14 @@ public class SimulatedAnnealingAlgorithm {
             }
 
             // Calculate acceptance rate for this temperature step
-            double acceptanceRate = (double) accepted / (accepted + rejected);
+            double acceptanceRate = (accepted + rejected) > 0
+                ? (double) accepted / (accepted + rejected) : 0.0;
+            previousAcceptanceRate = acceptanceRate;
+
+            // Track no-improvement steps for reheating
+            double previousBest = statistics.getGlobalBestFitness();
+            boolean improved = isBetter(bestFitness, previousBest)
+                || (statistics.getCurrentTemperatureStep() == 0); // First step always counts
 
             // Update statistics
             statistics.updateTemperatureStep(temperatureStep, temperature,
@@ -226,6 +259,31 @@ public class SimulatedAnnealingAlgorithm {
             // Log progress
             if (config.isVerboseLogging() && temperatureStep % config.getLogInterval() == 0) {
                 System.out.println(statistics.formatCurrentTemperatureStep());
+            }
+
+            // === Reheating on stagnation ===
+            if (config.isReheatEnabled()) {
+                noImprovementSteps = statistics.getNoImprovementSteps();
+                if (noImprovementSteps >= config.getReheatStagnationThreshold()
+                        && reheatsPerformed < config.getMaxReheats()) {
+                    double oldTemp = temperature;
+                    temperature = temperature * config.getReheatFactor();
+                    // Cap at initial temperature to avoid excessive exploration
+                    temperature = Math.min(temperature, initialTemperatureActual);
+                    reheatsPerformed++;
+
+                    if (config.isVerboseLogging()) {
+                        System.out.printf(
+                            "  [REHEAT %d/%d] Stagnation at step %d (no improvement for %d steps). " +
+                            "Temperature: %.4f -> %.4f%n",
+                            reheatsPerformed, config.getMaxReheats(),
+                            temperatureStep, noImprovementSteps, oldTemp, temperature);
+                    }
+
+                    // Reset current solution to best known to search from the best basin
+                    currentSolution = bestSolution.copy();
+                    currentFitness = bestFitness;
+                }
             }
 
             // Temperature update: T = g(T)
@@ -252,6 +310,9 @@ public class SimulatedAnnealingAlgorithm {
         if (config.isVerboseLogging()) {
             System.out.println("\n=== SA Completed ===");
             System.out.println(statistics);
+            if (config.isReheatEnabled()) {
+                System.out.println("Reheats performed: " + reheatsPerformed + "/" + config.getMaxReheats());
+            }
         }
 
         return bestSolution;
@@ -284,6 +345,9 @@ public class SimulatedAnnealingAlgorithm {
 
     /**
      * Generates a neighbor solution by applying mutation.
+     * When temperature-scaled perturbation is enabled, the number of mutations
+     * scales with the current temperature: more mutations at high T (large jumps),
+     * single mutation at low T (fine-grained search).
      *
      * @param solution Current solution
      * @return Neighbor solution
@@ -291,14 +355,58 @@ public class SimulatedAnnealingAlgorithm {
     private SchedulingSolution generateNeighbor(SchedulingSolution solution) {
         SchedulingSolution neighbor = solution.copy();
 
-        // Apply single mutation to create neighbor
-        // Use a high mutation rate to ensure at least one change
-        neighborOperator.mutateSingle(neighbor);
+        if (config.isTemperatureScaledPerturbation() && initialTemperatureActual > 0) {
+            // Scale mutations: max at T_initial, 1 at T ≈ 0
+            double temperatureRatio = temperature / initialTemperatureActual;
+            int maxMut = config.getMaxPerturbationMutations();
+            int numMutations = 1 + (int) (temperatureRatio * (maxMut - 1));
+            numMutations = Math.max(1, Math.min(numMutations, maxMut));
+
+            if (numMutations > 1) {
+                neighborOperator.mutateMultiple(neighbor, numMutations);
+            } else {
+                neighborOperator.mutateSingle(neighbor);
+            }
+        } else {
+            // Standard: single mutation per neighbor
+            neighborOperator.mutateSingle(neighbor);
+        }
 
         // Repair if needed
         repairOperator.repair(neighbor);
 
         return neighbor;
+    }
+
+    /**
+     * Calculates the number of iterations for the current temperature step
+     * based on the previous step's acceptance rate.
+     *
+     * - High acceptance (> highThreshold): random walk phase, fewer iterations
+     * - Low acceptance (< lowThreshold): stuck phase, fewer iterations
+     * - Moderate acceptance: productive exploration, more iterations
+     *
+     * @param acceptanceRate Previous step's acceptance rate
+     * @return Number of iterations for this temperature step
+     */
+    private int calculateAdaptiveIterations(double acceptanceRate) {
+        int min = config.getMinIterationsPerTemperature();
+        int max = config.getMaxIterationsPerTemperature();
+        double highThresh = config.getAdaptiveIterHighAcceptanceThreshold();
+        double lowThresh = config.getAdaptiveIterLowAcceptanceThreshold();
+
+        if (acceptanceRate > highThresh || acceptanceRate < lowThresh) {
+            // Non-productive phase: use minimum iterations
+            return min;
+        } else {
+            // Productive phase: scale up toward maximum
+            // Peak at the midpoint between thresholds
+            double midpoint = (highThresh + lowThresh) / 2.0;
+            double halfRange = (highThresh - lowThresh) / 2.0;
+            double distanceFromMid = Math.abs(acceptanceRate - midpoint);
+            double productivity = 1.0 - (distanceFromMid / halfRange);
+            return min + (int) (productivity * (max - min));
+        }
     }
 
     /**

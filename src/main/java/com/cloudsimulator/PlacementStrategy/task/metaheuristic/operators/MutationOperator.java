@@ -207,6 +207,48 @@ public class MutationOperator {
         return mutated;
     }
 
+    /**
+     * Applies multiple sequential single-mutations to the solution.
+     * Used for temperature-scaled perturbation in SA: at high temperatures,
+     * larger perturbations (more mutations) allow bigger jumps in the search space.
+     *
+     * @param solution The solution to mutate
+     * @param count    Number of mutations to apply (each on a random task)
+     * @return true if any mutation was applied
+     */
+    public boolean mutateMultiple(SchedulingSolution solution, int count) {
+        boolean anyMutated = false;
+        for (int i = 0; i < count; i++) {
+            int taskIdx = random.nextInt(solution.getNumTasks());
+
+            MutationType actualType = type;
+            if (type == MutationType.COMBINED) {
+                actualType = random.nextBoolean() ? MutationType.REASSIGN : MutationType.SWAP_ORDER;
+            }
+
+            boolean mutated;
+            switch (actualType) {
+                case REASSIGN:
+                    mutated = reassignMutation(solution, taskIdx);
+                    break;
+                case SWAP_ORDER:
+                    mutated = swapOrderMutation(solution, taskIdx);
+                    break;
+                case MOVE:
+                    mutated = moveMutation(solution, taskIdx);
+                    break;
+                default:
+                    mutated = reassignMutation(solution, taskIdx);
+            }
+            anyMutated |= mutated;
+        }
+
+        if (anyMutated) {
+            solution.invalidate();
+        }
+        return anyMutated;
+    }
+
     public MutationType getType() {
         return type;
     }
