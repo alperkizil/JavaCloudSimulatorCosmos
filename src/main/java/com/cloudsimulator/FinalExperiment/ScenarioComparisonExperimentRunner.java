@@ -160,14 +160,16 @@ public class ScenarioComparisonExperimentRunner {
 
     static class AlgorithmResult {
         final String label;
+        final long seed;
         final List<double[]> solutions; // each: [makespan, energy]
         final long executionTimeMs;
         List<double[]> nonDominatedSolutions;
         double hv, gd, igd, spacing;
         int paretoContribution;
 
-        AlgorithmResult(String label, List<double[]> solutions, long executionTimeMs) {
+        AlgorithmResult(String label, long seed, List<double[]> solutions, long executionTimeMs) {
             this.label = label;
+            this.seed = seed;
             this.solutions = solutions;
             this.executionTimeMs = executionTimeMs;
         }
@@ -176,7 +178,8 @@ public class ScenarioComparisonExperimentRunner {
     static class ScenarioResult {
         final int scenarioNumber;
         final String scenarioName;
-        final Map<String, AlgorithmResult> algorithmResults = new LinkedHashMap<>();
+        // Per-seed results: algorithmLabel -> list of AlgorithmResult (one per seed)
+        final Map<String, List<AlgorithmResult>> perSeedResults = new LinkedHashMap<>();
         List<double[]> universalParetoSet;
         double universalHV;
 
@@ -222,7 +225,7 @@ public class ScenarioComparisonExperimentRunner {
 
             ScenarioResult scenarioResult = new ScenarioResult(scenarioNum, scenarioName);
 
-            // Run each algorithm across all seeds
+            // Run each algorithm across all seeds, storing per-seed results
             for (String label : ALGORITHM_LABELS) {
                 System.out.println();
                 System.out.println("------------------------------------------------------------");
@@ -230,8 +233,7 @@ public class ScenarioComparisonExperimentRunner {
                     ", " + NUM_RUNS + " seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + ")");
                 System.out.println("------------------------------------------------------------");
 
-                List<double[]> allSolutions = new ArrayList<>();
-                long totalTime = 0;
+                List<AlgorithmResult> seedResults = new ArrayList<>();
 
                 for (int run = 0; run < NUM_RUNS; run++) {
                     long seed = BASE_SEED + run;
@@ -240,28 +242,29 @@ public class ScenarioComparisonExperimentRunner {
                     try {
                         ExperimentConfiguration config = buildScenarioConfig(scenarioNum, seed);
                         AlgorithmResult runResult = runAlgorithm(label, config, seed);
-                        allSolutions.addAll(runResult.solutions);
-                        totalTime += runResult.executionTimeMs;
+                        seedResults.add(runResult);
                         System.out.println("    Completed in " + runResult.executionTimeMs + " ms, " +
                             runResult.solutions.size() + " solution(s)");
                     } catch (Throwable e) {
                         System.err.println("    ERROR in run " + (run + 1) + " (seed=" + seed + "): " + e.getMessage());
                         e.printStackTrace();
-                        allSolutions.add(new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
+                        List<double[]> fallback = new ArrayList<>();
+                        fallback.add(new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
+                        seedResults.add(new AlgorithmResult(label, seed, fallback, 0));
                     }
                 }
 
-                long avgTime = totalTime / NUM_RUNS;
-                AlgorithmResult aggregated = new AlgorithmResult(label, allSolutions, avgTime);
-                scenarioResult.algorithmResults.put(label, aggregated);
-                System.out.println("  " + label + " complete: " + allSolutions.size() +
+                scenarioResult.perSeedResults.put(label, seedResults);
+                long avgTime = seedResults.stream().mapToLong(r -> r.executionTimeMs).sum() / NUM_RUNS;
+                int totalSolutions = seedResults.stream().mapToInt(r -> r.solutions.size()).sum();
+                System.out.println("  " + label + " complete: " + totalSolutions +
                     " total solutions across " + NUM_RUNS + " runs, avg time " + avgTime + " ms");
             }
 
-            // Compute Universal Pareto front
+            // Compute Universal Pareto front from all solutions across all seeds
             System.out.println();
             System.out.println("  Computing Universal Pareto front...");
-            scenarioResult.universalParetoSet = computeUniversalPareto(scenarioResult.algorithmResults);
+            scenarioResult.universalParetoSet = computeUniversalPareto(scenarioResult.perSeedResults);
             System.out.println("  Universal Pareto size: " + scenarioResult.universalParetoSet.size());
 
             // Calculate Pareto contributions
@@ -638,7 +641,7 @@ public class ScenarioComparisonExperimentRunner {
         }
 
         long endTime = System.currentTimeMillis();
-        return new AlgorithmResult(label, solutions, endTime - startTime);
+        return new AlgorithmResult(label, seed, solutions, endTime - startTime);
     }
 
     // =========================================================================
@@ -727,11 +730,13 @@ public class ScenarioComparisonExperimentRunner {
     // =========================================================================
 
     private static List<double[]> computeUniversalPareto(
-            Map<String, AlgorithmResult> algorithmResults) {
+            Map<String, List<AlgorithmResult>> perSeedResults) {
 
         List<double[]> allSolutions = new ArrayList<>();
-        for (AlgorithmResult result : algorithmResults.values()) {
-            allSolutions.addAll(result.solutions);
+        for (List<AlgorithmResult> seedResults : perSeedResults.values()) {
+            for (AlgorithmResult result : seedResults) {
+                allSolutions.addAll(result.solutions);
+            }
         }
 
         List<double[]> universalPareto = new ArrayList<>();
@@ -813,45 +818,25 @@ public class ScenarioComparisonExperimentRunner {
 
     private static void calculateParetoContributions(ScenarioResult scenarioResult) {
         System.out.println("  Pareto contributions:");
-        for (AlgorithmResult algoResult : scenarioResult.algorithmResults.values()) {
-            int contribution = 0;
-            for (double[] sol : algoResult.solutions) {
-                if (isInUniversalPareto(sol, scenarioResult.universalParetoSet)) {
-                    contribution++;
+        for (Map.Entry<String, List<AlgorithmResult>> entry : scenarioResult.perSeedResults.entrySet()) {
+            int totalContribution = 0;
+            for (AlgorithmResult ar : entry.getValue()) {
+                int contribution = 0;
+                for (double[] sol : ar.solutions) {
+                    if (isInUniversalPareto(sol, scenarioResult.universalParetoSet)) {
+                        contribution++;
+                    }
                 }
+                ar.paretoContribution = contribution;
+                totalContribution += contribution;
             }
-            algoResult.paretoContribution = contribution;
-            System.out.println("    " + algoResult.label + ": " + contribution +
-                " / " + scenarioResult.universalParetoSet.size());
+            System.out.println("    " + entry.getKey() + ": " + totalContribution +
+                " / " + scenarioResult.universalParetoSet.size() + " (across " + NUM_RUNS + " seeds)");
         }
     }
 
     private static void calculatePerformanceMetrics(ScenarioResult scenarioResult) {
-        ArrayList<ArrayList<ArrayList<Double>>> allParetos = new ArrayList<>();
-
-        List<String> algoOrder = new ArrayList<>(scenarioResult.algorithmResults.keySet());
-
-        for (String label : algoOrder) {
-            AlgorithmResult algoResult = scenarioResult.algorithmResults.get(label);
-            algoResult.nonDominatedSolutions = filterToNonDominated(algoResult.solutions);
-
-            ArrayList<ArrayList<Double>> paretoList = new ArrayList<>();
-            for (double[] sol : algoResult.nonDominatedSolutions) {
-                ArrayList<Double> point = new ArrayList<>();
-                point.add(sol[0]);
-                point.add(sol[1]);
-                paretoList.add(point);
-            }
-            if (paretoList.isEmpty()) {
-                ArrayList<Double> dummy = new ArrayList<>();
-                dummy.add(Double.MAX_VALUE);
-                dummy.add(Double.MAX_VALUE);
-                paretoList.add(dummy);
-            }
-            allParetos.add(paretoList);
-        }
-
-        // Universal Pareto as reference (last index)
+        // Build universal Pareto reference list (shared across all per-seed computations)
         ArrayList<ArrayList<Double>> universalList = new ArrayList<>();
         for (double[] sol : scenarioResult.universalParetoSet) {
             ArrayList<Double> point = new ArrayList<>();
@@ -859,31 +844,54 @@ public class ScenarioComparisonExperimentRunner {
             point.add(sol[1]);
             universalList.add(point);
         }
-        allParetos.add(universalList);
 
-        int referenceIndex = allParetos.size() - 1;
-        PerformanceMetrics pm = new PerformanceMetrics(allParetos, referenceIndex);
+        // Compute universal HV once
+        ArrayList<ArrayList<ArrayList<Double>>> universalOnly = new ArrayList<>();
+        universalOnly.add(universalList);
+        PerformanceMetrics universalPM = new PerformanceMetrics(universalOnly, 0);
+        scenarioResult.universalHV = universalPM.HV(0);
 
-        int index = 0;
-        for (String label : algoOrder) {
-            AlgorithmResult algoResult = scenarioResult.algorithmResults.get(label);
-            try {
-                algoResult.hv = pm.HV(index);
-                algoResult.gd = pm.GD(index);
-                algoResult.igd = pm.IGD(index);
-                algoResult.spacing = algoResult.nonDominatedSolutions.size() > 1
-                    ? pm.Spacing(index) : 0.0;
-            } catch (Exception e) {
-                System.err.println("  WARNING: Metrics failed for " + label + ": " + e.getMessage());
-                algoResult.hv = 0;
-                algoResult.gd = Double.MAX_VALUE;
-                algoResult.igd = Double.MAX_VALUE;
-                algoResult.spacing = 0;
+        // Compute per-seed metrics for each algorithm against the universal Pareto
+        for (Map.Entry<String, List<AlgorithmResult>> entry : scenarioResult.perSeedResults.entrySet()) {
+            for (AlgorithmResult ar : entry.getValue()) {
+                ar.nonDominatedSolutions = filterToNonDominated(ar.solutions);
+
+                ArrayList<ArrayList<Double>> seedParetoList = new ArrayList<>();
+                for (double[] sol : ar.nonDominatedSolutions) {
+                    ArrayList<Double> point = new ArrayList<>();
+                    point.add(sol[0]);
+                    point.add(sol[1]);
+                    seedParetoList.add(point);
+                }
+                if (seedParetoList.isEmpty()) {
+                    ArrayList<Double> dummy = new ArrayList<>();
+                    dummy.add(Double.MAX_VALUE);
+                    dummy.add(Double.MAX_VALUE);
+                    seedParetoList.add(dummy);
+                }
+
+                // Build 2-entry array: [0] = this seed's solutions, [1] = universal reference
+                ArrayList<ArrayList<ArrayList<Double>>> pair = new ArrayList<>();
+                pair.add(seedParetoList);
+                pair.add(universalList);
+                PerformanceMetrics pm = new PerformanceMetrics(pair, 1);
+
+                try {
+                    ar.hv = pm.HV(0);
+                    ar.gd = pm.GD(0);
+                    ar.igd = pm.IGD(0);
+                    ar.spacing = ar.nonDominatedSolutions.size() > 1
+                        ? pm.Spacing(0) : 0.0;
+                } catch (Exception e) {
+                    System.err.println("  WARNING: Metrics failed for " + ar.label +
+                        " seed=" + ar.seed + ": " + e.getMessage());
+                    ar.hv = 0;
+                    ar.gd = Double.MAX_VALUE;
+                    ar.igd = Double.MAX_VALUE;
+                    ar.spacing = 0;
+                }
             }
-            index++;
         }
-
-        scenarioResult.universalHV = pm.HV(referenceIndex);
     }
 
     // =========================================================================
@@ -893,23 +901,47 @@ public class ScenarioComparisonExperimentRunner {
     private static void printScenarioSummary(ScenarioResult result) {
         System.out.println();
         System.out.println("============================================================");
-        System.out.println("  SCENARIO " + result.scenarioNumber + " (" + result.scenarioName + ") RESULTS");
+        System.out.println("  SCENARIO " + result.scenarioNumber + " (" + result.scenarioName +
+            ") RESULTS (mean ± stddev over " + NUM_RUNS + " seeds)");
         System.out.println("============================================================");
-        System.out.printf("%-15s | %-10s | %-10s | %-10s | %-10s | %-6s | %-5s%n",
-            "Algorithm", "HV", "GD", "IGD", "Spacing", "NDSol", "PCont");
-        System.out.println("-".repeat(80));
+        System.out.printf("%-15s | %-18s | %-18s | %-18s | %-18s | %-6s%n",
+            "Algorithm", "HV", "GD", "IGD", "Spacing", "PCont");
+        System.out.println("-".repeat(105));
 
-        for (AlgorithmResult ar : result.algorithmResults.values()) {
-            int ndCount = ar.nonDominatedSolutions != null
-                ? ar.nonDominatedSolutions.size() : ar.solutions.size();
-            System.out.printf("%-15s | %-10.6f | %-10.6f | %-10.6f | %-10.6f | %-6d | %-5d%n",
-                ar.label, ar.hv, ar.gd, ar.igd, ar.spacing, ndCount, ar.paretoContribution);
+        for (Map.Entry<String, List<AlgorithmResult>> entry : result.perSeedResults.entrySet()) {
+            List<AlgorithmResult> seeds = entry.getValue();
+            double[] hvs = seeds.stream().mapToDouble(a -> a.hv).toArray();
+            double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
+            double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
+            double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
+            int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+
+            System.out.printf("%-15s | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %-6d%n",
+                entry.getKey(),
+                mean(hvs), stddev(hvs),
+                mean(gds), stddev(gds),
+                mean(igds), stddev(igds),
+                mean(spacings), stddev(spacings),
+                totalPCont);
         }
 
-        System.out.printf("%-15s | %-10.6f | %-10s | %-10s | %-10s | %-6d | %-5d%n",
+        System.out.printf("%-15s | %-18.6f | %-18s | %-18s | %-18s | %-6d%n",
             "Universal", result.universalHV, "-", "-", "-",
-            result.universalParetoSet.size(), result.universalParetoSet.size());
-        System.out.println("-".repeat(80));
+            result.universalParetoSet.size());
+        System.out.println("-".repeat(105));
+    }
+
+    private static double mean(double[] values) {
+        double sum = 0;
+        for (double v : values) sum += v;
+        return sum / values.length;
+    }
+
+    private static double stddev(double[] values) {
+        double m = mean(values);
+        double sumSq = 0;
+        for (double v : values) sumSq += (v - m) * (v - m);
+        return Math.sqrt(sumSq / values.length);
     }
 
     // =========================================================================
@@ -919,20 +951,22 @@ public class ScenarioComparisonExperimentRunner {
     private static void generateScenarioCSVs(ScenarioResult result) {
         Path outputDir = Paths.get(REPORTS_DIR);
 
-        // 1. Pareto graph data CSV
+        // 1. Pareto graph data CSV (with seed column)
         String graphFile = "scenario_" + result.scenarioNumber + "_pareto_graph_data.csv";
         try (PrintWriter w = new PrintWriter(new FileWriter(outputDir.resolve(graphFile).toFile()))) {
-            w.println("Algorithm,Makespan,Energy,IsUniversalPareto");
+            w.println("Algorithm,Seed,Makespan,Energy,IsUniversalPareto");
 
-            for (AlgorithmResult ar : result.algorithmResults.values()) {
-                for (double[] sol : ar.solutions) {
-                    boolean isUniv = isInUniversalPareto(sol, result.universalParetoSet);
-                    w.printf("%s,%.6f,%.9f,%b%n", ar.label, sol[0], sol[1], isUniv);
+            for (Map.Entry<String, List<AlgorithmResult>> entry : result.perSeedResults.entrySet()) {
+                for (AlgorithmResult ar : entry.getValue()) {
+                    for (double[] sol : ar.solutions) {
+                        boolean isUniv = isInUniversalPareto(sol, result.universalParetoSet);
+                        w.printf("%s,%d,%.6f,%.9f,%b%n", ar.label, ar.seed, sol[0], sol[1], isUniv);
+                    }
                 }
             }
 
             for (double[] sol : result.universalParetoSet) {
-                w.printf("Universal_Pareto,%.6f,%.9f,true%n", sol[0], sol[1]);
+                w.printf("Universal_Pareto,0,%.6f,%.9f,true%n", sol[0], sol[1]);
             }
 
             System.out.println("  Wrote: " + graphFile);
@@ -940,20 +974,45 @@ public class ScenarioComparisonExperimentRunner {
             System.err.println("  ERROR writing " + graphFile + ": " + e.getMessage());
         }
 
-        // 2. Performance metrics CSV
+        // 2. Performance metrics CSV — per-seed rows + MEAN/STDDEV summary rows
         String metricsFile = "scenario_" + result.scenarioNumber + "_performance_metrics.csv";
         try (PrintWriter w = new PrintWriter(new FileWriter(outputDir.resolve(metricsFile).toFile()))) {
-            w.println("Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,TimeMs");
+            w.println("Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,TimeMs");
 
-            for (AlgorithmResult ar : result.algorithmResults.values()) {
-                int ndCount = ar.nonDominatedSolutions != null
-                    ? ar.nonDominatedSolutions.size() : ar.solutions.size();
-                w.printf("%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d%n",
-                    ar.label, ar.hv, ar.gd, ar.igd, ar.spacing,
-                    ndCount, ar.solutions.size(), ar.paretoContribution, ar.executionTimeMs);
+            for (Map.Entry<String, List<AlgorithmResult>> entry : result.perSeedResults.entrySet()) {
+                String label = entry.getKey();
+                List<AlgorithmResult> seeds = entry.getValue();
+
+                // Per-seed rows
+                for (AlgorithmResult ar : seeds) {
+                    int ndCount = ar.nonDominatedSolutions != null
+                        ? ar.nonDominatedSolutions.size() : ar.solutions.size();
+                    w.printf("%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d%n",
+                        ar.label, ar.seed, ar.hv, ar.gd, ar.igd, ar.spacing,
+                        ndCount, ar.solutions.size(), ar.paretoContribution, ar.executionTimeMs);
+                }
+
+                // MEAN row
+                double[] hvs = seeds.stream().mapToDouble(a -> a.hv).toArray();
+                double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
+                double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
+                double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
+                double avgND = seeds.stream().mapToInt(a -> a.nonDominatedSolutions != null
+                    ? a.nonDominatedSolutions.size() : a.solutions.size()).average().orElse(0);
+                double avgTotal = seeds.stream().mapToInt(a -> a.solutions.size()).average().orElse(0);
+                int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                long avgTime = seeds.stream().mapToLong(a -> a.executionTimeMs).sum() / seeds.size();
+
+                w.printf("%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d%n",
+                    label, mean(hvs), mean(gds), mean(igds), mean(spacings),
+                    avgND, avgTotal, totalPCont, avgTime);
+
+                // STDDEV row
+                w.printf("%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,%n",
+                    label, stddev(hvs), stddev(gds), stddev(igds), stddev(spacings));
             }
 
-            w.printf("Universal_Pareto,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0%n",
+            w.printf("Universal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0%n",
                 result.universalHV, result.universalParetoSet.size(),
                 result.universalParetoSet.size(), result.universalParetoSet.size());
 
@@ -971,22 +1030,48 @@ public class ScenarioComparisonExperimentRunner {
         Path filePath = Paths.get(REPORTS_DIR, "experiment_summary.csv");
 
         try (PrintWriter w = new PrintWriter(new FileWriter(filePath.toFile()))) {
-            w.println("Scenario,ScenarioName,Algorithm,HV,GD,IGD,Spacing,NonDomSolutions,ParetoContribution,TimeMs,Makespan_Best,Energy_Best");
+            w.println("Scenario,ScenarioName,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,ParetoContribution,TimeMs,Makespan_Best,Energy_Best");
 
             for (ScenarioResult sr : allResults) {
-                for (AlgorithmResult ar : sr.algorithmResults.values()) {
-                    double bestMakespan = ar.solutions.stream()
-                        .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
-                    double bestEnergy = ar.solutions.stream()
-                        .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
-                    int ndCount = ar.nonDominatedSolutions != null
-                        ? ar.nonDominatedSolutions.size() : ar.solutions.size();
+                for (Map.Entry<String, List<AlgorithmResult>> entry : sr.perSeedResults.entrySet()) {
+                    String label = entry.getKey();
+                    List<AlgorithmResult> seeds = entry.getValue();
 
-                    w.printf("%d,%s,%s,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f%n",
-                        sr.scenarioNumber, sr.scenarioName, ar.label,
-                        ar.hv, ar.gd, ar.igd, ar.spacing,
-                        ndCount, ar.paretoContribution, ar.executionTimeMs,
-                        bestMakespan, bestEnergy);
+                    // Per-seed rows
+                    for (AlgorithmResult ar : seeds) {
+                        double bestMakespan = ar.solutions.stream()
+                            .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
+                        double bestEnergy = ar.solutions.stream()
+                            .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
+                        int ndCount = ar.nonDominatedSolutions != null
+                            ? ar.nonDominatedSolutions.size() : ar.solutions.size();
+
+                        w.printf("%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f%n",
+                            sr.scenarioNumber, sr.scenarioName, ar.label, ar.seed,
+                            ar.hv, ar.gd, ar.igd, ar.spacing,
+                            ndCount, ar.paretoContribution, ar.executionTimeMs,
+                            bestMakespan, bestEnergy);
+                    }
+
+                    // MEAN row
+                    double[] hvs = seeds.stream().mapToDouble(a -> a.hv).toArray();
+                    double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
+                    double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
+                    double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
+                    int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                    long avgTime = seeds.stream().mapToLong(a -> a.executionTimeMs).sum() / seeds.size();
+                    double bestMakespanAll = seeds.stream()
+                        .flatMap(a -> a.solutions.stream())
+                        .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
+                    double bestEnergyAll = seeds.stream()
+                        .flatMap(a -> a.solutions.stream())
+                        .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
+
+                    w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f%n",
+                        sr.scenarioNumber, sr.scenarioName, label,
+                        mean(hvs), mean(gds), mean(igds), mean(spacings),
+                        totalPCont, avgTime,
+                        bestMakespanAll, bestEnergyAll);
                 }
             }
 
