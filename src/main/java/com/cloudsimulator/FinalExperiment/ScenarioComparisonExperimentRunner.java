@@ -97,17 +97,20 @@ public class ScenarioComparisonExperimentRunner {
 
     // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
     // so high T means LESS acceptance of worse solutions).
-    // Key insight: ΔDom is a PRODUCT of normalized objective differences — for 2 objectives
-    // with 30% differences, ΔDom ≈ 0.09. We need ΔDom*T in the 1-10 range for the sigmoid
-    // to actually differentiate solutions, requiring T in the 10-100 range.
-    private static final double AMOSA_INITIAL_TEMPERATURE = 100.0;  // Was 5.0 — now gives meaningful selection pressure
-    private static final double AMOSA_ALPHA = 0.95;  // Was 0.98 — faster cooling sweeps useful T range within 40k budget
-    private static final int AMOSA_HARD_LIMIT = 50;   // Was 100 — proper HL < SL for clustering to actually prune
+    // ΔDom is a PRODUCT of normalized diffs — for 2 objectives with 30% diffs, ΔDom ≈ 0.09.
+    //
+    // Budget allocation (gamma=2.0, SL=100, hillClimbing=50):
+    //   Init: 200 solutions × 50 hill-climb iters = ~10,200 evals (25% of budget)
+    //   Main loop: ~29,800 evals → 149 temp steps at 200 iters/step
+    //   T sweep: 30 × 0.95^149 ≈ 0.014 (acceptance: 6% → 50%)
+    private static final double AMOSA_INITIAL_TEMPERATURE = 30.0;  // ~6% acceptance at start (not frozen like T=100)
+    private static final double AMOSA_ALPHA = 0.95;  // Sweep from selective→permissive within budget
+    private static final int AMOSA_HARD_LIMIT = 50;   // Proper HL < SL for clustering to prune effectively
     private static final int AMOSA_SOFT_LIMIT = 100;
-    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;  // Was 500 — more temp steps (200 vs 80) = smoother cooling
-    private static final int AMOSA_HILL_CLIMBING_ITERS = 100;  // Was 50 — better initial archive quality
-    private static final double AMOSA_GAMMA = 2.0;  // Was 3.0 — smaller initial archive focuses hill climbing effort
-    private static final double AMOSA_MUTATION_RATE = 0.01; // Was 0.10 — ~1 task/mutation, appropriate for SA-based search
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;  // 149 temp steps = smooth cooling
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;   // 25% of budget on init, 75% on main loop
+    private static final double AMOSA_GAMMA = 2.0;  // 200 initial solutions for archive seeding
+    private static final double AMOSA_MUTATION_RATE = 0.01; // ~1 task/mutation, appropriate for SA-based search
 
     private static final String REPORTS_DIR = "reports/scenario_comparison";
 
