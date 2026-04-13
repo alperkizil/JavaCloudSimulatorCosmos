@@ -255,10 +255,15 @@ public class ScenarioComparisonExperimentRunner {
                 }
 
                 scenarioResult.perSeedResults.put(label, seedResults);
-                long avgTime = seedResults.stream().mapToLong(r -> r.executionTimeMs).sum() / NUM_RUNS;
+                long successCount = seedResults.stream().filter(r -> r.executionTimeMs > 0).count();
+                long avgTime = successCount > 0
+                    ? seedResults.stream().filter(r -> r.executionTimeMs > 0)
+                        .mapToLong(r -> r.executionTimeMs).sum() / successCount
+                    : 0;
                 int totalSolutions = seedResults.stream().mapToInt(r -> r.solutions.size()).sum();
                 System.out.println("  " + label + " complete: " + totalSolutions +
-                    " total solutions across " + NUM_RUNS + " runs, avg time " + avgTime + " ms");
+                    " total solutions across " + NUM_RUNS + " runs (" + successCount +
+                    " successful), avg time " + avgTime + " ms");
             }
 
             // Compute Universal Pareto front from all solutions across all seeds
@@ -1001,7 +1006,11 @@ public class ScenarioComparisonExperimentRunner {
                     ? a.nonDominatedSolutions.size() : a.solutions.size()).average().orElse(0);
                 double avgTotal = seeds.stream().mapToInt(a -> a.solutions.size()).average().orElse(0);
                 int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
-                long avgTime = seeds.stream().mapToLong(a -> a.executionTimeMs).sum() / seeds.size();
+                long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
+                long avgTime = successfulRuns > 0
+                    ? seeds.stream().filter(a -> a.executionTimeMs > 0)
+                        .mapToLong(a -> a.executionTimeMs).sum() / successfulRuns
+                    : 0;
 
                 w.printf("%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d%n",
                     label, mean(hvs), mean(gds), mean(igds), mean(spacings),
@@ -1059,7 +1068,11 @@ public class ScenarioComparisonExperimentRunner {
                     double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
                     double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
                     int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
-                    long avgTime = seeds.stream().mapToLong(a -> a.executionTimeMs).sum() / seeds.size();
+                    long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
+                long avgTime = successfulRuns > 0
+                    ? seeds.stream().filter(a -> a.executionTimeMs > 0)
+                        .mapToLong(a -> a.executionTimeMs).sum() / successfulRuns
+                    : 0;
                     double bestMakespanAll = seeds.stream()
                         .flatMap(a -> a.solutions.stream())
                         .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
