@@ -23,28 +23,52 @@ Usage:
 import csv
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 REPORTS_BASE = Path("reports")
 SUMMARY_FILE = "experiment_summary.csv"
 
 # Metrics where lower is better
-LOWER_IS_BETTER = {"GD", "IGD", "Makespan_Best", "Energy_Best", "TimeMs"}
+LOWER_IS_BETTER = {"GD", "IGD", "Spacing", "Makespan_Best", "Energy_Best", "TimeMs"}
 # Metrics where higher is better
-HIGHER_IS_BETTER = {"HV", "NonDomSolutions", "ParetoContribution", "Spacing"}
+HIGHER_IS_BETTER = {"HV", "NonDomSolutions", "ParetoContribution"}
 
 METRIC_COLS = ["HV", "GD", "IGD", "Spacing", "NonDomSolutions", "ParetoContribution", "TimeMs", "Makespan_Best", "Energy_Best"]
 
 
+TIMESTAMP_FORMAT = "%d_%m_%Y_%H_%M"
+
+
+def _parse_run_timestamp(run_dir):
+    """Try to parse folder name as dd_MM_yyyy_HH_mm. Returns datetime or None."""
+    try:
+        return datetime.strptime(run_dir.name, TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+
+
 def discover_runs(base_dir):
-    """Find all timestamped experiment run directories, sorted oldest-first."""
+    """Find all experiment run directories, sorted chronologically (oldest-first).
+
+    Folders with dd_MM_yyyy_HH_mm names are sorted by parsed timestamp.
+    Non-timestamped folders (e.g. manually renamed) are placed at the front
+    in lexicographic order, since their actual date is unknown.
+    """
     if not base_dir.exists():
         return []
-    runs = []
-    for entry in sorted(base_dir.iterdir()):
+    timestamped = []
+    other = []
+    for entry in base_dir.iterdir():
         if entry.is_dir() and (entry / SUMMARY_FILE).exists():
-            runs.append(entry)
-    return runs
+            ts = _parse_run_timestamp(entry)
+            if ts is not None:
+                timestamped.append((ts, entry))
+            else:
+                other.append(entry)
+    timestamped.sort(key=lambda x: x[0])
+    other.sort(key=lambda x: x.name)
+    return [e for e in other] + [e for _, e in timestamped]
 
 
 def load_summary(run_dir):
