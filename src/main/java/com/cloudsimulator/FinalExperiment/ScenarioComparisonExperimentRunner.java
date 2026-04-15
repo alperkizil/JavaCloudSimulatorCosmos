@@ -59,6 +59,8 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public class ScenarioComparisonExperimentRunner {
@@ -116,7 +118,8 @@ public class ScenarioComparisonExperimentRunner {
     private static final double AMOSA_GAMMA = 2.0;  // 200 initial solutions for archive seeding
     private static final double AMOSA_MUTATION_RATE = 0.01; // ~1 task/mutation, appropriate for SA-based search
 
-    private static final String REPORTS_DIR = "reports/scenario_comparison";
+    private static final String REPORTS_BASE_DIR = "reports";
+    private static String REPORTS_DIR; // Set at runtime with timestamp
 
     private static final String[] ALGORITHM_LABELS = {
         "GA_Makespan", "GA_Energy", "SA_Makespan", "SA_Energy",
@@ -193,6 +196,10 @@ public class ScenarioComparisonExperimentRunner {
     // =========================================================================
 
     public static void main(String[] args) {
+        // Stamp output folder with current date-time (dd_MM_yyyy_HH_mm)
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd_MM_yyyy_HH_mm"));
+        REPORTS_DIR = REPORTS_BASE_DIR + "/" + timestamp;
+
         System.out.println("============================================================");
         System.out.println("  SCENARIO COMPARISON EXPERIMENT RUNNER");
         System.out.println("  Algorithms: GA(M), GA(E), SA(M), SA(E), NSGA-II, SPEA-II, AMOSA");
