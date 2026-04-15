@@ -3,7 +3,7 @@
 Cross-Experiment Comparison Tool for JavaCloudSimulatorCosmos
 
 Compares algorithm performance across different timestamped experiment runs
-in reports/scenario_comparison/<timestamp>/.
+in reports/<timestamp>/.
 
 Reads experiment_summary.csv from each run and produces:
   1. Console table showing metric deltas (before vs after)
@@ -14,7 +14,7 @@ Usage:
     python scripts/compare_experiments.py
 
     # Compare two specific runs:
-    python scripts/compare_experiments.py reports/scenario_comparison/15_04_2026_10_38 reports/scenario_comparison/16_04_2026_14_22
+    python scripts/compare_experiments.py reports/15_04_2026_10_38 reports/16_04_2026_14_22
 
     # Compare all available runs:
     python scripts/compare_experiments.py --all
@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-REPORTS_BASE = Path("reports/scenario_comparison")
+REPORTS_BASE = Path("reports")
 SUMMARY_FILE = "experiment_summary.csv"
 
 # Metrics where lower is better

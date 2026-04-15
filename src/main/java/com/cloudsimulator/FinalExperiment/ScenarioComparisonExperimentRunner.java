@@ -118,7 +118,7 @@ public class ScenarioComparisonExperimentRunner {
     private static final double AMOSA_GAMMA = 2.0;  // 200 initial solutions for archive seeding
     private static final double AMOSA_MUTATION_RATE = 0.01; // ~1 task/mutation, appropriate for SA-based search
 
-    private static final String REPORTS_BASE_DIR = "reports/scenario_comparison";
+    private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
 
     private static final String[] ALGORITHM_LABELS = {
