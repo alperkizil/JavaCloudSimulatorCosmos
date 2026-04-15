@@ -67,7 +67,7 @@ public class ScenarioComparisonExperimentRunner {
     // ALGORITHM PARAMETERS
     // =========================================================================
     private static final int POPULATION_SIZE = 200;
-    private static final int GENERATIONS = 200;
+    private static final int ITERATION_COUNT = 40000; // Total evaluation budget for ALL algorithms
     private static final double CROSSOVER_RATE = 0.95;
     private static final double MUTATION_RATE = 0.05;
     private static final double GA_ELITE_PERCENTAGE = 0.20;  // 20% of population
@@ -77,7 +77,6 @@ public class ScenarioComparisonExperimentRunner {
     private static final double SA_INITIAL_ACCEPTANCE_PROBABILITY = 0.8;
     private static final int SA_TEMPERATURE_SAMPLE_SIZE = 100;
     private static final int SA_ITERATIONS_PER_TEMP = 200; // Base (overridden by adaptive iterations)
-    private static final int SA_TOTAL_EVALUATIONS = 40000;
 
     // SA reheating: escape local optima when stagnating
     private static final boolean SA_REHEAT_ENABLED = true;
@@ -453,7 +452,7 @@ public class ScenarioComparisonExperimentRunner {
             .tournamentSize(GA_TOURNAMENT_SIZE)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
-            .terminationCondition(new GenerationCountTermination(GENERATIONS - 1)) // -1: initial pop eval counts toward 40k budget
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1)) // -1: initial pop eval counts toward budget
             .verboseLogging(VERBOSE_LOGGING)
             .build();
         return new GenerationalGATaskSchedulingStrategy(config);
@@ -474,7 +473,7 @@ public class ScenarioComparisonExperimentRunner {
         // Retuned adaptive cooling: higher target, slower rates for more thorough search
         builder.coolingSchedule(new AdaptiveCoolingSchedule(0.5, 0.15, 0.90, 0.97, 0.995))
                .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
-               .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS));
+               .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT));
 
         // Reheating on stagnation
         if (SA_REHEAT_ENABLED) {
@@ -515,7 +514,7 @@ public class ScenarioComparisonExperimentRunner {
             .mutationRate(MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
-            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
@@ -534,7 +533,7 @@ public class ScenarioComparisonExperimentRunner {
             .mutationRate(MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
-            .terminationCondition(new GenerationCountTermination(GENERATIONS))
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
@@ -553,7 +552,7 @@ public class ScenarioComparisonExperimentRunner {
             .mutationRate(AMOSA_MUTATION_RATE)
             .addObjective(makespan)
             .addObjective(energy)
-            .terminationCondition(new FitnessEvaluationsTermination(SA_TOTAL_EVALUATIONS))
+            .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
             .randomSeed(seed)
             .verboseLogging(VERBOSE_LOGGING)
             .build();
