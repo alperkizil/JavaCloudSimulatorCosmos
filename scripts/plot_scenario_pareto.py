@@ -173,58 +173,168 @@ def detect_objective_columns(df):
 
 
 # =============================================================================
+# GLOBAL NORMALIZATION (single ideal/nadir across all scenarios + seeds)
+# =============================================================================
+
+def compute_global_bounds(all_pareto_data, x_col, y_col):
+    xs, ys = [], []
+    for df in all_pareto_data.values():
+        xs.extend(df[x_col].values.tolist())
+        ys.extend(df[y_col].values.tolist())
+    xs = np.array(xs, dtype=float)
+    ys = np.array(ys, dtype=float)
+    return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())
+
+
+def normalize_points(pts, bounds):
+    ideal_x, ideal_y, nadir_x, nadir_y = bounds
+    range_x = max(nadir_x - ideal_x, 1e-12)
+    range_y = max(nadir_y - ideal_y, 1e-12)
+    pts = np.asarray(pts, dtype=float)
+    out = np.empty_like(pts)
+    out[:, 0] = (pts[:, 0] - ideal_x) / range_x
+    out[:, 1] = (pts[:, 1] - ideal_y) / range_y
+    return out
+
+
+# =============================================================================
+# EAF — Empirical Attainment Function across seeds (grid-based)
+# =============================================================================
+
+def compute_eaf_grid(seed_fronts, grid_x, grid_y):
+    """
+    Attainment frequency over a 2D grid. seed_fronts is a list of non-dominated
+    point arrays (already normalized). Returns an array of shape
+    (len(grid_y), len(grid_x)) with values in [0, 1].
+    """
+    N = len(seed_fronts)
+    if N == 0:
+        return np.zeros((len(grid_y), len(grid_x)))
+    thresholds = np.full((N, len(grid_x)), np.inf)
+    for i, front in enumerate(seed_fronts):
+        if len(front) == 0:
+            continue
+        order = np.argsort(front[:, 0])
+        fs = front[order]
+        cum_min = np.minimum.accumulate(fs[:, 1])
+        idx = np.searchsorted(fs[:, 0], grid_x, side='right') - 1
+        valid = idx >= 0
+        thresholds[i, valid] = cum_min[idx[valid]]
+    freq = np.zeros((len(grid_y), len(grid_x)))
+    for j in range(len(grid_x)):
+        col = np.sort(thresholds[:, j])
+        counts = np.searchsorted(col, grid_y, side='right')
+        freq[:, j] = counts / N
+    return freq
+
+
+# =============================================================================
+# HV SUMMARY + KNEE POINT + LEGEND LABEL FORMATTING
+# =============================================================================
+
+def compute_hv_summary(all_metrics_data):
+    """algo -> (median, q25, q75) across all (scenario, seed) pairs."""
+    rows = []
+    for df in all_metrics_data.values():
+        rows.append(df[df['Algorithm'] != 'Universal_Pareto'][['Algorithm', 'HV']])
+    if not rows:
+        return {}
+    all_hv = pd.concat(rows, ignore_index=True)
+    out = {}
+    for algo, sub in all_hv.groupby('Algorithm'):
+        vals = sub['HV'].values
+        out[algo] = (float(np.median(vals)),
+                     float(np.percentile(vals, 25)),
+                     float(np.percentile(vals, 75)))
+    return out
+
+
+def format_hv_suffix(hv_stats):
+    if hv_stats is None:
+        return ''
+    med, q25, q75 = hv_stats
+    return f'  HV={med:.2f} [{q25:.2f},{q75:.2f}]'
+
+
+def knee_point(front):
+    if len(front) < 3:
+        return None
+    x0, y0 = front[0]
+    xn, yn = front[-1]
+    a = yn - y0
+    b = -(xn - x0)
+    c = -(a * x0 + b * y0)
+    denom = np.hypot(a, b)
+    if denom < 1e-12:
+        return None
+    dists = np.abs(a * front[:, 0] + b * front[:, 1] + c) / denom
+    return front[int(np.argmax(dists))]
+
+
+# =============================================================================
 # PARETO FRONT PLOTTING
 # =============================================================================
 
-def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, config):
+def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, bounds, hv_summary, config):
     ax.set_title(f'Scenario {scenario_num}: {SCENARIO_NAMES.get(scenario_num, "Unknown")}')
-    ax.set_xlabel(axis_label(x_col))
-    ax.set_ylabel(axis_label(y_col))
+    ax.set_xlabel(f'{axis_label(x_col)}  (normalized)')
+    ax.set_ylabel(f'{axis_label(y_col)}  (normalized)')
+    ax.set_xlim(-0.03, 1.05)
+    ax.set_ylim(-0.03, 1.05)
     ax.grid(True, which='major')
 
     algorithms = [a for a in df['Algorithm'].unique() if a != 'Universal_Pareto']
     marker_size = config.get('marker_size', 10)
+    grid_x = np.linspace(0.0, 1.05, 220)
+    grid_y = np.linspace(0.0, 1.05, 220)
 
     for algo in algorithms:
         algo_df = df[df['Algorithm'] == algo]
-        points = algo_df[[x_col, y_col]].values
         color, marker, filled, display = get_style(algo)
         face = color if filled else 'none'
+        label = f'{display}{format_hv_suffix(hv_summary.get(algo))}'
 
         if algo in SINGLE_OBJ_ALGORITHMS:
-            ax.scatter(
-                points[:, 0], points[:, 1],
-                s=marker_size * 18, marker=marker,
-                facecolors=face, edgecolors=color, linewidths=1.2,
-                label=display, zorder=5,
+            pts = normalize_points(algo_df[[x_col, y_col]].values, bounds)
+            if len(pts) == 0:
+                continue
+            mx, my = float(np.median(pts[:, 0])), float(np.median(pts[:, 1]))
+            qx = np.percentile(pts[:, 0], [25, 75])
+            qy = np.percentile(pts[:, 1], [25, 75])
+            ax.errorbar(
+                mx, my,
+                xerr=[[max(mx - qx[0], 0.0)], [max(qx[1] - mx, 0.0)]],
+                yerr=[[max(my - qy[0], 0.0)], [max(qy[1] - my, 0.0)]],
+                fmt=marker, markersize=float(np.sqrt(marker_size * 18)),
+                markerfacecolor=face, markeredgecolor=color, markeredgewidth=1.2,
+                ecolor=color, elinewidth=0.9, capsize=3, capthick=0.9,
+                label=label, zorder=5,
             )
         else:
-            nd_points = get_non_dominated(points)
-            # Seed cloud behind the aggregated front.
-            ax.scatter(
-                points[:, 0], points[:, 1],
-                s=marker_size * 3, marker=marker,
-                facecolors=face if filled else 'none',
-                edgecolors=color, linewidths=0.6,
-                alpha=0.35, zorder=3,
-            )
-            if len(nd_points) > 1:
-                ax.plot(
-                    nd_points[:, 0], nd_points[:, 1],
-                    color=color, linewidth=1.5, alpha=0.9,
-                    label=display, zorder=4,
-                )
-            elif len(nd_points) == 1:
-                ax.scatter(
-                    nd_points[:, 0], nd_points[:, 1],
-                    s=marker_size * 8, marker=marker,
-                    facecolors=face, edgecolors=color, linewidths=1.0,
-                    label=display, zorder=4,
-                )
+            seed_fronts = []
+            for _, seed_df in algo_df.groupby('Seed'):
+                pts = normalize_points(seed_df[[x_col, y_col]].values, bounds)
+                nd = get_non_dominated(pts)
+                if len(nd) > 0:
+                    seed_fronts.append(nd)
+            if not seed_fronts:
+                continue
+            freq = compute_eaf_grid(seed_fronts, grid_x, grid_y)
+            try:
+                ax.contourf(grid_x, grid_y, freq, levels=[0.25, 0.75],
+                            colors=[color], alpha=0.18, zorder=2)
+            except ValueError:
+                pass
+            try:
+                ax.contour(grid_x, grid_y, freq, levels=[0.5],
+                           colors=[color], linewidths=1.6, zorder=4)
+            except ValueError:
+                pass
+            ax.plot([], [], color=color, linewidth=1.6, label=label)
 
     univ_df = df[df['Algorithm'] == 'Universal_Pareto']
     if not univ_df.empty:
-        univ_pts = univ_df[[x_col, y_col]].values
+        univ_pts = normalize_points(univ_df[[x_col, y_col]].values, bounds)
         univ_sorted = univ_pts[np.argsort(univ_pts[:, 0])]
         ax.plot(
             univ_sorted[:, 0], univ_sorted[:, 1],
@@ -238,6 +348,41 @@ def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, config):
             edgecolors=UNIVERSAL_PARETO_COLOR, linewidths=0.4,
             zorder=7,
         )
+        kp = knee_point(univ_sorted)
+        if kp is not None:
+            ax.annotate(
+                'knee',
+                xy=(kp[0], kp[1]),
+                xytext=(18, 18), textcoords='offset points',
+                fontsize=8, style='italic', color=UNIVERSAL_PARETO_COLOR,
+                arrowprops=dict(arrowstyle='-', color=UNIVERSAL_PARETO_COLOR,
+                                lw=0.6, shrinkA=0, shrinkB=2),
+                zorder=8,
+            )
+
+    # Ideal-point reference marker at (0, 0)
+    ax.scatter([0.0], [0.0], marker='*', s=140,
+               facecolor='white', edgecolor='black', linewidths=0.9, zorder=8)
+    ax.annotate('ideal', xy=(0.0, 0.0), xytext=(6, 6),
+                textcoords='offset points', fontsize=8, style='italic')
+
+    # Secondary axes in raw units (global bounds → same ticks on every panel)
+    ideal_x, ideal_y, nadir_x, nadir_y = bounds
+    range_x = max(nadir_x - ideal_x, 1e-12)
+    range_y = max(nadir_y - ideal_y, 1e-12)
+    secx = ax.secondary_xaxis(
+        'top',
+        functions=(lambda u, a=ideal_x, r=range_x: a + u * r,
+                   lambda v, a=ideal_x, r=range_x: (v - a) / r),
+    )
+    secx.set_xlabel(axis_label(x_col), fontsize=9, labelpad=4)
+    secx.tick_params(labelsize=8)
+    secy = ax.secondary_yaxis(
+        'right',
+        functions=(lambda u, a=ideal_y, r=range_y: a + u * r,
+                   lambda v, a=ideal_y, r=range_y: (v - a) / r),
+    )
+    secy.tick_params(labelsize=8)
 
 
 def plot_metrics_comparison(axes, all_metrics, config):
@@ -322,6 +467,15 @@ def process_directory(reports_dir):
 
     print(f'  Objectives detected: X={x_col}, Y={y_col}')
 
+    # Global (ideal, nadir) across all scenarios/algorithms/seeds.
+    bounds = compute_global_bounds(all_pareto_data, x_col, y_col)
+    ideal_x, ideal_y, nadir_x, nadir_y = bounds
+    print(f'  Global bounds: {x_col} in [{ideal_x:.3g}, {nadir_x:.3g}], '
+          f'{y_col} in [{ideal_y:.3g}, {nadir_y:.3g}]')
+
+    # HV summary across all (scenario, seed) pairs — inlined into legend labels.
+    hv_summary = compute_hv_summary(all_metrics_data)
+
     # --- Figure 1: Pareto fronts ---
     n = len(all_pareto_data)
     fig_width = config.get('width', 18)
@@ -331,7 +485,8 @@ def process_directory(reports_dir):
         axes = [axes]
 
     for i, (scenario_num, df) in enumerate(sorted(all_pareto_data.items())):
-        plot_scenario_pareto(axes[i], df, scenario_num, x_col, y_col, config)
+        plot_scenario_pareto(axes[i], df, scenario_num, x_col, y_col,
+                             bounds, hv_summary, config)
 
     handles, labels = axes[0].get_legend_handles_labels()
     for ax in axes:
@@ -341,14 +496,25 @@ def process_directory(reports_dir):
     if config.get('show_legend', True) and handles:
         fig.legend(
             handles, labels, loc='lower center',
-            ncol=min(len(labels), 8),
-            bbox_to_anchor=(0.5, -0.02),
+            ncol=min(len(labels), 4),
+            bbox_to_anchor=(0.5, -0.06),
             frameon=True, fancybox=False, edgecolor='#888888',
         )
 
-    suptitle = f'Scenario Comparison: Pareto Fronts ({axis_label(x_col)} vs {axis_label(y_col)})'
-    fig.suptitle(suptitle, y=1.02)
-    fig.tight_layout()
+    suptitle = (f'Scenario Comparison: Pareto Fronts '
+                f'({axis_label(x_col)} vs {axis_label(y_col)})')
+    fig.suptitle(suptitle, y=1.03)
+    caption = (
+        'Multi-objective algorithms: 50% empirical attainment surface with '
+        '[25%, 75%] band across 10 seeds. Single-objective algorithms: '
+        'median with IQR error bars. '
+        'Axes globally normalized to ideal (0,0) and nadir (1,1); '
+        'raw units on the top/right axes. '
+        f'HV reported as median [IQR] across all (scenario, seed) runs.'
+    )
+    fig.text(0.5, 0.965, caption, ha='center', fontsize=8.5, style='italic',
+             color='#333333', wrap=True)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
 
     pareto_path = os.path.join(reports_dir, 'scenario_pareto_fronts.png')
     fig.savefig(pareto_path, dpi=config.get('dpi', 300), bbox_inches='tight')
