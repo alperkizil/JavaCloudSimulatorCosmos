@@ -73,14 +73,31 @@ public class WaitingTimeExperimentRunner {
     private static final int ITERATION_COUNT = 40000;
     private static final double CROSSOVER_RATE = 0.95;
     private static final double MUTATION_RATE = 0.05;
+    private static final double GA_ELITE_PERCENTAGE = 0.20;
+    private static final int GA_TOURNAMENT_SIZE = 5;
+    private static final boolean SA_AUTO_TEMPERATURE = true;
+    private static final double SA_INITIAL_ACCEPTANCE_PROBABILITY = 0.8;
+    private static final int SA_TEMPERATURE_SAMPLE_SIZE = 100;
+    private static final int SA_ITERATIONS_PER_TEMP = 200;
+    private static final boolean SA_REHEAT_ENABLED = true;
+    private static final double SA_REHEAT_FACTOR = 5.0;
+    private static final int SA_REHEAT_STAGNATION_THRESHOLD = 15;
+    private static final int SA_MAX_REHEATS = 3;
+    private static final boolean SA_ADAPTIVE_ITERATIONS = true;
+    private static final int SA_MIN_ITERS_PER_TEMP = 50;
+    private static final int SA_MAX_ITERS_PER_TEMP = 400;
+    private static final boolean SA_SCALED_PERTURBATION = true;
+    private static final int SA_MAX_PERTURBATION_MUTATIONS = 4;
     private static final long BASE_SEED = 200L;
     private static final int NUM_RUNS = 10;
     private static final boolean VERBOSE_LOGGING = true;
+    private static final double TIEBREAKER_WEIGHT = 0.001;
 
     private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
 
     private static final String[] ALGORITHM_LABELS = {
+        "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
         "NSGA-II", "SPEA-II"
     };
 
@@ -160,7 +177,7 @@ public class WaitingTimeExperimentRunner {
 
         System.out.println("============================================================");
         System.out.println("  WAITING TIME vs ENERGY EXPERIMENT RUNNER");
-        System.out.println("  Algorithms: NSGA-II, SPEA-II");
+        System.out.println("  Algorithms: GA(WT), GA(E), SA(WT), SA(E), NSGA-II, SPEA-II");
         System.out.println("  Objectives: WaitingTime (s) vs Energy (kWh)");
         System.out.println("  Scenarios: Balanced, GPU Stress, CPU Stress");
         System.out.println("  Seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + " (" + NUM_RUNS + " runs each)");
@@ -382,6 +399,14 @@ public class WaitingTimeExperimentRunner {
 
     private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
         switch (label) {
+            case "GA_WaitingTime":
+                return createGAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
+            case "GA_Energy":
+                return createGAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective());
+            case "SA_WaitingTime":
+                return createSAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
+            case "SA_Energy":
+                return createSAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective());
             case "NSGA-II":
                 return createNSGA2Strategy(hosts, seed);
             case "SPEA-II":
@@ -389,6 +414,70 @@ public class WaitingTimeExperimentRunner {
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
+    }
+
+    private static EnergyObjective createEnergyObjective(List<Host> hosts) {
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        return energy;
+    }
+
+    private static TaskAssignmentStrategy createGAStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
+        GAConfiguration config = GAConfiguration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .elitePercentage(GA_ELITE_PERCENTAGE)
+            .tournamentSize(GA_TOURNAMENT_SIZE)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
+            .verboseLogging(VERBOSE_LOGGING)
+            .build();
+        return new GenerationalGATaskSchedulingStrategy(config);
+    }
+
+    private static TaskAssignmentStrategy createSAStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
+        SAConfiguration.Builder builder = SAConfiguration.builder();
+
+        if (SA_AUTO_TEMPERATURE) {
+            builder.autoInitialTemperature(true)
+                   .initialAcceptanceProbability(SA_INITIAL_ACCEPTANCE_PROBABILITY)
+                   .temperatureSampleSize(SA_TEMPERATURE_SAMPLE_SIZE);
+        }
+
+        builder.coolingSchedule(new AdaptiveCoolingSchedule(0.5, 0.15, 0.90, 0.97, 0.995))
+               .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
+               .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT));
+
+        if (SA_REHEAT_ENABLED) {
+            builder.reheatEnabled(true)
+                   .reheatFactor(SA_REHEAT_FACTOR)
+                   .reheatStagnationThreshold(SA_REHEAT_STAGNATION_THRESHOLD)
+                   .maxReheats(SA_MAX_REHEATS);
+        }
+
+        if (SA_ADAPTIVE_ITERATIONS) {
+            builder.adaptiveIterationsEnabled(true)
+                   .adaptiveIterationsBounds(SA_MIN_ITERS_PER_TEMP, SA_MAX_ITERS_PER_TEMP)
+                   .adaptiveIterationsThresholds(0.7, 0.1);
+        }
+
+        if (SA_SCALED_PERTURBATION) {
+            builder.temperatureScaledPerturbation(true)
+                   .maxPerturbationMutations(SA_MAX_PERTURBATION_MUTATIONS);
+        }
+
+        builder.addWeightedObjective(primaryObjective, 1.0)
+               .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+               .verboseLogging(VERBOSE_LOGGING);
+
+        SAConfiguration config = builder.build();
+        return new SimulatedAnnealingTaskSchedulingStrategy(config);
     }
 
     private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed) {
