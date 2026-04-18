@@ -419,31 +419,27 @@ def plot_runtime_and_efficiency(reports_dir, all_metrics_data, quality_df, confi
     rows = []
     for s, df in all_metrics_data.items():
         sub = df[df['Algorithm'] != 'Universal_Pareto'][
-            ['Algorithm', 'Seed', 'TimeMs']
+            ['Algorithm', 'Seed', 'TimeMs', 'HV']
         ].copy()
         sub['Scenario'] = s
         rows.append(sub)
     time_df = pd.concat(rows, ignore_index=True)
+
+    # Drop MEAN/STDDEV summary rows — Seed then coerces cleanly to int and
+    # aligns with the numeric Seed column in quality_indicators_all_scenarios.csv.
+    time_df = time_df[pd.to_numeric(time_df['Seed'], errors='coerce').notna()].copy()
+    time_df['Seed'] = time_df['Seed'].astype(int)
     time_df['TimeSec'] = time_df['TimeMs'].astype(float) / 1000.0
 
     if quality_df is not None and 'HV_fixed' in quality_df.columns:
+        q = quality_df[['Scenario', 'Algorithm', 'Seed', 'HV_fixed']].copy()
+        q['Seed'] = q['Seed'].astype(int)
         merged = time_df.merge(
-            quality_df[['Scenario', 'Algorithm', 'Seed', 'HV_fixed']],
-            on=['Scenario', 'Algorithm', 'Seed'], how='left',
+            q, on=['Scenario', 'Algorithm', 'Seed'], how='left',
         )
         hv_col = 'HV_fixed'
     else:
-        hv_rows = []
-        for s, df in all_metrics_data.items():
-            sub = df[df['Algorithm'] != 'Universal_Pareto'][
-                ['Algorithm', 'Seed', 'HV']
-            ].copy()
-            sub['Scenario'] = s
-            hv_rows.append(sub)
-        hv_src = pd.concat(hv_rows, ignore_index=True)
-        merged = time_df.merge(
-            hv_src, on=['Scenario', 'Algorithm', 'Seed'], how='left',
-        )
+        merged = time_df
         hv_col = 'HV'
     merged['HVperSec'] = merged[hv_col] / merged['TimeSec'].clip(lower=1e-9)
 
