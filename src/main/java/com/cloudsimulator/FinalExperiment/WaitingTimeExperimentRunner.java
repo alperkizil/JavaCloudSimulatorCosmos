@@ -93,12 +93,30 @@ public class WaitingTimeExperimentRunner {
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
+    // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
+    // so high T means LESS acceptance of worse solutions).
+    // ΔDom uses GEOMETRIC MEAN of normalized diffs — for 2 objectives with 30% diffs,
+    // geo-mean ΔDom ≈ 0.3. This gives the sigmoid proper discrimination.
+    //
+    // Budget allocation (gamma=2.0, SL=100, hillClimbing=50):
+    //   Init: 200 solutions × 50 hill-climb iters = ~10,200 evals (25% of budget)
+    //   Main loop: ~29,800 evals → 142 temp steps at 200 iters/step
+    //   T sweep: 15 × 0.95^142 ≈ 0.011 (acceptance: 1-18% → ~50%)
+    private static final double AMOSA_INITIAL_TEMPERATURE = 15.0;
+    private static final double AMOSA_ALPHA = 0.95;
+    private static final int AMOSA_HARD_LIMIT = 50;
+    private static final int AMOSA_SOFT_LIMIT = 100;
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;
+    private static final double AMOSA_GAMMA = 2.0;
+    private static final double AMOSA_MUTATION_RATE = 0.01;
+
     private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
 
     private static final String[] ALGORITHM_LABELS = {
         "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
-        "NSGA-II", "SPEA-II"
+        "NSGA-II", "SPEA-II", "AMOSA"
     };
 
     // CPU workload types (6)
@@ -177,7 +195,7 @@ public class WaitingTimeExperimentRunner {
 
         System.out.println("============================================================");
         System.out.println("  WAITING TIME vs ENERGY EXPERIMENT RUNNER");
-        System.out.println("  Algorithms: GA(WT), GA(E), SA(WT), SA(E), NSGA-II, SPEA-II");
+        System.out.println("  Algorithms: GA(WT), GA(E), SA(WT), SA(E), NSGA-II, SPEA-II, AMOSA");
         System.out.println("  Objectives: WaitingTime (s) vs Energy (kWh)");
         System.out.println("  Scenarios: Balanced, GPU Stress, CPU Stress");
         System.out.println("  Seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + " (" + NUM_RUNS + " runs each)");
@@ -411,6 +429,8 @@ public class WaitingTimeExperimentRunner {
                 return createNSGA2Strategy(hosts, seed);
             case "SPEA-II":
                 return createSPEA2Strategy(hosts, seed);
+            case "AMOSA":
+                return createAMOSAStrategy(hosts, seed);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -515,6 +535,32 @@ public class WaitingTimeExperimentRunner {
             .build();
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
+        return strategy;
+    }
+
+    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed) {
+        WaitingTimeObjective waitingTime = new WaitingTimeObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration config = NSGA2Configuration.builder()
+            .populationSize(AMOSA_SOFT_LIMIT)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(AMOSA_MUTATION_RATE)
+            .addObjective(waitingTime)
+            .addObjective(energy)
+            .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
+            .randomSeed(seed)
+            .verboseLogging(VERBOSE_LOGGING)
+            .build();
+        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
+        strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
+        strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
+        strategy.setAlpha(AMOSA_ALPHA);
+        strategy.setSoftLimit(AMOSA_SOFT_LIMIT);
+        strategy.setHardLimit(AMOSA_HARD_LIMIT);
+        strategy.setGamma(AMOSA_GAMMA);
+        strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
+        strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
         return strategy;
     }
 
