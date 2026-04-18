@@ -183,11 +183,25 @@ def detect_objective_columns(df):
 # GLOBAL NORMALIZATION (single ideal/nadir across all scenarios + seeds)
 # =============================================================================
 
-def compute_global_bounds(all_pareto_data, x_col, y_col):
+# Algorithms whose extreme values would stretch normalization and compress the
+# rest of the field into an unreadable corner. Excluded from bounds computation
+# only — their points are still plotted (and may land at/past the axis edge,
+# which is the honest visual summary of "this baseline is pathologically bad").
+BOUNDS_EXCLUDED_ALGORITHMS = {'FirstAvailable'}
+
+
+def compute_global_bounds(all_pareto_data, x_col, y_col,
+                          exclude_algorithms=BOUNDS_EXCLUDED_ALGORITHMS):
     xs, ys = [], []
     for df in all_pareto_data.values():
-        xs.extend(df[x_col].values.tolist())
-        ys.extend(df[y_col].values.tolist())
+        sub = df[~df['Algorithm'].isin(exclude_algorithms)]
+        xs.extend(sub[x_col].values.tolist())
+        ys.extend(sub[y_col].values.tolist())
+    if not xs:
+        # Fallback: unfiltered if excluded set removed everything.
+        for df in all_pareto_data.values():
+            xs.extend(df[x_col].values.tolist())
+            ys.extend(df[y_col].values.tolist())
     xs = np.array(xs, dtype=float)
     ys = np.array(ys, dtype=float)
     return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())
@@ -324,10 +338,24 @@ def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, bounds, hv_summary,
             mx, my = float(np.median(pts[:, 0])), float(np.median(pts[:, 1]))
             qx = np.percentile(pts[:, 0], [25, 75])
             qy = np.percentile(pts[:, 1], [25, 75])
+            # Baselines with extreme values (e.g. FirstAvailable) are excluded
+            # from bounds computation and may land past the axis. Clamp the
+            # marker to the corner and tag the legend so it stays visible.
+            x_max, y_max = 1.02, 1.02
+            off_chart = mx > x_max or my > y_max
+            if off_chart:
+                mx_disp = min(mx, x_max)
+                my_disp = min(my, y_max)
+                label = f'{label}  (off-chart)'
+                xerr = None
+                yerr = None
+            else:
+                mx_disp, my_disp = mx, my
+                xerr = [[max(mx - qx[0], 0.0)], [max(qx[1] - mx, 0.0)]]
+                yerr = [[max(my - qy[0], 0.0)], [max(qy[1] - my, 0.0)]]
             ax.errorbar(
-                mx, my,
-                xerr=[[max(mx - qx[0], 0.0)], [max(qx[1] - mx, 0.0)]],
-                yerr=[[max(my - qy[0], 0.0)], [max(qy[1] - my, 0.0)]],
+                mx_disp, my_disp,
+                xerr=xerr, yerr=yerr,
                 fmt=marker, markersize=float(np.sqrt(marker_size * 18)),
                 markerfacecolor=face, markeredgecolor=color, markeredgewidth=1.2,
                 ecolor=color, elinewidth=0.9, capsize=3, capthick=0.9,
@@ -639,10 +667,14 @@ def process_directory(reports_dir):
 
     print(f'  Objectives detected: X={x_col}, Y={y_col}')
 
-    # Global (ideal, nadir) across all scenarios/algorithms/seeds.
+    # Global (ideal, nadir) across all scenarios/algorithms/seeds — excluding
+    # pathological baselines whose extreme values would compress the rest of
+    # the field into an unreadable corner.
     bounds = compute_global_bounds(all_pareto_data, x_col, y_col)
     ideal_x, ideal_y, nadir_x, nadir_y = bounds
-    print(f'  Global bounds: {x_col} in [{ideal_x:.3g}, {nadir_x:.3g}], '
+    excluded = sorted(BOUNDS_EXCLUDED_ALGORITHMS)
+    print(f'  Global bounds (excluding {excluded}): '
+          f'{x_col} in [{ideal_x:.3g}, {nadir_x:.3g}], '
           f'{y_col} in [{ideal_y:.3g}, {nadir_y:.3g}]')
 
     # Recomputed quality indicators (if recompute_hv.py has been run) take
