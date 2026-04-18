@@ -25,6 +25,10 @@ import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancin
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
@@ -69,6 +73,22 @@ public class WaitingTimeExperimentRunner {
     // =========================================================================
     // ALGORITHM PARAMETERS
     // =========================================================================
+
+    // ---- WHICH ALGORITHMS TO RUN ----
+    // Edit this list to include/exclude algorithms. Comment out lines to skip.
+    // Available: FirstAvailable, ShortestQueue, WorkloadAware, RoundRobin,
+    //            GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy,
+    //            NSGA-II, SPEA-II, AMOSA
+    // Ordering here controls the order they appear in CSVs and plots.
+    private static final String[] ALGORITHM_LABELS = {
+        // Baseline heuristics (deterministic, non-preemptive, fast)
+        "FirstAvailable", "ShortestQueue", "WorkloadAware", "RoundRobin",
+        // Single-objective metaheuristics
+        "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
+        // Multi-objective metaheuristics
+        "NSGA-II", "SPEA-II", "AMOSA"
+    };
+
     private static final int POPULATION_SIZE = 200;
     private static final int ITERATION_COUNT = 40000;
     private static final double CROSSOVER_RATE = 0.95;
@@ -113,11 +133,6 @@ public class WaitingTimeExperimentRunner {
 
     private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
-
-    private static final String[] ALGORITHM_LABELS = {
-        "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
-        "NSGA-II", "SPEA-II", "AMOSA"
-    };
 
     // CPU workload types (6)
     private static final WorkloadType[] CPU_WORKLOADS = {
@@ -418,6 +433,14 @@ public class WaitingTimeExperimentRunner {
 
     private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
         switch (label) {
+            case "FirstAvailable":
+                return new FirstAvailableTaskAssignmentStrategy();
+            case "ShortestQueue":
+                return new ShortestQueueTaskAssignmentStrategy();
+            case "WorkloadAware":
+                return new WorkloadAwareTaskAssignmentStrategy();
+            case "RoundRobin":
+                return new RoundRobinTaskAssignmentStrategy();
             case "GA_WaitingTime":
                 return createGAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
             case "GA_Energy":
