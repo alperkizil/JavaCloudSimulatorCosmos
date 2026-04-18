@@ -510,26 +510,43 @@ def plot_runtime_and_efficiency(reports_dir, all_metrics_data, quality_df, confi
     print(f'  Saved: {out_path}')
 
 
-def plot_metrics_comparison(axes, all_metrics, config):
-    metrics_to_plot = ['HV', 'GD', 'IGD']
-    titles = [
-        'Hypervolume (higher is better)',
-        'Generational Distance (lower is better)',
-        'Inverted Generational Distance (lower is better)',
+def plot_metrics_comparison(reports_dir, all_metrics, config):
+    """
+    Write one PNG per metric (HV, GD, IGD, ParetoContribution). Each plot shows
+    a single averaged bar per algorithm per scenario, pulled from the MEAN row
+    of scenario_<n>_performance_metrics.csv.
+    """
+    metrics_to_plot = [
+        ('HV',                 'metric_hv.png',
+         'Hypervolume (higher is better)',                            'HV (mean)'),
+        ('GD',                 'metric_gd.png',
+         'Generational Distance (lower is better)',                   'GD (mean)'),
+        ('IGD',                'metric_igd.png',
+         'Inverted Generational Distance (lower is better)',          'IGD (mean)'),
+        ('ParetoContribution', 'metric_pareto_contribution.png',
+         'Pareto Contribution (higher is better)',                    'Pareto contribution (total across seeds)'),
     ]
-    for i, (metric, title) in enumerate(zip(metrics_to_plot, titles)):
-        ax = axes[i]
+
+    for metric, filename, title, ylabel in metrics_to_plot:
+        fig, ax = plt.subplots(figsize=(config.get('width', 18) * 0.6, 5))
         ax.set_title(title)
+        ax.set_ylabel(ylabel)
 
         scenario_labels = []
         x_positions = []
-        bar_width = 0.1
-        pos = 0
+        bar_width = 0.12
+        pos = 0.0
 
         for scenario_num, metrics_df in sorted(all_metrics.items()):
-            filtered = metrics_df[metrics_df['Algorithm'] != 'Universal_Pareto']
-            algorithms = filtered['Algorithm'].values
-            values = filtered[metric].values
+            mean_rows = metrics_df[
+                (metrics_df['Algorithm'] != 'Universal_Pareto') &
+                (metrics_df['Seed'].astype(str) == 'MEAN')
+            ]
+            if mean_rows.empty:
+                continue
+
+            algorithms = mean_rows['Algorithm'].tolist()
+            values = mean_rows[metric].tolist()
 
             n = len(algorithms)
             x = np.arange(n) * bar_width + pos
@@ -545,16 +562,20 @@ def plot_metrics_comparison(axes, all_metrics, config):
                 )
 
             mid = pos + (n - 1) * bar_width / 2
-            scenario_labels.append(f'S{scenario_num}')
+            scenario_labels.append(f'S{scenario_num} ({SCENARIO_NAMES.get(scenario_num, "")})')
             x_positions.append(mid)
             pos += n * bar_width + bar_width * 2
 
         ax.set_xticks(x_positions)
         ax.set_xticklabels(scenario_labels)
         ax.grid(True, axis='y')
+        ax.legend(loc='best', ncol=2, fontsize=8, framealpha=0.9)
 
-        if i == 0:
-            ax.legend(loc='upper left', ncol=2, fontsize=7, framealpha=0.9)
+        fig.tight_layout()
+        out_path = os.path.join(reports_dir, filename)
+        fig.savefig(out_path, dpi=config.get('dpi', 300), bbox_inches='tight')
+        plt.close(fig)
+        print(f'  Saved: {out_path}')
 
 
 # =============================================================================
@@ -651,17 +672,9 @@ def process_directory(reports_dir):
     plt.close(fig)
     print(f'  Saved: {pareto_path}')
 
-    # --- Figure 2: Metrics comparison ---
+    # --- Figure 2: Per-metric comparison (one PNG per metric) ---
     if all_metrics_data:
-        fig2, axes2 = plt.subplots(1, 3, figsize=(fig_width, 5))
-        plot_metrics_comparison(axes2, all_metrics_data, config)
-        fig2.suptitle('Performance Metrics Comparison')
-        fig2.tight_layout()
-
-        metrics_path = os.path.join(reports_dir, 'metrics_comparison.png')
-        fig2.savefig(metrics_path, dpi=config.get('dpi', 300), bbox_inches='tight')
-        plt.close(fig2)
-        print(f'  Saved: {metrics_path}')
+        plot_metrics_comparison(reports_dir, all_metrics_data, config)
 
     # --- Figure 3: Runtime + HV/sec efficiency ---
     plot_runtime_and_efficiency(reports_dir, all_metrics_data, quality_df, config)
