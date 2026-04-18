@@ -43,7 +43,7 @@ public class MeasurementBasedPowerModel {
     // Speed-based power scaling parameters
     // Power scales as (vmIPS / referenceIPS) ^ exponent
     // 1.0 = linear, 1.5 = super-linear (realistic for CPUs), 2.0 = quadratic
-    public static final double POWER_SCALING_EXPONENT = 1.5;
+    public static final double POWER_SCALING_EXPONENT = 2.0;
 
     // Default reference IPS (used if not calculated from hosts)
     public static final long DEFAULT_REFERENCE_IPS = 3_000_000_000L;  // 3 billion IPS

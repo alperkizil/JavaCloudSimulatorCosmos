@@ -331,13 +331,14 @@ public class WaitingTimeExperimentRunner {
                 131072, 20000, 2097152, "HighPerformancePowerModel"));
         }
 
-        // 60 VMs with DIVERSE speeds to create makespan-energy trade-off
-        // Fast VMs: finish tasks quickly but consume more power (speed scaling ^1.5)
-        // Slow VMs: take longer but are energy-efficient
+        // 60 VMs with DIVERSE speeds to create waiting-time vs energy trade-off.
+        // Speed range is 10x (500M to 5B IPS) — matches real-world cloud VM family spread
+        // (e.g. burstable vs. compute-optimized instances) and combines with the
+        // DVFS-like power scaling exponent (2.0) to give a wide Pareto front.
         // CPU VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // fast
+                5_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -345,13 +346,13 @@ public class WaitingTimeExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // slow
+                500_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // slow
         }
 
         // GPU VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // fast
+                5_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -359,13 +360,13 @@ public class WaitingTimeExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // slow
+                500_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // slow
         }
 
         // Mixed VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // fast
+                5_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -373,7 +374,7 @@ public class WaitingTimeExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // slow
+                500_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // slow
         }
 
         // Tasks — scenario-specific distribution
