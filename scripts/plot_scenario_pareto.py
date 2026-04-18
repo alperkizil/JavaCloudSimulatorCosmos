@@ -86,6 +86,12 @@ ALGORITHM_STYLE = {
     'NSGA-II':        (OKABE_ITO['bluish_green'],   'o', True,  'NSGA-II'),
     'SPEA-II':        (OKABE_ITO['reddish_purple'], '^', True,  'SPEA-II'),
     'AMOSA':          (OKABE_ITO['orange'],         'v', True,  'AMOSA'),
+    # Heuristic baselines: shared marker (thick plus) + close grayscale family
+    # so the group visually reads as "reference baselines".
+    'FirstAvailable': ('#404040',                   'P', True,  'First Available'),
+    'ShortestQueue':  ('#707070',                   'P', True,  'Shortest Queue'),
+    'WorkloadAware':  ('#A0A0A0',                   'P', True,  'Workload-Aware'),
+    'RoundRobin':     ('#555555',                   'P', False, 'Round Robin'),
 }
 
 UNIVERSAL_PARETO_COLOR = OKABE_ITO['black']
@@ -96,6 +102,7 @@ SINGLE_OBJ_ALGORITHMS = {
     'SA_Makespan', 'SA_WaitingTime', 'SA_Energy',
 }
 MULTI_OBJ_ALGORITHMS = {'NSGA-II', 'SPEA-II', 'AMOSA'}
+BASELINE_ALGORITHMS = {'FirstAvailable', 'ShortestQueue', 'WorkloadAware', 'RoundRobin'}
 
 SCENARIO_NAMES = {1: 'Balanced', 2: 'GPU Stress', 3: 'CPU Stress'}
 
@@ -310,7 +317,7 @@ def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, bounds, hv_summary,
         face = color if filled else 'none'
         label = f'{display}{format_hv_suffix(hv_summary.get(algo))}'
 
-        if algo in SINGLE_OBJ_ALGORITHMS:
+        if algo in SINGLE_OBJ_ALGORITHMS or algo in BASELINE_ALGORITHMS:
             pts = normalize_points(algo_df[[x_col, y_col]].values, bounds)
             if len(pts) == 0:
                 continue
