@@ -232,8 +232,24 @@ def compute_eaf_grid(seed_fronts, grid_x, grid_y):
 # HV SUMMARY + KNEE POINT + LEGEND LABEL FORMATTING
 # =============================================================================
 
-def compute_hv_summary(all_metrics_data):
-    """algo -> (median, q25, q75) across all (scenario, seed) pairs."""
+def compute_hv_summary(all_metrics_data, quality_df=None):
+    """
+    algo -> (median, q25, q75) across all (scenario, seed) pairs.
+    Prefers recomputed HV_fixed from recompute_hv.py output (quality_df) when
+    present, so the legend reflects fair scenario-fixed reference-point HV.
+    """
+    if quality_df is not None and not quality_df.empty and 'HV_fixed' in quality_df.columns:
+        out = {}
+        for algo, sub in quality_df.groupby('Algorithm'):
+            vals = sub['HV_fixed'].dropna().values
+            if len(vals) == 0:
+                continue
+            out[algo] = (float(np.median(vals)),
+                         float(np.percentile(vals, 25)),
+                         float(np.percentile(vals, 75)))
+        if out:
+            return out
+
     rows = []
     for df in all_metrics_data.values():
         rows.append(df[df['Algorithm'] != 'Universal_Pareto'][['Algorithm', 'HV']])
@@ -385,6 +401,115 @@ def plot_scenario_pareto(ax, df, scenario_num, x_col, y_col, bounds, hv_summary,
     secy.tick_params(labelsize=8)
 
 
+def load_quality_indicators(reports_dir):
+    """Load quality_indicators_all_scenarios.csv if recompute_hv.py has been run."""
+    path = os.path.join(reports_dir, 'quality_indicators_all_scenarios.csv')
+    if not os.path.exists(path):
+        return None
+    return pd.read_csv(path)
+
+
+def plot_runtime_and_efficiency(reports_dir, all_metrics_data, quality_df, config):
+    """
+    Two-panel figure: wall-clock time and HV-per-second (efficiency).
+    Uses recomputed HV_fixed when available; otherwise falls back to Java HV.
+    """
+    if not all_metrics_data:
+        return
+    rows = []
+    for s, df in all_metrics_data.items():
+        sub = df[df['Algorithm'] != 'Universal_Pareto'][
+            ['Algorithm', 'Seed', 'TimeMs']
+        ].copy()
+        sub['Scenario'] = s
+        rows.append(sub)
+    time_df = pd.concat(rows, ignore_index=True)
+    time_df['TimeSec'] = time_df['TimeMs'].astype(float) / 1000.0
+
+    if quality_df is not None and 'HV_fixed' in quality_df.columns:
+        merged = time_df.merge(
+            quality_df[['Scenario', 'Algorithm', 'Seed', 'HV_fixed']],
+            on=['Scenario', 'Algorithm', 'Seed'], how='left',
+        )
+        hv_col = 'HV_fixed'
+    else:
+        hv_rows = []
+        for s, df in all_metrics_data.items():
+            sub = df[df['Algorithm'] != 'Universal_Pareto'][
+                ['Algorithm', 'Seed', 'HV']
+            ].copy()
+            sub['Scenario'] = s
+            hv_rows.append(sub)
+        hv_src = pd.concat(hv_rows, ignore_index=True)
+        merged = time_df.merge(
+            hv_src, on=['Scenario', 'Algorithm', 'Seed'], how='left',
+        )
+        hv_col = 'HV'
+    merged['HVperSec'] = merged[hv_col] / merged['TimeSec'].clip(lower=1e-9)
+
+    fig, (ax_t, ax_e) = plt.subplots(1, 2, figsize=(config.get('width', 18), 5))
+
+    algos = sorted(merged['Algorithm'].unique(),
+                   key=lambda a: list(ALGORITHM_STYLE.keys()).index(a)
+                   if a in ALGORITHM_STYLE else 99)
+
+    # Panel A: wall-clock time, median with IQR error bars
+    for i, algo in enumerate(algos):
+        vals = merged[merged['Algorithm'] == algo]['TimeSec'].dropna().values
+        if len(vals) == 0:
+            continue
+        color, _, filled, display = get_style(algo)
+        med = float(np.median(vals))
+        q25 = float(np.percentile(vals, 25))
+        q75 = float(np.percentile(vals, 75))
+        ax_t.bar(
+            i, med, 0.7,
+            facecolor=color if filled else 'white',
+            edgecolor=color, linewidth=0.9,
+            hatch=None if filled else '///',
+        )
+        ax_t.errorbar(i, med, yerr=[[med - q25], [q75 - med]],
+                      fmt='none', ecolor='black', elinewidth=0.8, capsize=3)
+    ax_t.set_xticks(range(len(algos)))
+    ax_t.set_xticklabels([get_style(a)[3] for a in algos],
+                         rotation=30, ha='right', fontsize=9)
+    ax_t.set_ylabel('Wall-clock time (s), median [IQR]')
+    ax_t.set_title('Runtime per algorithm (pooled across scenarios/seeds)')
+    ax_t.grid(True, axis='y')
+
+    # Panel B: HV-per-second (efficiency)
+    for i, algo in enumerate(algos):
+        vals = merged[merged['Algorithm'] == algo]['HVperSec'].dropna().values
+        if len(vals) == 0:
+            continue
+        color, _, filled, display = get_style(algo)
+        med = float(np.median(vals))
+        q25 = float(np.percentile(vals, 25))
+        q75 = float(np.percentile(vals, 75))
+        ax_e.bar(
+            i, med, 0.7,
+            facecolor=color if filled else 'white',
+            edgecolor=color, linewidth=0.9,
+            hatch=None if filled else '///',
+        )
+        ax_e.errorbar(i, med, yerr=[[max(med - q25, 0)], [max(q75 - med, 0)]],
+                      fmt='none', ecolor='black', elinewidth=0.8, capsize=3)
+    ax_e.set_xticks(range(len(algos)))
+    ax_e.set_xticklabels([get_style(a)[3] for a in algos],
+                         rotation=30, ha='right', fontsize=9)
+    label_suffix = 'HV_fixed' if hv_col == 'HV_fixed' else 'HV'
+    ax_e.set_ylabel(f'{label_suffix} per second  (higher is better)')
+    ax_e.set_title('Budget-fair efficiency: quality gained per second of wall time')
+    ax_e.grid(True, axis='y')
+
+    fig.suptitle('Runtime and Efficiency Comparison', y=1.02)
+    fig.tight_layout()
+    out_path = os.path.join(reports_dir, 'runtime_and_efficiency.png')
+    fig.savefig(out_path, dpi=config.get('dpi', 300), bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Saved: {out_path}')
+
+
 def plot_metrics_comparison(axes, all_metrics, config):
     metrics_to_plot = ['HV', 'GD', 'IGD']
     titles = [
@@ -473,8 +598,13 @@ def process_directory(reports_dir):
     print(f'  Global bounds: {x_col} in [{ideal_x:.3g}, {nadir_x:.3g}], '
           f'{y_col} in [{ideal_y:.3g}, {nadir_y:.3g}]')
 
-    # HV summary across all (scenario, seed) pairs — inlined into legend labels.
-    hv_summary = compute_hv_summary(all_metrics_data)
+    # Recomputed quality indicators (if recompute_hv.py has been run) take
+    # precedence over the Java-side HV — scenario-fixed reference point is fair
+    # across SO and MO algorithms.
+    quality_df = load_quality_indicators(reports_dir)
+    hv_summary = compute_hv_summary(all_metrics_data, quality_df)
+    if quality_df is not None:
+        print(f'  Using recomputed HV_fixed from quality_indicators CSV.')
 
     # --- Figure 1: Pareto fronts ---
     n = len(all_pareto_data)
@@ -532,6 +662,9 @@ def process_directory(reports_dir):
         fig2.savefig(metrics_path, dpi=config.get('dpi', 300), bbox_inches='tight')
         plt.close(fig2)
         print(f'  Saved: {metrics_path}')
+
+    # --- Figure 3: Runtime + HV/sec efficiency ---
+    plot_runtime_and_efficiency(reports_dir, all_metrics_data, quality_df, config)
 
 
 if __name__ == '__main__':

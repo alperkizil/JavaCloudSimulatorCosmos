@@ -1066,54 +1066,10 @@ public class WaitingTimeExperimentRunner {
     // =========================================================================
 
     private static void executePythonPlotter() {
-        Path scriptPath = Paths.get("scripts", "plot_scenario_pareto.py");
-
-        if (!Files.exists(scriptPath)) {
-            System.out.println();
-            System.out.println("Python plotter not found at " + scriptPath);
-            System.out.println("To generate plots manually, run:");
-            System.out.println("  python3 scripts/plot_scenario_pareto.py " + REPORTS_DIR);
-            return;
-        }
-
-        System.out.println();
-        System.out.println("Executing Python plotter...");
-
-        String[] pythonCommands;
-        String osName = System.getProperty("os.name").toLowerCase();
-        if (osName.contains("win")) {
-            pythonCommands = new String[]{"python"};
-        } else {
-            pythonCommands = new String[]{"python3", "python"};
-        }
-
-        for (String pythonCmd : pythonCommands) {
-            try {
-                ProcessBuilder pb = new ProcessBuilder(pythonCmd, scriptPath.toString(), REPORTS_DIR);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(process.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("  [Python] " + line);
-                }
-
-                int exitCode = process.waitFor();
-                if (exitCode == 0) {
-                    System.out.println("  Pareto plots generated successfully.");
-                    return;
-                }
-            } catch (IOException e) {
-                continue;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-
-        System.out.println("  Could not run Python plotter automatically.");
-        System.out.println("  Run manually: python3 scripts/plot_scenario_pareto.py " + REPORTS_DIR);
+        PythonPostProcessor.run(REPORTS_DIR,
+            "scripts/recompute_hv.py",
+            "scripts/plot_scenario_pareto.py",
+            "scripts/statistical_tests.py"
+        );
     }
 }
