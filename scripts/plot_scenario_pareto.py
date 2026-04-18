@@ -530,8 +530,11 @@ def plot_metrics_comparison(reports_dir, all_metrics, config):
 
         scenario_labels = []
         x_positions = []
+        scenario_boundaries = []  # x-coords midway between scenarios
         bar_width = 0.12
         pos = 0.0
+        is_int_metric = (metric == 'ParetoContribution')
+        prev_end = None
 
         for scenario_num, metrics_df in sorted(all_metrics.items()):
             mean_rows = metrics_df[
@@ -547,20 +550,40 @@ def plot_metrics_comparison(reports_dir, all_metrics, config):
             n = len(algorithms)
             x = np.arange(n) * bar_width + pos
 
+            # Midpoint between previous scenario's last bar and this one's first bar
+            if prev_end is not None:
+                scenario_boundaries.append((prev_end + x[0]) / 2)
+
+            scenario_bars = []
             for j, (algo, val) in enumerate(zip(algorithms, values)):
                 color, _, filled, display = get_style(algo)
                 face = color if filled else 'white'
                 label = display if pos == 0 else None
-                ax.bar(
+                bar = ax.bar(
                     x[j], val, bar_width * 0.85,
                     facecolor=face, edgecolor=color, linewidth=0.8,
                     label=label, hatch=None if filled else '///',
                 )
+                scenario_bars.append((bar, val))
+
+            # Value labels on top of each bar
+            for bar, val in scenario_bars:
+                fmt = f'{int(round(val))}' if is_int_metric else f'{val:.3g}'
+                ax.bar_label(bar, labels=[fmt], padding=2, fontsize=7, rotation=0)
 
             mid = pos + (n - 1) * bar_width / 2
             scenario_labels.append(f'S{scenario_num} ({SCENARIO_NAMES.get(scenario_num, "")})')
             x_positions.append(mid)
+            prev_end = x[-1]
             pos += n * bar_width + bar_width * 2
+
+        # Vertical separators between scenarios + shaded group backgrounds
+        for xb in scenario_boundaries:
+            ax.axvline(xb, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
+
+        # Headroom so labels don't collide with the top of the axes
+        y_min, y_max = ax.get_ylim()
+        ax.set_ylim(y_min, y_max * 1.12)
 
         ax.set_xticks(x_positions)
         ax.set_xticklabels(scenario_labels)
