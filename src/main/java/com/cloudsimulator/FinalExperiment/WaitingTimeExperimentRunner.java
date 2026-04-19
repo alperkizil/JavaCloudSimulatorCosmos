@@ -210,6 +210,10 @@ public class WaitingTimeExperimentRunner {
         final Map<String, List<AlgorithmResult>> perSeedResults = new LinkedHashMap<>();
         List<double[]> universalParetoSet;
         double universalHV;
+        // Per-algorithm count of distinct universal-Pareto points matched by
+        // at least one seed (the union across seeds). This is bounded above
+        // by universalParetoSet.size() unlike the sum of per-seed counts.
+        final Map<String, Integer> paretoContributionUnion = new LinkedHashMap<>();
 
         ScenarioResult(int scenarioNumber, String scenarioName) {
             this.scenarioNumber = scenarioNumber;
@@ -523,6 +527,11 @@ public class WaitingTimeExperimentRunner {
             if (vm.isAssignedToHost()) runningVMs.add(vm);
         }
 
+        if (runningVMs.isEmpty() || unassigned.isEmpty()) {
+            context.resetForRescheduling();
+            return null;
+        }
+
         Map<Task, VM> assignments = heuristic.assignAll(unassigned, runningVMs, context.getCurrentTime());
 
         Map<Long, Integer> vmIdToIndex = new HashMap<>();
@@ -531,11 +540,26 @@ public class WaitingTimeExperimentRunner {
         }
 
         int[] seed = new int[unassigned.size()];
+        int missing = 0;
         for (int i = 0; i < unassigned.size(); i++) {
             VM assigned = assignments.get(unassigned.get(i));
-            if (assigned != null) {
-                seed[i] = vmIdToIndex.getOrDefault(assigned.getId(), 0);
+            Integer idx = (assigned != null) ? vmIdToIndex.get(assigned.getId()) : null;
+            if (idx != null) {
+                seed[i] = idx;
+            } else {
+                // Heuristic left this task unassigned (or to a VM not in the
+                // running set). Fall back to a deterministic round-robin
+                // index so we don't silently bias the seeded chromosome
+                // toward VM 0.
+                seed[i] = i % runningVMs.size();
+                missing++;
             }
+        }
+
+        if (missing > 0) {
+            System.out.println("    [seed] " + heuristic.getClass().getSimpleName() +
+                " left " + missing + "/" + unassigned.size() +
+                " task(s) unassigned; filled via round-robin fallback.");
         }
 
         // Undo the heuristic's assignment so the real strategy runs on a
@@ -882,13 +906,29 @@ public class WaitingTimeExperimentRunner {
     // UNIVERSAL PARETO COMPUTATION
     // =========================================================================
 
+    /**
+     * A failure sentinel is the fallback solution inserted when a run throws
+     * ({@code [Double.MAX_VALUE, Double.MAX_VALUE]}). These must be excluded
+     * from Pareto/best-of analytics or they silently dominate the reporting.
+     */
+    private static boolean isFailureSentinel(double[] sol) {
+        return sol == null
+            || sol.length < 2
+            || sol[0] >= Double.MAX_VALUE
+            || sol[1] >= Double.MAX_VALUE;
+    }
+
     private static List<double[]> computeUniversalPareto(
             Map<String, List<AlgorithmResult>> perSeedResults) {
 
         List<double[]> allSolutions = new ArrayList<>();
         for (List<AlgorithmResult> seedResults : perSeedResults.values()) {
             for (AlgorithmResult result : seedResults) {
-                allSolutions.addAll(result.solutions);
+                for (double[] sol : result.solutions) {
+                    if (!isFailureSentinel(sol)) {
+                        allSolutions.add(sol);
+                    }
+                }
             }
         }
 
@@ -971,21 +1011,34 @@ public class WaitingTimeExperimentRunner {
 
     private static void calculateParetoContributions(ScenarioResult scenarioResult) {
         System.out.println("  Pareto contributions:");
+        List<double[]> universal = scenarioResult.universalParetoSet;
         for (Map.Entry<String, List<AlgorithmResult>> entry : scenarioResult.perSeedResults.entrySet()) {
-            int totalContribution = 0;
+            Set<Integer> unionMatched = new HashSet<>();
             for (AlgorithmResult ar : entry.getValue()) {
-                int contribution = 0;
+                Set<Integer> seedMatched = new HashSet<>();
                 for (double[] sol : ar.solutions) {
-                    if (isInUniversalPareto(sol, scenarioResult.universalParetoSet)) {
-                        contribution++;
-                    }
+                    int idx = universalParetoIndexOf(sol, universal);
+                    if (idx >= 0) seedMatched.add(idx);
                 }
-                ar.paretoContribution = contribution;
-                totalContribution += contribution;
+                ar.paretoContribution = seedMatched.size();
+                unionMatched.addAll(seedMatched);
             }
-            System.out.println("    " + entry.getKey() + ": " + totalContribution +
-                " / " + scenarioResult.universalParetoSet.size() + " (across " + NUM_RUNS + " seeds)");
+            scenarioResult.paretoContributionUnion.put(entry.getKey(), unionMatched.size());
+            System.out.println("    " + entry.getKey() + ": " + unionMatched.size() +
+                " / " + universal.size() + " unique universal Pareto points matched (across " +
+                NUM_RUNS + " seeds)");
         }
+    }
+
+    private static int universalParetoIndexOf(double[] sol, List<double[]> universalPareto) {
+        if (isFailureSentinel(sol)) return -1;
+        for (int i = 0; i < universalPareto.size(); i++) {
+            double[] u = universalPareto.get(i);
+            if (Math.abs(u[0] - sol[0]) < 1e-9 && Math.abs(u[1] - sol[1]) < 1e-9) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static void calculatePerformanceMetrics(ScenarioResult scenarioResult) {
@@ -1067,7 +1120,7 @@ public class WaitingTimeExperimentRunner {
             double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
             double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
             double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
-            int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+            int unionPCont = result.paretoContributionUnion.getOrDefault(entry.getKey(), 0);
 
             System.out.printf("%-15s | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %-6d%n",
                 entry.getKey(),
@@ -1075,7 +1128,7 @@ public class WaitingTimeExperimentRunner {
                 mean(gds), stddev(gds),
                 mean(igds), stddev(igds),
                 mean(spacings), stddev(spacings),
-                totalPCont);
+                unionPCont);
         }
 
         System.out.printf("%-15s | %-18.6f | %-18s | %-18s | %-18s | %-6d%n",
@@ -1153,7 +1206,7 @@ public class WaitingTimeExperimentRunner {
                 double avgND = seeds.stream().mapToInt(a -> a.nonDominatedSolutions != null
                     ? a.nonDominatedSolutions.size() : a.solutions.size()).average().orElse(0);
                 double avgTotal = seeds.stream().mapToInt(a -> a.solutions.size()).average().orElse(0);
-                int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                int unionPCont = result.paretoContributionUnion.getOrDefault(label, 0);
                 long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
                 long avgTime = successfulRuns > 0
                     ? seeds.stream().filter(a -> a.executionTimeMs > 0)
@@ -1162,7 +1215,7 @@ public class WaitingTimeExperimentRunner {
 
                 w.printf("%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d%n",
                     label, mean(hvs), mean(gds), mean(igds), mean(spacings),
-                    avgND, avgTotal, totalPCont, avgTime);
+                    avgND, avgTotal, unionPCont, avgTime);
 
                 // STDDEV row
                 w.printf("%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,%n",
@@ -1196,9 +1249,11 @@ public class WaitingTimeExperimentRunner {
 
                     // Per-seed rows
                     for (AlgorithmResult ar : seeds) {
-                        double bestMakespan = ar.solutions.stream()
+                        double bestWaitingTime = ar.solutions.stream()
+                            .filter(s -> !isFailureSentinel(s))
                             .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
                         double bestEnergy = ar.solutions.stream()
+                            .filter(s -> !isFailureSentinel(s))
                             .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
                         int ndCount = ar.nonDominatedSolutions != null
                             ? ar.nonDominatedSolutions.size() : ar.solutions.size();
@@ -1207,7 +1262,7 @@ public class WaitingTimeExperimentRunner {
                             sr.scenarioNumber, sr.scenarioName, ar.label, ar.seed,
                             ar.hv, ar.gd, ar.igd, ar.spacing,
                             ndCount, ar.paretoContribution, ar.executionTimeMs,
-                            bestMakespan, bestEnergy);
+                            bestWaitingTime, bestEnergy);
                     }
 
                     // MEAN row
@@ -1215,24 +1270,26 @@ public class WaitingTimeExperimentRunner {
                     double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
                     double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
                     double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
-                    int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                    int unionPCont = sr.paretoContributionUnion.getOrDefault(label, 0);
                     long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
                 long avgTime = successfulRuns > 0
                     ? seeds.stream().filter(a -> a.executionTimeMs > 0)
                         .mapToLong(a -> a.executionTimeMs).sum() / successfulRuns
                     : 0;
-                    double bestMakespanAll = seeds.stream()
+                    double bestWaitingTimeAll = seeds.stream()
                         .flatMap(a -> a.solutions.stream())
+                        .filter(s -> !isFailureSentinel(s))
                         .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
                     double bestEnergyAll = seeds.stream()
                         .flatMap(a -> a.solutions.stream())
+                        .filter(s -> !isFailureSentinel(s))
                         .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
 
                     w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f%n",
                         sr.scenarioNumber, sr.scenarioName, label,
                         mean(hvs), mean(gds), mean(igds), mean(spacings),
-                        totalPCont, avgTime,
-                        bestMakespanAll, bestEnergyAll);
+                        unionPCont, avgTime,
+                        bestWaitingTimeAll, bestEnergyAll);
                 }
             }
 
