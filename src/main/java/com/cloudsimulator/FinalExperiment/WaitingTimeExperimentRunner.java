@@ -140,7 +140,7 @@ public class WaitingTimeExperimentRunner {
     private static final int AMOSA_ITERATIONS_PER_TEMP = 200;
     private static final int AMOSA_HILL_CLIMBING_ITERS = 50;
     private static final double AMOSA_GAMMA = 2.0;
-    private static final double AMOSA_MUTATION_RATE = 0.01;
+    private static final double AMOSA_MUTATION_RATE = 0.05;
 
     private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
@@ -748,10 +748,6 @@ public class WaitingTimeExperimentRunner {
         strategy.setGamma(AMOSA_GAMMA);
         strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
         strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
-        // Diagnostic: log archive size and per-objective spread at init, every
-        // 10 temperature steps, and at terminate to locate where extreme seeds
-        // (waSeed / eaSeed) disappear from the archive.
-        strategy.enableArchiveDebugLogging(10);
         return strategy;
     }
 

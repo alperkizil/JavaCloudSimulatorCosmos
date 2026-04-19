@@ -91,8 +91,6 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
     private double[] selectionWeights;
     private boolean useDistributedEvaluation;
     private boolean collectRuntimeData;
-    private boolean archiveDebugLogging;
-    private int archiveDebugStride = 10;
 
     // AMOSA specific parameters
     private double gamma;
@@ -165,17 +163,6 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
      */
     public MOEA_AMOSATaskSchedulingStrategy enableRuntimeDataCollection() {
         this.collectRuntimeData = true;
-        return this;
-    }
-
-    /**
-     * Enables archive-range debug logging inside {@link FixedAMOSA}.
-     * Logs archive size and per-objective [min, max] ranges at init,
-     * every {@code stride} temperature steps, and at termination.
-     */
-    public MOEA_AMOSATaskSchedulingStrategy enableArchiveDebugLogging(int stride) {
-        this.archiveDebugLogging = true;
-        this.archiveDebugStride = Math.max(1, stride);
         return this;
     }
 
@@ -400,10 +387,6 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             iterationsPerTemperature,
             hillClimbingIterations);
         amosa.setMaxEvaluations(maxEvaluations);
-        if (archiveDebugLogging) {
-            amosa.setArchiveDebugLogging(true);
-            amosa.setArchiveDebugStride(archiveDebugStride);
-        }
 
         // Run the optimization (step until max evaluations or termination)
         while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
