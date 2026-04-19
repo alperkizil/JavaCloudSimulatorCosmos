@@ -83,6 +83,13 @@ ALGORITHM_STYLE = {
     'SA_Makespan':    (OKABE_ITO['vermillion'],     's', False, 'SA (Makespan)'),
     'SA_WaitingTime': (OKABE_ITO['vermillion'],     's', False, 'SA (Waiting Time)'),
     'SA_Energy':      (OKABE_ITO['vermillion'],     's', True,  'SA (Energy)'),
+    # Dominance-archive variants produce Pareto fronts (rendered as EAF contours).
+    # Family-related shades (blues for GA, reds/pinks for SA) keep the visual
+    # grouping while distinguishing them from the black Universal Pareto line.
+    'GA_WaitingTime_Dominance': ('#56B4E9', 'D', True, 'GA Dominance (Waiting Time)'),
+    'GA_Energy_Dominance':      ('#1B3A6B', 'D', True, 'GA Dominance (Energy)'),
+    'SA_WaitingTime_Dominance': ('#FF6B9D', 's', True, 'SA Dominance (Waiting Time)'),
+    'SA_Energy_Dominance':      ('#8B0000', 's', True, 'SA Dominance (Energy)'),
     'NSGA-II':        (OKABE_ITO['bluish_green'],   'o', True,  'NSGA-II'),
     'SPEA-II':        (OKABE_ITO['reddish_purple'], '^', True,  'SPEA-II'),
     'AMOSA':          (OKABE_ITO['orange'],         'v', True,  'AMOSA'),
@@ -101,7 +108,11 @@ SINGLE_OBJ_ALGORITHMS = {
     'GA_Makespan', 'GA_WaitingTime', 'GA_Energy',
     'SA_Makespan', 'SA_WaitingTime', 'SA_Energy',
 }
-MULTI_OBJ_ALGORITHMS = {'NSGA-II', 'SPEA-II', 'AMOSA'}
+MULTI_OBJ_ALGORITHMS = {
+    'NSGA-II', 'SPEA-II', 'AMOSA',
+    'GA_WaitingTime_Dominance', 'GA_Energy_Dominance',
+    'SA_WaitingTime_Dominance', 'SA_Energy_Dominance',
+}
 BASELINE_ALGORITHMS = {'FirstAvailable', 'ShortestQueue', 'WorkloadAware', 'RoundRobin'}
 
 SCENARIO_NAMES = {1: 'Balanced', 2: 'GPU Stress', 3: 'CPU Stress'}
