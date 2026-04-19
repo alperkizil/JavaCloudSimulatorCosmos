@@ -243,18 +243,17 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
             sub_full = full[full["CapLevel"] == cap_label]
             sub_sel = sub_full[sub_full["BaseAlgorithm"].isin(selected)]
 
-            # EAF per algorithm: 50% median attainment line + [25%, 75%] band,
-            # plus a median-with-IQR error-bar summary marker on top.
-            # Matches the multi-objective rendering in plot_scenario_pareto.py.
+            # EAF per algorithm: 50% median attainment line + [25%, 75%] band.
+            # All seven algorithms are MO-producing (one Pareto front per
+            # seed), so — following plot_scenario_pareto.py — the only
+            # summary is the EAF. Marginal median + IQR on x and y would
+            # produce a phantom point that can visually dominate the true
+            # global Pareto without any real solution landing there.
             for base in selected:
                 s = sub_sel[sub_sel["BaseAlgorithm"] == base]
                 if s.empty:
                     continue
-                color, marker, filled, display = get_style(base)
-                face = color if filled else 'none'
-                pts_norm = s[["WaitingTime", "Energy"]].to_numpy(float)
-                pts_norm[:, 0] = (pts_norm[:, 0] - wt_min) / wt_rng
-                pts_norm[:, 1] = (pts_norm[:, 1] - e_min) / e_rng
+                color, _marker, _filled, display = get_style(base)
                 seed_fronts = []
                 for _, seed_df in s.groupby("Seed"):
                     pts = seed_df[["WaitingTime", "Energy"]].to_numpy(float)
@@ -263,42 +262,28 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
                     nd = get_non_dominated(pts)
                     if len(nd) > 0:
                         seed_fronts.append(nd)
-                if seed_fronts:
-                    freq = compute_eaf_grid(seed_fronts, grid_x, grid_y)
-                    try:
-                        ax.contourf(grid_x, grid_y, freq, levels=[0.25, 0.75],
-                                    colors=[color], alpha=0.18, zorder=2)
-                    except ValueError:
-                        pass
-                    try:
-                        ax.contour(grid_x, grid_y, freq, levels=[0.5],
-                                   colors=[color], linewidths=1.6, zorder=4)
-                    except ValueError:
-                        pass
-
-                # Median + IQR marker across all Pareto points for this algo.
-                if len(pts_norm) > 0:
-                    mx = float(np.median(pts_norm[:, 0]))
-                    my = float(np.median(pts_norm[:, 1]))
-                    qx = np.percentile(pts_norm[:, 0], [25, 75])
-                    qy = np.percentile(pts_norm[:, 1], [25, 75])
-                    xerr = [[max(mx - qx[0], 0.0)], [max(qx[1] - mx, 0.0)]]
-                    yerr = [[max(my - qy[0], 0.0)], [max(qy[1] - my, 0.0)]]
-                    ax.errorbar(
-                        mx, my, xerr=xerr, yerr=yerr,
-                        fmt=marker, markersize=7.5,
-                        markerfacecolor=face, markeredgecolor=color,
-                        markeredgewidth=1.2,
-                        ecolor=color, elinewidth=0.9, capsize=3, capthick=0.9,
-                        label=display, zorder=5,
-                    )
-                else:
-                    # Fall back to a proxy handle so the legend is still complete.
-                    ax.plot([], [], color=color, linewidth=1.6, label=display)
+                if not seed_fronts:
+                    continue
+                freq = compute_eaf_grid(seed_fronts, grid_x, grid_y)
+                try:
+                    ax.contourf(grid_x, grid_y, freq, levels=[0.25, 0.75],
+                                colors=[color], alpha=0.18, zorder=2)
+                except ValueError:
+                    pass
+                try:
+                    ax.contour(grid_x, grid_y, freq, levels=[0.5],
+                               colors=[color], linewidths=1.6, zorder=4)
+                except ValueError:
+                    pass
+                # Proxy line so the legend carries one entry per algorithm.
+                ax.plot([], [], color=color, linewidth=1.6, label=display)
 
             # Global Pareto: best of best across ALL seven algorithms,
-            # independent of --algorithms selection. Rendered in the
-            # Universal-Pareto style used by plot_scenario_pareto.py.
+            # independent of --algorithms selection. Rendered as a step
+            # function (horizontal then vertical between adjacent points)
+            # so the curve follows the true non-dominated frontier — a
+            # diagonal chord would dip below unattained space and make
+            # coloured EAF contours visually appear to cross it.
             if not sub_full.empty:
                 pts = sub_full[["WaitingTime", "Energy"]].to_numpy()
                 mask = non_dominated_mask(pts)
@@ -309,6 +294,7 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
                 ax.plot(gx[order], gy[order],
                         color=UNIVERSAL_PARETO_COLOR, linewidth=1.8,
                         linestyle='-', alpha=0.9,
+                        drawstyle='steps-post',
                         label="Global Pareto (all algos)", zorder=6)
                 ax.scatter(gx[order], gy[order], s=30, marker='o',
                            facecolors=UNIVERSAL_PARETO_COLOR,
@@ -366,11 +352,10 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
     )
     caption = (
         'Per algorithm: 50% empirical attainment surface (solid) with '
-        '[25%, 75%] band (shaded) across 10 seeds, plus median marker with '
-        'IQR error bars. Black line = global Pareto front pooled across all '
-        'seven algorithms. Axes normalised per scenario to [0, 1]; raw '
-        'units shown on top (x) and right (y) axes. White star marks the '
-        'ideal point.'
+        '[25%, 75%] band (shaded) across 10 seeds. Black line = global '
+        'Pareto front pooled across all seven algorithms. Axes normalised '
+        'per scenario to [0, 1]; raw units shown on top (x) and right (y) '
+        'axes. White star marks the ideal point.'
     )
     fig.text(0.5, 0.965, caption, ha='center', fontsize=8.5,
              style='italic', color='#333333', wrap=True)
