@@ -441,8 +441,30 @@ def build_table(reports_dir, out_dir, algo_ids):
                 })
 
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(out_dir, "comparison_table.csv"), index=False)
-    print(f"Wrote {os.path.join(out_dir, 'comparison_table.csv')}")
+    notes = [
+        "# HV is the per-algorithm Java-computed hypervolume from",
+        "#   reports/{new,powerceiling}/experiment_summary.csv (MEAN rows).",
+        "#   Each algorithm uses its own reference point, so HV values are",
+        "#   ranked consistently within a (scenario, cap) cell but should",
+        "#   be read as relative, not absolute.",
+        "# HV_fixed (scenario-fixed reference point, fair across algorithms)",
+        "#   is available in quality_indicators_all_scenarios.csv for each",
+        "#   run, but the reference points differ ~10x between the uncapped",
+        "#   and power-ceiling experiments (the latter has admission-control",
+        "#   and infeasible variants that inflate the nadir), so HV_fixed is",
+        "#   NOT directly comparable across the Uncapped / 190kW / 120kW",
+        "#   columns. Java HV is the less-bad option for this pivot.",
+        "# GD / IGD: unitless distance to each run's reference front; lower",
+        "#   is better. Values are taken as-is from experiment_summary.csv.",
+        "# ParetoContribution: recomputed here per (scenario, cap) against",
+        "#   the pooled non-dominated set of the seven MO algorithms at",
+        "#   that cap level, so it matches pareto_fronts_comparison.png.",
+    ]
+    path = os.path.join(out_dir, "comparison_table.csv")
+    with open(path, "w") as f:
+        f.write("\n".join(notes) + "\n")
+        df.to_csv(f, index=False)
+    print(f"Wrote {path}")
 
     cap_order = [c[0] for c in CAP_LEVELS]
     for metric in ["HV", "IGD", "GD", "ParetoContribution", "TimeMs"]:
