@@ -333,12 +333,13 @@ def main():
     default_reports = os.path.join(os.path.dirname(here), "reports")
     ap.add_argument("--reports-dir", type=str, default=default_reports,
                     help="Root containing new/ and powerceiling/.")
+    default_out = os.path.join(os.path.dirname(here), "final_experiment_results")
     ap.add_argument("--out-dir", type=str, default=None,
-                    help="Output directory. Default: <reports>/comparison/.")
+                    help=f"Output directory. Default: {default_out}")
     args = ap.parse_args()
 
     ids = parse_algorithm_ids(args.algorithms)
-    out = args.out_dir or os.path.join(args.reports_dir, "comparison")
+    out = args.out_dir or default_out
     os.makedirs(out, exist_ok=True)
     print(f"Algorithms : {[ALGO_MAP[i] for i in ids]}")
     print(f"Reports dir: {args.reports_dir}")
