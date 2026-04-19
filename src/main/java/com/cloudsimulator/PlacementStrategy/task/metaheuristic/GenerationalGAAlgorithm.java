@@ -190,7 +190,8 @@ public class GenerationalGAAlgorithm {
     }
 
     /**
-     * Initializes the population with random solutions.
+     * Initializes the population with injected heuristic seeds (if any) followed
+     * by random solutions to fill the remaining slots.
      */
     private void initializePopulation() {
         population.clear();
@@ -199,10 +200,28 @@ public class GenerationalGAAlgorithm {
         int numVMs = vms.size();
         int numObjectives = config.getNumObjectives();
 
-        for (int i = 0; i < popSize; i++) {
+        // Inject heuristic seeds first so elitism preserves them across generations.
+        int seedsInjected = 0;
+        for (int[] seed : config.getSeedAssignments()) {
+            if (population.size() >= popSize) break;
+            if (seed == null || seed.length != numTasks) continue;
+
+            SchedulingSolution solution = new SchedulingSolution(numTasks, numVMs, numObjectives);
+            solution.setTaskAssignment(seed.clone());
+            repairOperator.repair(solution);
+            solution.rebuildTaskOrdering();
+            population.add(solution);
+            seedsInjected++;
+        }
+
+        if (seedsInjected > 0 && config.isVerboseLogging()) {
+            System.out.println("[GA] Injected " + seedsInjected + " heuristic seed(s) into initial population");
+        }
+
+        // Fill remainder with random solutions.
+        while (population.size() < popSize) {
             SchedulingSolution solution = new SchedulingSolution(numTasks, numVMs, numObjectives);
 
-            // Random assignment
             for (int taskIdx = 0; taskIdx < numTasks; taskIdx++) {
                 List<Integer> validVms = repairOperator.getValidVmsForTask(taskIdx);
                 if (!validVms.isEmpty()) {

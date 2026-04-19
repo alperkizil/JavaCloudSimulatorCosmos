@@ -28,6 +28,7 @@ import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStr
 import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
 
 // Metaheuristics
@@ -76,13 +77,13 @@ public class WaitingTimeExperimentRunner {
 
     // ---- WHICH ALGORITHMS TO RUN ----
     // Edit this list to include/exclude algorithms. Comment out lines to skip.
-    // Available: FirstAvailable, ShortestQueue, WorkloadAware, RoundRobin,
+    // Available: FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
     //            GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy,
     //            NSGA-II, SPEA-II, AMOSA
     // Ordering here controls the order they appear in CSVs and plots.
     private static final String[] ALGORITHM_LABELS = {
         // Baseline heuristics (deterministic, non-preemptive, fast)
-        "FirstAvailable", "ShortestQueue", "WorkloadAware", "RoundRobin",
+        "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
         // Single-objective metaheuristics
         "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
         // Multi-objective metaheuristics
@@ -438,7 +439,8 @@ public class WaitingTimeExperimentRunner {
     // STRATEGY CREATION
     // =========================================================================
 
-    private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createStrategy(String label, SimulationContext context, long seed) {
+        List<Host> hosts = context.getHosts();
         switch (label) {
             case "FirstAvailable":
                 return new FirstAvailableTaskAssignmentStrategy();
@@ -446,18 +448,27 @@ public class WaitingTimeExperimentRunner {
                 return new ShortestQueueTaskAssignmentStrategy();
             case "WorkloadAware":
                 return new WorkloadAwareTaskAssignmentStrategy();
+            case "EnergyAware":
+                return new EnergyAwareTaskAssignmentStrategy();
             case "RoundRobin":
                 return new RoundRobinTaskAssignmentStrategy();
-            case "GA_WaitingTime":
-                return createGAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
-            case "GA_Energy":
-                return createGAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective());
+            case "GA_WaitingTime": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "GA_Energy": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed);
+            }
             case "SA_WaitingTime":
                 return createSAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
             case "SA_Energy":
                 return createSAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective());
-            case "NSGA-II":
-                return createNSGA2Strategy(hosts, seed);
+            case "NSGA-II": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createNSGA2Strategy(hosts, seed, waSeed, eaSeed);
+            }
             case "SPEA-II":
                 return createSPEA2Strategy(hosts, seed);
             case "AMOSA":
@@ -465,6 +476,46 @@ public class WaitingTimeExperimentRunner {
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
+    }
+
+    /**
+     * Runs a greedy heuristic on the simulation context's unassigned tasks and
+     * running VMs to produce a task->VM index assignment that can be injected
+     * as a seed into a metaheuristic's initial population.
+     *
+     * Mutates assignment state on the real Task and VM objects, then calls
+     * {@link SimulationContext#resetForRescheduling()} to undo it so the
+     * metaheuristic sees a clean slate when it runs afterwards.
+     */
+    private static int[] computeHeuristicSeed(TaskAssignmentStrategy heuristic, SimulationContext context) {
+        List<Task> unassigned = new ArrayList<>();
+        for (Task t : context.getTasks()) {
+            if (!t.isAssigned()) unassigned.add(t);
+        }
+        List<VM> runningVMs = new ArrayList<>();
+        for (VM vm : context.getVms()) {
+            if (vm.isAssignedToHost()) runningVMs.add(vm);
+        }
+
+        Map<Task, VM> assignments = heuristic.assignAll(unassigned, runningVMs, context.getCurrentTime());
+
+        Map<Long, Integer> vmIdToIndex = new HashMap<>();
+        for (int i = 0; i < runningVMs.size(); i++) {
+            vmIdToIndex.put(runningVMs.get(i).getId(), i);
+        }
+
+        int[] seed = new int[unassigned.size()];
+        for (int i = 0; i < unassigned.size(); i++) {
+            VM assigned = assignments.get(unassigned.get(i));
+            if (assigned != null) {
+                seed[i] = vmIdToIndex.getOrDefault(assigned.getId(), 0);
+            }
+        }
+
+        // Undo the heuristic's assignment so the real strategy runs on a
+        // clean context. Infrastructure placement is preserved.
+        context.resetForRescheduling();
+        return seed;
     }
 
     private static EnergyObjective createEnergyObjective(List<Host> hosts) {
@@ -475,8 +526,9 @@ public class WaitingTimeExperimentRunner {
 
     private static TaskAssignmentStrategy createGAStrategy(
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
-        GAConfiguration config = GAConfiguration.builder()
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -485,9 +537,11 @@ public class WaitingTimeExperimentRunner {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
             .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        return new GenerationalGATaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+        return new GenerationalGATaskSchedulingStrategy(builder.build());
     }
 
     private static TaskAssignmentStrategy createSAStrategy(
@@ -531,11 +585,12 @@ public class WaitingTimeExperimentRunner {
         return new SimulatedAnnealingTaskSchedulingStrategy(config);
     }
 
-    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         WaitingTimeObjective waitingTime = new WaitingTimeObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -543,9 +598,10 @@ public class WaitingTimeExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
@@ -628,8 +684,9 @@ public class WaitingTimeExperimentRunner {
         VMPlacementStep vmStep = new VMPlacementStep(new BestFitVMPlacementStrategy());
         vmStep.execute(context);
 
-        // Create strategy AFTER step 4 so hosts are available for EnergyObjective
-        TaskAssignmentStrategy strategy = createStrategy(label, context.getHosts(), seed);
+        // Create strategy AFTER step 4 so hosts/VMs are available. For GA and
+        // NSGA-II this also runs the heuristics to extract injection seeds.
+        TaskAssignmentStrategy strategy = createStrategy(label, context, seed);
 
         // Step 5: Task Assignment (TIMED)
         long assignStart = System.currentTimeMillis();

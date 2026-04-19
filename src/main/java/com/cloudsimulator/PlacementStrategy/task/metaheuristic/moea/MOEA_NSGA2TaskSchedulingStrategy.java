@@ -14,11 +14,18 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.Termi
 import org.moeaframework.Analyzer;
 import org.moeaframework.Executor;
 import org.moeaframework.Instrumenter;
+import org.moeaframework.algorithm.NSGAII;
 import org.moeaframework.analysis.collector.Observations;
 import org.moeaframework.analysis.plot.Plot;
 import org.moeaframework.core.NondominatedPopulation;
+import org.moeaframework.core.NondominatedSortingPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
+import org.moeaframework.core.Variation;
+import org.moeaframework.core.initialization.InjectedInitialization;
+import org.moeaframework.core.operator.CompoundVariation;
+import org.moeaframework.core.operator.real.PM;
+import org.moeaframework.core.operator.real.SBX;
 
 import javax.swing.JFrame;
 import java.io.File;
@@ -172,6 +179,11 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
                 ", Mutation: " + config.getMutationRate());
         }
 
+        // Seeded path: bypass the Executor so we can pass InjectedInitialization.
+        if (!config.getSeedAssignments().isEmpty()) {
+            return runSeeded(tasks, vms, problem, maxEvaluations);
+        }
+
         // Build and configure the Executor
         Executor executor = new Executor()
             .withProblem(problem)
@@ -219,6 +231,77 @@ public class MOEA_NSGA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-NSGA-II] Pareto front contains " + lastParetoFront.size() + " solutions");
+        }
+
+        return lastParetoFront;
+    }
+
+    /**
+     * Runs NSGA-II directly (bypassing the Executor) so that heuristic seed
+     * solutions can be injected into the initial population via
+     * {@link InjectedInitialization}. The Executor doesn't expose the
+     * Initialization hook.
+     */
+    private ParetoFront runSeeded(List<Task> tasks, List<VM> vms,
+                                   TaskSchedulingProblem problem, int maxEvaluations) {
+        List<int[]> seeds = config.getSeedAssignments();
+        int numTasks = tasks.size();
+
+        // Encode each heuristic seed as a MOEA Solution.
+        List<Solution> injected = new ArrayList<>();
+        for (int[] seed : seeds) {
+            if (seed == null || seed.length != numTasks) continue;
+            SchedulingSolution s = new SchedulingSolution(
+                numTasks, vms.size(), config.getNumObjectives());
+            s.setTaskAssignment(seed.clone());
+            s.rebuildTaskOrdering();
+            injected.add(problem.encode(s));
+        }
+
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-NSGA-II] Seeded run: injecting "
+                + injected.size() + " heuristic solution(s) into initial population");
+        }
+
+        // Mirror Executor's default variation operators (SBX + PM) with the
+        // rates/distribution indices configured via properties elsewhere.
+        Variation variation = new CompoundVariation(
+            new SBX(config.getCrossoverRate(), 5.0),
+            new PM(config.getMutationRate(), 5.0)
+        );
+
+        InjectedInitialization initialization = new InjectedInitialization(problem, injected);
+
+        // selection=null reproduces Deb's original binary tournament without
+        // replacement, matching MOEA's default NSGA-II behaviour.
+        NSGAII algorithm = new NSGAII(
+            problem,
+            config.getPopulationSize(),
+            new NondominatedSortingPopulation(),
+            null,
+            null,
+            variation,
+            initialization
+        );
+
+        while (algorithm.getNumberOfEvaluations() < maxEvaluations) {
+            algorithm.step();
+        }
+
+        NondominatedPopulation result = algorithm.getResult();
+        lastMoeaResult = result;
+        lastEvaluationCount = algorithm.getNumberOfEvaluations();
+
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-NSGA-II] Seeded run completed after "
+                + lastEvaluationCount + " evaluations");
+        }
+
+        lastParetoFront = convertToParetoFront(result, problem);
+
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-NSGA-II] Pareto front contains "
+                + lastParetoFront.size() + " solutions");
         }
 
         return lastParetoFront;

@@ -46,6 +46,9 @@ public class NSGA2Configuration {
     // Randomness
     private final Long randomSeed;
 
+    // Heuristic seeds for initial population (empty by default)
+    private final List<int[]> seedAssignments;
+
     // Logging
     private final boolean verboseLogging;
     private final int logInterval;
@@ -61,6 +64,7 @@ public class NSGA2Configuration {
         this.objectives = new ArrayList<>(builder.objectives);
         this.terminationCondition = builder.terminationCondition;
         this.randomSeed = builder.randomSeed;
+        this.seedAssignments = new ArrayList<>(builder.seedAssignments);
         this.verboseLogging = builder.verboseLogging;
         this.logInterval = builder.logInterval;
     }
@@ -124,6 +128,14 @@ public class NSGA2Configuration {
         return randomSeed != null;
     }
 
+    /**
+     * Returns the heuristic seed assignments injected into the initial population.
+     * Each int[] maps task index -> VM index. Empty when no seeds were provided.
+     */
+    public List<int[]> getSeedAssignments() {
+        return seedAssignments;
+    }
+
     public boolean isVerboseLogging() {
         return verboseLogging;
     }
@@ -182,6 +194,7 @@ public class NSGA2Configuration {
         private List<SchedulingObjective> objectives = new ArrayList<>();
         private TerminationCondition terminationCondition = new GenerationCountTermination(100);
         private Long randomSeed = null;
+        private List<int[]> seedAssignments = new ArrayList<>();
         private boolean verboseLogging = false;
         private int logInterval = 10;
 
@@ -279,6 +292,21 @@ public class NSGA2Configuration {
          */
         public Builder randomSeed(long randomSeed) {
             this.randomSeed = randomSeed;
+            return this;
+        }
+
+        /**
+         * Adds a heuristic seed assignment to inject into the initial population.
+         * When any seed is present, the strategy bypasses MOEA's Executor and
+         * constructs NSGA-II directly with an InjectedInitialization.
+         *
+         * @param assignment Task-to-VM assignment to inject (defensive copy taken)
+         * @return this builder
+         */
+        public Builder addSeedAssignment(int[] assignment) {
+            if (assignment != null) {
+                this.seedAssignments.add(assignment.clone());
+            }
             return this;
         }
 
