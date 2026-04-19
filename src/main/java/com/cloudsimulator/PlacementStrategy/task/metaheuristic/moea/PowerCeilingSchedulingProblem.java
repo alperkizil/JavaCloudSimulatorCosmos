@@ -82,7 +82,9 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
         }
 
         // Power-ceiling constraint: violation magnitude in Watts, 0 if feasible.
-        meter.evaluate(schedulingSolution, tasks, vms);
+        // Objectives above may already include EnergyObjective, so use the
+        // sweep-only meter path to avoid recomputing energy a second time.
+        meter.computePowerProfileOnly(schedulingSolution, tasks, vms);
         double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
         solution.setConstraint(0, violation);
 

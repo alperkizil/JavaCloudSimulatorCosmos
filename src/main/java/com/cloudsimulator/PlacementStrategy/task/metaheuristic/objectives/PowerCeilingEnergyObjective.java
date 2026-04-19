@@ -69,6 +69,16 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
         return energyKwh;
     }
 
+    /**
+     * Runs only the sweep-line power profile (peak / overflow / average) and
+     * skips the parent's energy integral. Use when the caller already ran
+     * {@link EnergyObjective#evaluate} on the same solution (e.g. when energy
+     * is in the objective list) and only needs the peak-power readings.
+     */
+    public void computePowerProfileOnly(SchedulingSolution solution, List<Task> tasks, List<VM> vms) {
+        computePowerProfile(solution, tasks, vms);
+    }
+
     private void computePowerProfile(SchedulingSolution solution, List<Task> tasks, List<VM> vms) {
         resetMetrics();
         if (tasks.isEmpty() || vms.isEmpty()) {
