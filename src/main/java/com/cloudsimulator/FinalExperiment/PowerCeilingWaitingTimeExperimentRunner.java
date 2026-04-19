@@ -46,6 +46,7 @@ import java.util.function.BiConsumer;
 
 // MOEA Framework strategies
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2PowerCeilingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_SPEA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_AMOSATaskSchedulingStrategy;
 
@@ -98,7 +99,9 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         "GA_WaitingTime_Dominance", "GA_Energy_Dominance",
         "SA_WaitingTime_Dominance", "SA_Energy_Dominance",
         // Multi-objective metaheuristics
-        "NSGA-II", "SPEA-II", "AMOSA"
+        "NSGA-II", "SPEA-II", "AMOSA",
+        // Constrained-domination (Deb) variants at the calibrated cap tiers
+        "NSGA-II_PC_190kW", "NSGA-II_PC_120kW"
     };
 
     private static final int POPULATION_SIZE = 200;
@@ -532,6 +535,16 @@ public class PowerCeilingWaitingTimeExperimentRunner {
                 int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
                 return createAMOSAStrategy(hosts, seed, waSeed, eaSeed);
             }
+            case "NSGA-II_PC_190kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 190000.0);
+            }
+            case "NSGA-II_PC_120kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 120000.0);
+            }
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -723,6 +736,26 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
+    }
+
+    private static TaskAssignmentStrategy createNSGA2PowerCeilingStrategy(List<Host> hosts, long seed,
+                                                                          int[] waSeed, int[] eaSeed,
+                                                                          double powerCapWatts) {
+        WaitingTimeObjective waitingTime = new WaitingTimeObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .addObjective(waitingTime)
+            .addObjective(energy)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
+            .randomSeed(seed)
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        return new MOEA_NSGA2PowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
     }
 
     private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed,
