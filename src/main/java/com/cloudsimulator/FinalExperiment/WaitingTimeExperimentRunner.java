@@ -28,6 +28,7 @@ import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStr
 import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
 
 // Metaheuristics
@@ -76,13 +77,13 @@ public class WaitingTimeExperimentRunner {
 
     // ---- WHICH ALGORITHMS TO RUN ----
     // Edit this list to include/exclude algorithms. Comment out lines to skip.
-    // Available: FirstAvailable, ShortestQueue, WorkloadAware, RoundRobin,
+    // Available: FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
     //            GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy,
     //            NSGA-II, SPEA-II, AMOSA
     // Ordering here controls the order they appear in CSVs and plots.
     private static final String[] ALGORITHM_LABELS = {
         // Baseline heuristics (deterministic, non-preemptive, fast)
-        "FirstAvailable", "ShortestQueue", "WorkloadAware", "RoundRobin",
+        "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
         // Single-objective metaheuristics
         "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
         // Multi-objective metaheuristics
@@ -446,6 +447,8 @@ public class WaitingTimeExperimentRunner {
                 return new ShortestQueueTaskAssignmentStrategy();
             case "WorkloadAware":
                 return new WorkloadAwareTaskAssignmentStrategy();
+            case "EnergyAware":
+                return new EnergyAwareTaskAssignmentStrategy();
             case "RoundRobin":
                 return new RoundRobinTaskAssignmentStrategy();
             case "GA_WaitingTime":
