@@ -221,7 +221,9 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
 
     private void offerToArchive(SchedulingSolution solution) {
         if (archive == null) return;
-        meter.evaluate(solution, tasks, vms);
+        // evaluateFitness above already ran any EnergyObjective in the
+        // objective list; skip the meter's parent energy integral.
+        meter.computePowerProfileOnly(solution, tasks, vms);
         double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
         archive.offer(solution, violation);
     }

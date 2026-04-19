@@ -248,7 +248,9 @@ public class GenerationalGAPowerCeilingAlgorithm {
             fitnessValues[i] = evaluateFitness(solution);
             statistics.incrementEvaluations();
             if (archive != null) {
-                meter.evaluate(solution, tasks, vms);
+                // evaluateFitness above already ran any EnergyObjective in the
+                // objective list; skip the meter's parent energy integral.
+                meter.computePowerProfileOnly(solution, tasks, vms);
                 double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
                 archive.offer(solution, violation);
             }
