@@ -23,6 +23,11 @@ files are split so each can be opened on its own.
    constrained-domination (not a penalty, not a third objective), and
    the "admission-control disaster" that the runtime-gating baseline
    exhibits.
+6. [`06-results-analysis.md`](06-results-analysis.md) — interpretation
+   of the full factorial run: HV / GD / IGD winners, runtime trade-offs,
+   statistical significance, cap-induced degradation, the
+   energy-dominance surprise, and a quantified account of the
+   admission-control failure mode.
 
 All file paths referenced inside point at real sources under
 `src/main/java/com/cloudsimulator/...` so you can audit any claim.
