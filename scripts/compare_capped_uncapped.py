@@ -35,7 +35,37 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+
+# Publication styling — ported from scripts/plot_scenario_pareto.py so the
+# Pareto figure produced here matches the main experiment plots.
+mpl.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['STIX Two Text', 'STIX', 'DejaVu Serif', 'Times New Roman', 'serif'],
+    'mathtext.fontset': 'stix',
+    'axes.titlesize': 12,
+    'axes.labelsize': 11,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.titlesize': 14,
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+    'axes.linewidth': 0.8,
+    'xtick.direction': 'in',
+    'ytick.direction': 'in',
+    'xtick.minor.visible': True,
+    'ytick.minor.visible': True,
+    'xtick.major.size': 4,
+    'ytick.major.size': 4,
+    'xtick.minor.size': 2,
+    'ytick.minor.size': 2,
+    'grid.color': '#cccccc',
+    'grid.linewidth': 0.5,
+    'grid.alpha': 0.7,
+    'axes.axisbelow': True,
+})
 
 ALGO_MAP = {
     1: "GA_WaitingTime_Dominance",
@@ -55,15 +85,33 @@ CAP_LEVELS = [
 
 SCENARIOS = [(1, "Balanced"), (2, "GPU_Stress"), (3, "CPU_Stress")]
 
-COLOURS = {
-    "GA_WaitingTime_Dominance": "#1f77b4",
-    "GA_Energy_Dominance":      "#ff7f0e",
-    "SA_WaitingTime_Dominance": "#2ca02c",
-    "SA_Energy_Dominance":      "#d62728",
-    "NSGA-II":                  "#9467bd",
-    "SPEA-II":                  "#8c564b",
-    "AMOSA":                    "#e377c2",
+# Okabe-Ito palette — colorblind-safe; shape + fill provide redundancy.
+OKABE_ITO = {
+    'black':          '#000000',
+    'orange':         '#E69F00',
+    'sky_blue':       '#56B4E9',
+    'bluish_green':   '#009E73',
+    'blue':           '#0072B2',
+    'vermillion':     '#D55E00',
+    'reddish_purple': '#CC79A7',
 }
+
+# (color, marker, filled, display_label) — mirrors plot_scenario_pareto.py.
+ALGORITHM_STYLE = {
+    "GA_WaitingTime_Dominance": ('#56B4E9',                     'D', True, 'GA Dominance (Waiting Time)'),
+    "GA_Energy_Dominance":      ('#1B3A6B',                     'D', True, 'GA Dominance (Energy)'),
+    "SA_WaitingTime_Dominance": ('#FF6B9D',                     's', True, 'SA Dominance (Waiting Time)'),
+    "SA_Energy_Dominance":      ('#8B0000',                     's', True, 'SA Dominance (Energy)'),
+    "NSGA-II":                  (OKABE_ITO['bluish_green'],     'o', True, 'NSGA-II'),
+    "SPEA-II":                  (OKABE_ITO['reddish_purple'],   '^', True, 'SPEA-II'),
+    "AMOSA":                    (OKABE_ITO['orange'],           'v', True, 'AMOSA'),
+}
+
+UNIVERSAL_PARETO_COLOR = OKABE_ITO['black']
+
+
+def get_style(algo):
+    return ALGORITHM_STYLE.get(algo, (OKABE_ITO['black'], 'o', True, algo))
 
 
 def parse_algorithm_ids(s):
@@ -123,7 +171,7 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
     selected = [ALGO_MAP[i] for i in algo_ids]
     all_names = list(ALGO_MAP.values())
     fig, axes = plt.subplots(len(SCENARIOS), len(CAP_LEVELS),
-                             figsize=(16, 12), sharex=True, sharey=True)
+                             figsize=(16, 13), sharex=True, sharey=True)
 
     for row, (sid, sname) in enumerate(SCENARIOS):
         full = load_graph(sid, reports_dir)
@@ -139,6 +187,10 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
 
         for col, (cap_label, _) in enumerate(CAP_LEVELS):
             ax = axes[row, col]
+            ax.set_xlim(-0.03, 1.05)
+            ax.set_ylim(-0.03, 1.05)
+            ax.grid(True, which='major')
+
             sub_full = full[full["CapLevel"] == cap_label]
             sub_sel = sub_full[sub_full["BaseAlgorithm"].isin(selected)]
 
@@ -146,13 +198,19 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
                 s = sub_sel[sub_sel["BaseAlgorithm"] == base]
                 if s.empty:
                     continue
+                color, marker, filled, display = get_style(base)
+                face = color if filled else 'none'
                 x = (s["WaitingTime"] - wt_min) / wt_rng
                 y = (s["Energy"] - e_min) / e_rng
-                ax.scatter(x, y, s=10, alpha=0.4,
-                           color=COLOURS[base], label=base)
+                ax.scatter(
+                    x, y, s=22, marker=marker,
+                    facecolors=face, edgecolors=color, linewidths=0.8,
+                    alpha=0.75, label=display, zorder=3,
+                )
 
             # Global Pareto: best of best across ALL seven algorithms,
-            # independent of --algorithms selection.
+            # independent of --algorithms selection. Rendered in the
+            # Universal-Pareto style used by plot_scenario_pareto.py.
             if not sub_full.empty:
                 pts = sub_full[["WaitingTime", "Energy"]].to_numpy()
                 mask = non_dominated_mask(pts)
@@ -160,26 +218,75 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
                 gx = (g[:, 0] - wt_min) / wt_rng
                 gy = (g[:, 1] - e_min) / e_rng
                 order = np.argsort(gx)
-                ax.plot(gx[order], gy[order], color="black", lw=1.4,
-                        marker="o", ms=4, label="Global Pareto (all algos)")
+                ax.plot(gx[order], gy[order],
+                        color=UNIVERSAL_PARETO_COLOR, linewidth=1.8,
+                        linestyle='-', alpha=0.9,
+                        label="Global Pareto (all algos)", zorder=6)
+                ax.scatter(gx[order], gy[order], s=30, marker='o',
+                           facecolors=UNIVERSAL_PARETO_COLOR,
+                           edgecolors=UNIVERSAL_PARETO_COLOR,
+                           linewidths=0.4, zorder=7)
 
-            ax.set_title(f"{sname} - {cap_label}", fontsize=10)
+            # Ideal-point reference marker at (0, 0)
+            ax.scatter([0.0], [0.0], marker='*', s=120,
+                       facecolor='white', edgecolor='black',
+                       linewidths=0.9, zorder=8)
+            if row == 0 and col == 0:
+                ax.annotate('ideal', xy=(0.0, 0.0), xytext=(6, 6),
+                            textcoords='offset points',
+                            fontsize=8, style='italic')
+
+            ax.set_title(f"{sname} — {cap_label}")
             if row == len(SCENARIOS) - 1:
-                ax.set_xlabel("Waiting Time (normalised)")
+                ax.set_xlabel('Average Waiting Time (s)  (normalized)')
             if col == 0:
-                ax.set_ylabel("Energy (normalised)")
-            ax.grid(alpha=0.3)
+                ax.set_ylabel('Energy (kWh)  (normalized)')
+
+            # Secondary axes in raw units (per-scenario bounds)
+            range_x = wt_rng
+            range_y = e_rng
+            ideal_x_local = wt_min
+            ideal_y_local = e_min
+            if row == 0:
+                secx = ax.secondary_xaxis(
+                    'top',
+                    functions=(lambda u, a=ideal_x_local, r=range_x: a + u * r,
+                               lambda v, a=ideal_x_local, r=range_x: (v - a) / r),
+                )
+                secx.tick_params(labelsize=8)
+            if col == len(CAP_LEVELS) - 1:
+                secy = ax.secondary_yaxis(
+                    'right',
+                    functions=(lambda u, a=ideal_y_local, r=range_y: a + u * r,
+                               lambda v, a=ideal_y_local, r=range_y: (v - a) / r),
+                )
+                secy.tick_params(labelsize=8)
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    fig.legend(by_label.values(), by_label.keys(),
-               loc="lower center", ncol=min(len(by_label), 5),
-               bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Normalised Pareto fronts - uncapped vs power-capped",
-                 fontsize=14)
-    fig.tight_layout(rect=[0, 0.04, 1, 0.97])
+    if by_label:
+        fig.legend(
+            by_label.values(), by_label.keys(),
+            loc="lower center",
+            ncol=min(len(by_label), 4),
+            bbox_to_anchor=(0.5, -0.04),
+            frameon=True, fancybox=False, edgecolor='#888888',
+        )
+    fig.suptitle(
+        'Normalised Pareto Fronts — Uncapped vs Power-Capped',
+        y=1.02,
+    )
+    caption = (
+        'Scatter = per-seed solutions from each algorithm; black line = '
+        'global Pareto front pooled across all seven algorithms. '
+        'Axes normalised per scenario to [0, 1]; raw units shown on top '
+        '(x) and right (y) axes. White star marks the ideal point.'
+    )
+    fig.text(0.5, 0.965, caption, ha='center', fontsize=8.5,
+             style='italic', color='#333333', wrap=True)
+    fig.tight_layout(rect=[0, 0.02, 1, 0.94])
     out = os.path.join(out_dir, "pareto_fronts_comparison.png")
-    fig.savefig(out, dpi=200, bbox_inches="tight")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {out}")
 
