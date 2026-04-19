@@ -748,6 +748,10 @@ public class WaitingTimeExperimentRunner {
         strategy.setGamma(AMOSA_GAMMA);
         strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
         strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
+        // Diagnostic: log archive size and per-objective spread at init, every
+        // 10 temperature steps, and at terminate to locate where extreme seeds
+        // (waSeed / eaSeed) disappear from the archive.
+        strategy.enableArchiveDebugLogging(10);
         return strategy;
     }
 
