@@ -68,6 +68,9 @@ public class SimulatedAnnealingAlgorithm {
     private double initialTemperatureActual; // Actual T0 used (may be auto-calculated)
     private int reheatsPerformed;
 
+    // Non-dominated archive (multi-objective view for a single-objective search)
+    private NonDominatedArchive archive;
+
     /**
      * Creates a new Simulated Annealing algorithm.
      *
@@ -133,10 +136,18 @@ public class SimulatedAnnealingAlgorithm {
         // Create algorithm statistics for termination condition
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
 
-        // Step 1: Generate initial solution (s = s0)
+        // Reset the non-dominated archive for this run
+        archive = new NonDominatedArchive(buildMinimizationArray());
+
+        // Step 1: Generate initial solution (s = s0) — seeded if a heuristic
+        // seed is available, random otherwise. Extra seeds beyond the first
+        // are evaluated purely to populate the archive.
         currentSolution = generateInitialSolution();
         currentFitness = evaluateFitness(currentSolution);
         statistics.incrementEvaluations();
+        archive.offer(currentSolution);
+
+        offerExtraSeedsToArchive();
 
         // Keep track of best solution
         bestSolution = currentSolution.copy();
@@ -208,6 +219,7 @@ public class SimulatedAnnealingAlgorithm {
                 // Evaluate neighbor
                 double neighborFitness = evaluateFitness(neighbor);
                 statistics.incrementEvaluations();
+                archive.offer(neighbor);
 
                 // Calculate ΔE = f(s') - f(s)
                 double deltaE = neighborFitness - currentFitness;
@@ -319,7 +331,8 @@ public class SimulatedAnnealingAlgorithm {
     }
 
     /**
-     * Generates the initial solution randomly.
+     * Generates the initial solution. Uses the first heuristic seed if one was
+     * configured; otherwise builds a random assignment respecting constraints.
      *
      * @return Initial solution
      */
@@ -327,6 +340,21 @@ public class SimulatedAnnealingAlgorithm {
         int numTasks = tasks.size();
         int numVMs = vms.size();
         int numObjectives = config.getNumObjectives();
+
+        List<int[]> seeds = config.getSeedAssignments();
+        if (seeds != null && !seeds.isEmpty()) {
+            int[] primary = seeds.get(0);
+            if (primary != null && primary.length == numTasks) {
+                SchedulingSolution seeded = new SchedulingSolution(numTasks, numVMs, numObjectives);
+                seeded.setTaskAssignment(primary.clone());
+                repairOperator.repair(seeded);
+                seeded.rebuildTaskOrdering();
+                if (config.isVerboseLogging()) {
+                    System.out.println("[SA] Using heuristic seed as initial solution");
+                }
+                return seeded;
+            }
+        }
 
         SchedulingSolution solution = new SchedulingSolution(numTasks, numVMs, numObjectives);
 
@@ -341,6 +369,37 @@ public class SimulatedAnnealingAlgorithm {
 
         solution.rebuildTaskOrdering();
         return solution;
+    }
+
+    /**
+     * Evaluates any seeds beyond the first (which was already used as the
+     * initial solution) and offers them to the archive so they survive the
+     * run regardless of what SA's fitness-driven search does.
+     */
+    private void offerExtraSeedsToArchive() {
+        List<int[]> seeds = config.getSeedAssignments();
+        if (seeds == null || seeds.size() <= 1) return;
+
+        int numTasks = tasks.size();
+        int numVMs = vms.size();
+        int numObjectives = config.getNumObjectives();
+
+        int offered = 0;
+        for (int i = 1; i < seeds.size(); i++) {
+            int[] seed = seeds.get(i);
+            if (seed == null || seed.length != numTasks) continue;
+            SchedulingSolution extra = new SchedulingSolution(numTasks, numVMs, numObjectives);
+            extra.setTaskAssignment(seed.clone());
+            repairOperator.repair(extra);
+            extra.rebuildTaskOrdering();
+            evaluateFitness(extra);
+            statistics.incrementEvaluations();
+            if (archive.offer(extra)) offered++;
+        }
+
+        if (offered > 0 && config.isVerboseLogging()) {
+            System.out.println("[SA] Offered " + offered + " additional seed(s) to the archive");
+        }
     }
 
     /**
@@ -425,6 +484,7 @@ public class SimulatedAnnealingAlgorithm {
         SchedulingSolution initial = generateInitialSolution();
         double initialFitness = evaluateFitness(initial);
         statistics.incrementEvaluations();
+        if (archive != null) archive.offer(initial);
 
         // Sample neighbors and collect positive deltas
         List<Double> positiveDeltaEs = new ArrayList<>();
@@ -433,6 +493,7 @@ public class SimulatedAnnealingAlgorithm {
             SchedulingSolution neighbor = generateNeighbor(initial);
             double neighborFitness = evaluateFitness(neighbor);
             statistics.incrementEvaluations();
+            if (archive != null) archive.offer(neighbor);
 
             double deltaE = neighborFitness - initialFitness;
 
@@ -587,5 +648,26 @@ public class SimulatedAnnealingAlgorithm {
      */
     public SAConfiguration getConfig() {
         return config;
+    }
+
+    /**
+     * Gets the non-dominated solutions collected across the whole run.
+     * Empty before run() has been called.
+     */
+    public List<SchedulingSolution> getArchive() {
+        if (archive == null) return new ArrayList<>();
+        return archive.getMembers();
+    }
+
+    /**
+     * Builds a boolean array indicating which raw objectives are minimization.
+     */
+    private boolean[] buildMinimizationArray() {
+        List<SchedulingObjective> objectives = config.getObjectives();
+        boolean[] mins = new boolean[objectives.size()];
+        for (int i = 0; i < objectives.size(); i++) {
+            mins[i] = objectives.get(i).isMinimization();
+        }
+        return mins;
     }
 }
