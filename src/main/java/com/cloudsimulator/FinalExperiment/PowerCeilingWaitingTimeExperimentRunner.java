@@ -30,6 +30,7 @@ import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStra
 import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.PowerCeilingAdmissionTaskAssignmentStrategy;
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
@@ -116,7 +117,10 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         "GA_WaitingTime_Dominance_PC_190kW", "GA_WaitingTime_Dominance_PC_120kW",
         "GA_Energy_Dominance_PC_190kW",      "GA_Energy_Dominance_PC_120kW",
         "SA_WaitingTime_Dominance_PC_190kW", "SA_WaitingTime_Dominance_PC_120kW",
-        "SA_Energy_Dominance_PC_190kW",      "SA_Energy_Dominance_PC_120kW"
+        "SA_Energy_Dominance_PC_190kW",      "SA_Energy_Dominance_PC_120kW",
+        // Runtime admission-control decorator (Step 3c) — wraps WorkloadAware
+        // and defers tasks whose admission would push DC peak above the cap.
+        "WorkloadAware_Admission_PC_190kW",  "WorkloadAware_Admission_PC_120kW"
     };
 
     private static final int POPULATION_SIZE = 200;
@@ -368,6 +372,7 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         // Generate cross-scenario summary
         generateExperimentSummary(allResults);
         generatePowerCeilingFeasibilityCSV(allResults);
+        PowerCeilingReporter.writeReports(REPORTS_DIR, allResults, POWER_CAP_LEVELS_WATTS);
         generatePlotOptionsJSON();
 
         // Try to run Python plotter
@@ -620,6 +625,10 @@ public class PowerCeilingWaitingTimeExperimentRunner {
                 return createSADominancePowerCeilingStrategy(
                     createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed, hosts, 120000.0);
             }
+            case "WorkloadAware_Admission_PC_190kW":
+                return createAdmissionStrategy(new WorkloadAwareTaskAssignmentStrategy(), hosts, 190000.0);
+            case "WorkloadAware_Admission_PC_120kW":
+                return createAdmissionStrategy(new WorkloadAwareTaskAssignmentStrategy(), hosts, 120000.0);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -951,6 +960,12 @@ public class PowerCeilingWaitingTimeExperimentRunner {
             builder.addSeedAssignment(heuristicSeed);
         }
         return new GenerationalGAwithDominancePowerCeilingStrategy(builder.build(), powerCapWatts, hosts);
+    }
+
+    private static TaskAssignmentStrategy createAdmissionStrategy(TaskAssignmentStrategy inner,
+                                                                  List<Host> hosts,
+                                                                  double powerCapWatts) {
+        return new PowerCeilingAdmissionTaskAssignmentStrategy(inner, powerCapWatts, hosts);
     }
 
     private static TaskAssignmentStrategy createSADominancePowerCeilingStrategy(
@@ -1683,6 +1698,7 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         PythonPostProcessor.run(REPORTS_DIR,
             "scripts/recompute_hv.py",
             "scripts/plot_scenario_pareto.py",
+            "scripts/plot_power_ceiling.py",
             "scripts/statistical_tests.py"
         );
     }
