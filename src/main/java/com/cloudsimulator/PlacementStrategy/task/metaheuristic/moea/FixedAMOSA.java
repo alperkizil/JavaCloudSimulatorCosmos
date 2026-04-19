@@ -31,9 +31,6 @@ public class FixedAMOSA extends AMOSA {
 
     private final DominanceComparator comparator;
     private int maxEvaluations = Integer.MAX_VALUE;
-    private boolean archiveDebugLogging = false;
-    private int iterateLogCounter = 0;
-    private int iterateLogStride = 10; // log every N temperature steps during main loop
 
     public FixedAMOSA(Problem problem, Initialization initialization, Mutation mutation,
                       double gamma, int softLimit, int hardLimit,
@@ -55,82 +52,11 @@ public class FixedAMOSA extends AMOSA {
         this.maxEvaluations = maxEvaluations;
     }
 
-    /**
-     * Enables per-phase archive range logging (after init+hill-climbing+initial
-     * truncation, periodically during the main loop, and at termination).
-     * Used to diagnose archive spread collapse.
-     */
-    public void setArchiveDebugLogging(boolean enabled) {
-        this.archiveDebugLogging = enabled;
-    }
-
-    /**
-     * Sets how often (in temperature steps) the main loop logs archive state.
-     */
-    public void setArchiveDebugStride(int stride) {
-        this.iterateLogStride = Math.max(1, stride);
-    }
-
-    @Override
-    public void initialize() {
-        super.initialize();
-        logArchive("after-init");
-    }
-
-    @Override
-    public void terminate() {
-        super.terminate();
-        logArchive("after-terminate");
-    }
-
-    /**
-     * Logs archive size and per-objective [min, max] ranges. Emitted on stdout
-     * with a [AMOSA-DBG] prefix so runs can be grepped post-hoc.
-     */
-    private void logArchive(String phase) {
-        if (!archiveDebugLogging) return;
-        int n = archive.size();
-        if (n == 0) {
-            System.out.println("[AMOSA-DBG] " + phase + " archive=0 evals=" + getNumberOfEvaluations());
-            return;
-        }
-        int nObj = archive.get(0).getNumberOfObjectives();
-        double[] min = new double[nObj];
-        double[] max = new double[nObj];
-        for (int j = 0; j < nObj; j++) {
-            min[j] = Double.POSITIVE_INFINITY;
-            max[j] = Double.NEGATIVE_INFINITY;
-        }
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < nObj; j++) {
-                double v = archive.get(i).getObjective(j);
-                if (v < min[j]) min[j] = v;
-                if (v > max[j]) max[j] = v;
-            }
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("[AMOSA-DBG] ").append(phase)
-          .append(" evals=").append(getNumberOfEvaluations())
-          .append(" archive=").append(n);
-        for (int j = 0; j < nObj; j++) {
-            sb.append(" obj").append(j)
-              .append("=[").append(String.format("%.4f", min[j]))
-              .append(", ").append(String.format("%.4f", max[j]))
-              .append("] span=").append(String.format("%.4f", max[j] - min[j]));
-        }
-        System.out.println(sb.toString());
-    }
-
     @Override
     protected void iterate(double temperature) {
         int iterationsPerTemp = getNumberOfIterationsPerTemperature();
         int sl = getSoftLimit();
         int hl = getHardLimit();
-
-        iterateLogCounter++;
-        if (archiveDebugLogging && iterateLogCounter % iterateLogStride == 0) {
-            logArchive("T=" + String.format("%.4f", temperature) + " step=" + iterateLogCounter);
-        }
 
         for (int i = 0; i < iterationsPerTemp; i++) {
             if (getNumberOfEvaluations() >= maxEvaluations) break;
