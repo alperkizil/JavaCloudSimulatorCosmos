@@ -147,16 +147,17 @@ public class PowerCeilingWaitingTimeExperimentRunner {
     private static String REPORTS_DIR; // Set at runtime with timestamp
 
     // ==== Power-ceiling measurement configuration (additive) ====
-    // P_cap thresholds to evaluate post-hoc. Units: Watts (aggregate DC power).
-    // Chosen as round-number ceilings that span the peak range seen in the
-    // existing unconstrained runs (reports/new/); the scenario-summary CSV
-    // reports feasibility rates at each level.
+    // P_cap thresholds calibrated from the first measurement pass (8,490
+    // solutions across 17 algos × 3 scenarios × 10 seeds). See
+    // reports/powerceiling/ for the empirical CDF used.
+    //
+    //   220 kW — loose   (~78% of solutions feasible globally)
+    //   190 kW — moderate (~48%, near the global median peak)
+    //   120 kW — tight   (~21%, stress cap; only energy-optimizers pass)
     private static final double[] POWER_CAP_LEVELS_WATTS = {
-        20000.0,  // very loose
-        15000.0,  // loose
-        12000.0,  // moderate
-        10000.0,  // tight
-         8000.0   // very tight
+        220000.0,  // loose
+        190000.0,  // moderate (primary battleground)
+        120000.0   // tight (stress test)
     };
 
     // CPU workload types (6)
