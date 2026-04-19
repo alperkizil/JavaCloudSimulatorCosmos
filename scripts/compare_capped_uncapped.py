@@ -125,15 +125,20 @@ def parse_algorithm_ids(s):
 
 
 def non_dominated_mask(points):
-    """Boolean mask of non-dominated rows (minimising both columns)."""
+    """Boolean mask of non-dominated rows (minimising both columns).
+
+    Row i is kept iff no other row j satisfies P[j] <= P[i] component-wise
+    AND P[j] < P[i] in at least one dimension (i.e. j dominates i).
+    """
     P = np.asarray(points, float)
     n = len(P)
     keep = np.ones(n, bool)
     for i in range(n):
-        if not keep[i]:
-            continue
-        dominated = np.all(P <= P[i], axis=1) & np.any(P < P[i], axis=1)
-        keep[dominated] = False
+        # j=i contributes np.any(P[i] < P[i]) == False, so it's excluded.
+        dominated_by_any = (np.all(P <= P[i], axis=1)
+                            & np.any(P < P[i], axis=1)).any()
+        if dominated_by_any:
+            keep[i] = False
     return keep
 
 
