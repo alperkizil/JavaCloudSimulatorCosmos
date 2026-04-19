@@ -101,6 +101,10 @@ public class SAConfiguration {
     private final boolean verboseLogging;
     private final int logInterval;
 
+    // Heuristic seed assignments to inject (first is used as initial solution;
+    // any additional seeds are offered to the non-dominated archive).
+    private final List<int[]> seedAssignments;
+
     /**
      * Private constructor - use Builder.
      */
@@ -129,6 +133,7 @@ public class SAConfiguration {
         this.maxPerturbationMutations = builder.maxPerturbationMutations;
         this.verboseLogging = builder.verboseLogging;
         this.logInterval = builder.logInterval;
+        this.seedAssignments = new ArrayList<>(builder.seedAssignments);
     }
 
     /**
@@ -232,6 +237,14 @@ public class SAConfiguration {
 
     public int getLogInterval() {
         return logInterval;
+    }
+
+    /**
+     * Returns the heuristic seed assignments. When non-empty, the first seed
+     * becomes SA's initial solution and all seeds are offered to the archive.
+     */
+    public List<int[]> getSeedAssignments() {
+        return seedAssignments;
     }
 
     // Reheating getters
@@ -402,6 +415,9 @@ public class SAConfiguration {
         private boolean verboseLogging = false;
         private int logInterval = 10;
 
+        // Heuristic seed assignments (empty by default)
+        private List<int[]> seedAssignments = new ArrayList<>();
+
         /**
          * Sets the initial temperature.
          * This disables auto-calculation.
@@ -551,6 +567,21 @@ public class SAConfiguration {
          */
         public Builder terminationCondition(TerminationCondition terminationCondition) {
             this.terminationCondition = terminationCondition;
+            return this;
+        }
+
+        /**
+         * Adds a heuristic seed assignment. The first seed is used as SA's
+         * initial solution; all seeds are also offered to the non-dominated
+         * archive so they survive even if SA drifts to a different fitness.
+         *
+         * @param assignment Task-to-VM assignment to inject (defensive copy taken)
+         * @return this builder
+         */
+        public Builder addSeedAssignment(int[] assignment) {
+            if (assignment != null) {
+                this.seedAssignments.add(assignment.clone());
+            }
             return this;
         }
 

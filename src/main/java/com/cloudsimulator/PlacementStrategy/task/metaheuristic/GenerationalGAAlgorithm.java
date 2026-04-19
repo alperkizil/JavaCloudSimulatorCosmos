@@ -67,6 +67,9 @@ public class GenerationalGAAlgorithm {
     private List<SchedulingSolution> population;
     private double[] fitnessValues;
 
+    // Non-dominated archive (multi-objective view for a single-objective search)
+    private NonDominatedArchive archive;
+
     /**
      * Creates a new Generational GA algorithm.
      *
@@ -140,6 +143,9 @@ public class GenerationalGAAlgorithm {
 
         // Create algorithm statistics for termination condition
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
+
+        // Reset the non-dominated archive for this run
+        archive = new NonDominatedArchive(buildMinimizationArray());
 
         // Step 1: Initialize population
         initializePopulation();
@@ -331,9 +337,27 @@ public class GenerationalGAAlgorithm {
      */
     private void evaluatePopulation() {
         for (int i = 0; i < population.size(); i++) {
-            fitnessValues[i] = evaluateFitness(population.get(i));
+            SchedulingSolution solution = population.get(i);
+            fitnessValues[i] = evaluateFitness(solution);
             statistics.incrementEvaluations();
+            if (archive != null) {
+                archive.offer(solution);
+            }
         }
+    }
+
+    /**
+     * Builds a boolean array indicating which raw objectives are minimization,
+     * for use by the non-dominated archive. The archive operates on raw
+     * objective vectors regardless of whether fitness is weighted-sum.
+     */
+    private boolean[] buildMinimizationArray() {
+        List<SchedulingObjective> objectives = config.getObjectives();
+        boolean[] mins = new boolean[objectives.size()];
+        for (int i = 0; i < objectives.size(); i++) {
+            mins[i] = objectives.get(i).isMinimization();
+        }
+        return mins;
     }
 
     /**
@@ -426,5 +450,14 @@ public class GenerationalGAAlgorithm {
      */
     public GAConfiguration getConfig() {
         return config;
+    }
+
+    /**
+     * Gets the non-dominated solutions collected across the whole run.
+     * Empty before run() has been called.
+     */
+    public List<SchedulingSolution> getArchive() {
+        if (archive == null) return new ArrayList<>();
+        return archive.getMembers();
     }
 }

@@ -33,12 +33,16 @@ import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrateg
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGAwithDominanceStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingWithDominanceStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
+
+import java.util.function.BiConsumer;
 
 // MOEA Framework strategies
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
@@ -79,13 +83,19 @@ public class WaitingTimeExperimentRunner {
     // Edit this list to include/exclude algorithms. Comment out lines to skip.
     // Available: FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
     //            GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy,
+    //            GA_WaitingTime_Dominance, GA_Energy_Dominance,
+    //            SA_WaitingTime_Dominance, SA_Energy_Dominance,
     //            NSGA-II, SPEA-II, AMOSA
     // Ordering here controls the order they appear in CSVs and plots.
     private static final String[] ALGORITHM_LABELS = {
         // Baseline heuristics (deterministic, non-preemptive, fast)
         "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
-        // Single-objective metaheuristics
+        // Single-objective metaheuristics (return only the scalar best)
         "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
+        // Dominance-archive variants (same search, expose every non-dominated
+        // objective vector so the runner simulates each archive member)
+        "GA_WaitingTime_Dominance", "GA_Energy_Dominance",
+        "SA_WaitingTime_Dominance", "SA_Energy_Dominance",
         // Multi-objective metaheuristics
         "NSGA-II", "SPEA-II", "AMOSA"
     };
@@ -461,9 +471,25 @@ public class WaitingTimeExperimentRunner {
                 return createGAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed);
             }
             case "SA_WaitingTime":
-                return createSAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts));
+                return createSAStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts), null);
             case "SA_Energy":
-                return createSAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective());
+                return createSAStrategy(createEnergyObjective(hosts), new WaitingTimeObjective(), null);
+            case "GA_WaitingTime_Dominance": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGADominanceStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "GA_Energy_Dominance": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGADominanceStrategy(createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed);
+            }
+            case "SA_WaitingTime_Dominance": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createSADominanceStrategy(new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "SA_Energy_Dominance": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSADominanceStrategy(createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed);
+            }
             case "NSGA-II": {
                 int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
                 int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
@@ -546,7 +572,16 @@ public class WaitingTimeExperimentRunner {
 
     private static TaskAssignmentStrategy createSAStrategy(
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
+        return new SimulatedAnnealingTaskSchedulingStrategy(config);
+    }
+
+    private static SAConfiguration buildSAConfig(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
         SAConfiguration.Builder builder = SAConfiguration.builder();
 
         if (SA_AUTO_TEMPERATURE) {
@@ -581,8 +616,39 @@ public class WaitingTimeExperimentRunner {
                .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
                .verboseLogging(VERBOSE_LOGGING);
 
-        SAConfiguration config = builder.build();
-        return new SimulatedAnnealingTaskSchedulingStrategy(config);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+
+        return builder.build();
+    }
+
+    private static TaskAssignmentStrategy createGADominanceStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .elitePercentage(GA_ELITE_PERCENTAGE)
+            .tournamentSize(GA_TOURNAMENT_SIZE)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
+            .verboseLogging(VERBOSE_LOGGING);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+        return new GenerationalGAwithDominanceStrategy(builder.build());
+    }
+
+    private static TaskAssignmentStrategy createSADominanceStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
+        return new SimulatedAnnealingWithDominanceStrategy(config);
     }
 
     private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed,
