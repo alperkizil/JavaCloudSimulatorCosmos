@@ -18,9 +18,11 @@ import org.moeaframework.Executor;
 import org.moeaframework.Instrumenter;
 import org.moeaframework.analysis.collector.Observations;
 import org.moeaframework.analysis.plot.Plot;
+import org.moeaframework.core.Initialization;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
+import org.moeaframework.core.initialization.InjectedInitialization;
 import org.moeaframework.core.initialization.RandomInitialization;
 
 import javax.swing.JFrame;
@@ -367,10 +369,14 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());
 
+        // Build initialization, optionally injecting heuristic seed solutions
+        // into the initial archive so the search starts near known-good regions.
+        Initialization initialization = buildInitialization(problem, tasks, vms);
+
         // Create FixedAMOSA directly with domain-specific mutation
         // FixedAMOSA extends AMOSA with corrected deltaDominance calculation
         FixedAMOSA amosa = new FixedAMOSA(problem,
-            new RandomInitialization(problem),
+            initialization,
             mutation,
             gamma,
             softLimit,
@@ -570,6 +576,43 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
                 PRNG.setSeed(config.getRandomSeed());
             }
         }
+    }
+
+    /**
+     * Builds the initialization operator for AMOSA. When the configuration
+     * carries heuristic seed assignments, they are encoded as Solutions and
+     * injected into the initial population via {@link InjectedInitialization};
+     * remaining slots are filled randomly. Without seeds, falls back to
+     * {@link RandomInitialization} to preserve existing behaviour.
+     */
+    private Initialization buildInitialization(TaskSchedulingProblem problem,
+                                                List<Task> tasks, List<VM> vms) {
+        List<int[]> seeds = config.getSeedAssignments();
+        if (seeds == null || seeds.isEmpty()) {
+            return new RandomInitialization(problem);
+        }
+
+        int numTasks = tasks.size();
+        List<Solution> injected = new ArrayList<>();
+        for (int[] seed : seeds) {
+            if (seed == null || seed.length != numTasks) continue;
+            SchedulingSolution s = new SchedulingSolution(
+                numTasks, vms.size(), config.getNumObjectives());
+            s.setTaskAssignment(seed.clone());
+            s.rebuildTaskOrdering();
+            injected.add(problem.encode(s));
+        }
+
+        if (injected.isEmpty()) {
+            return new RandomInitialization(problem);
+        }
+
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-AMOSA] Seeded run: injecting "
+                + injected.size() + " heuristic solution(s) into initial population");
+        }
+
+        return new InjectedInitialization(problem, injected);
     }
 
     /**
