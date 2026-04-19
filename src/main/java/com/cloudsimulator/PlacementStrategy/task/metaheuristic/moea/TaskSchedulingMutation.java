@@ -60,8 +60,11 @@ public class TaskSchedulingMutation implements Mutation {
         // Repair any constraint violations
         repairOperator.repair(schedulingSolution);
 
-        // Encode back to MOEA Solution
-        return encode(schedulingSolution, child.getNumberOfObjectives());
+        // Encode back to MOEA Solution, preserving parent's constraint count
+        // so constrained problems (e.g. PowerCeilingSchedulingProblem) can
+        // still call setConstraint() during evaluation.
+        return encode(schedulingSolution, child.getNumberOfObjectives(),
+            child.getNumberOfConstraints());
     }
 
     private SchedulingSolution decode(Solution solution) {
@@ -80,8 +83,9 @@ public class TaskSchedulingMutation implements Mutation {
         return schedulingSolution;
     }
 
-    private Solution encode(SchedulingSolution schedulingSolution, int numObjectives) {
-        Solution solution = new Solution(numTasks, numObjectives);
+    private Solution encode(SchedulingSolution schedulingSolution, int numObjectives,
+                             int numConstraints) {
+        Solution solution = new Solution(numTasks, numObjectives, numConstraints);
         int[] assignment = schedulingSolution.getTaskAssignment();
 
         for (int i = 0; i < numTasks; i++) {
