@@ -77,6 +77,9 @@ public class GAConfiguration {
     // Termination
     private final TerminationCondition terminationCondition;
 
+    // Heuristic seeds for initial population (empty by default)
+    private final List<int[]> seedAssignments;
+
     // Logging
     private final boolean verboseLogging;
     private final int logInterval;
@@ -96,6 +99,7 @@ public class GAConfiguration {
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
         this.terminationCondition = builder.terminationCondition;
+        this.seedAssignments = new ArrayList<>(builder.seedAssignments);
         this.verboseLogging = builder.verboseLogging;
         this.logInterval = builder.logInterval;
     }
@@ -204,6 +208,14 @@ public class GAConfiguration {
         return terminationCondition;
     }
 
+    /**
+     * Returns the heuristic seed assignments injected into the initial population.
+     * Each int[] maps task index -> VM index. Empty when no seeds were provided.
+     */
+    public List<int[]> getSeedAssignments() {
+        return seedAssignments;
+    }
+
     public boolean isVerboseLogging() {
         return verboseLogging;
     }
@@ -287,6 +299,7 @@ public class GAConfiguration {
         private List<SchedulingObjective> objectives = new ArrayList<>();
         private Map<SchedulingObjective, Double> objectiveWeights = new LinkedHashMap<>();
         private TerminationCondition terminationCondition = new GenerationCountTermination(100);
+        private List<int[]> seedAssignments = new ArrayList<>();
         private boolean verboseLogging = false;
         private int logInterval = 10;
 
@@ -426,6 +439,21 @@ public class GAConfiguration {
          */
         public Builder terminationCondition(TerminationCondition terminationCondition) {
             this.terminationCondition = terminationCondition;
+            return this;
+        }
+
+        /**
+         * Adds a heuristic seed assignment to inject into the initial population.
+         * The seed is an int[] of length numTasks mapping task index -> VM index.
+         * Invalid assignments are fixed by the repair operator before evaluation.
+         *
+         * @param assignment Task-to-VM assignment to inject (defensive copy taken)
+         * @return this builder
+         */
+        public Builder addSeedAssignment(int[] assignment) {
+            if (assignment != null) {
+                this.seedAssignments.add(assignment.clone());
+            }
             return this;
         }
 
