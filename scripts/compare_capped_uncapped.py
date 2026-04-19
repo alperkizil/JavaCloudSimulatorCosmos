@@ -137,6 +137,52 @@ def non_dominated_mask(points):
     return keep
 
 
+def get_non_dominated(points):
+    """Return non-dominated points sorted by x (ported from plot_scenario_pareto.py)."""
+    if len(points) == 0:
+        return np.array([])
+    P = np.asarray(points, float)
+    mask = non_dominated_mask(P)
+    nd = P[mask]
+    if len(nd) == 0:
+        return np.array([])
+    # Deduplicate near-identical points before returning (stable sort by x).
+    out = []
+    for pt in nd:
+        if not any(abs(o[0] - pt[0]) < 1e-9 and abs(o[1] - pt[1]) < 1e-9
+                   for o in out):
+            out.append(pt)
+    out = np.asarray(out)
+    return out[np.argsort(out[:, 0])]
+
+
+def compute_eaf_grid(seed_fronts, grid_x, grid_y):
+    """Empirical attainment frequency across seeds on a 2-D grid.
+
+    Ported from scripts/plot_scenario_pareto.py. Returns an array of shape
+    (len(grid_y), len(grid_x)) with values in [0, 1].
+    """
+    N = len(seed_fronts)
+    if N == 0:
+        return np.zeros((len(grid_y), len(grid_x)))
+    thresholds = np.full((N, len(grid_x)), np.inf)
+    for i, front in enumerate(seed_fronts):
+        if len(front) == 0:
+            continue
+        order = np.argsort(front[:, 0])
+        fs = front[order]
+        cum_min = np.minimum.accumulate(fs[:, 1])
+        idx = np.searchsorted(fs[:, 0], grid_x, side='right') - 1
+        valid = idx >= 0
+        thresholds[i, valid] = cum_min[idx[valid]]
+    freq = np.zeros((len(grid_y), len(grid_x)))
+    for j in range(len(grid_x)):
+        col = np.sort(thresholds[:, j])
+        counts = np.searchsorted(col, grid_y, side='right')
+        freq[:, j] = counts / N
+    return freq
+
+
 def load_graph(scenario, reports_dir):
     """Concatenate uncapped + capped Pareto-graph rows for one scenario.
     Keeps every base algorithm so the global Pareto can be computed
@@ -173,6 +219,9 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
     fig, axes = plt.subplots(len(SCENARIOS), len(CAP_LEVELS),
                              figsize=(16, 13), sharex=True, sharey=True)
 
+    grid_x = np.linspace(0.0, 1.05, 220)
+    grid_y = np.linspace(0.0, 1.05, 220)
+
     for row, (sid, sname) in enumerate(SCENARIOS):
         full = load_graph(sid, reports_dir)
         # Only keep the seven base algorithms (drops admission-control and
@@ -194,19 +243,58 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
             sub_full = full[full["CapLevel"] == cap_label]
             sub_sel = sub_full[sub_full["BaseAlgorithm"].isin(selected)]
 
+            # EAF per algorithm: 50% median attainment line + [25%, 75%] band,
+            # plus a median-with-IQR error-bar summary marker on top.
+            # Matches the multi-objective rendering in plot_scenario_pareto.py.
             for base in selected:
                 s = sub_sel[sub_sel["BaseAlgorithm"] == base]
                 if s.empty:
                     continue
                 color, marker, filled, display = get_style(base)
                 face = color if filled else 'none'
-                x = (s["WaitingTime"] - wt_min) / wt_rng
-                y = (s["Energy"] - e_min) / e_rng
-                ax.scatter(
-                    x, y, s=22, marker=marker,
-                    facecolors=face, edgecolors=color, linewidths=0.8,
-                    alpha=0.75, label=display, zorder=3,
-                )
+                pts_norm = s[["WaitingTime", "Energy"]].to_numpy(float)
+                pts_norm[:, 0] = (pts_norm[:, 0] - wt_min) / wt_rng
+                pts_norm[:, 1] = (pts_norm[:, 1] - e_min) / e_rng
+                seed_fronts = []
+                for _, seed_df in s.groupby("Seed"):
+                    pts = seed_df[["WaitingTime", "Energy"]].to_numpy(float)
+                    pts[:, 0] = (pts[:, 0] - wt_min) / wt_rng
+                    pts[:, 1] = (pts[:, 1] - e_min) / e_rng
+                    nd = get_non_dominated(pts)
+                    if len(nd) > 0:
+                        seed_fronts.append(nd)
+                if seed_fronts:
+                    freq = compute_eaf_grid(seed_fronts, grid_x, grid_y)
+                    try:
+                        ax.contourf(grid_x, grid_y, freq, levels=[0.25, 0.75],
+                                    colors=[color], alpha=0.18, zorder=2)
+                    except ValueError:
+                        pass
+                    try:
+                        ax.contour(grid_x, grid_y, freq, levels=[0.5],
+                                   colors=[color], linewidths=1.6, zorder=4)
+                    except ValueError:
+                        pass
+
+                # Median + IQR marker across all Pareto points for this algo.
+                if len(pts_norm) > 0:
+                    mx = float(np.median(pts_norm[:, 0]))
+                    my = float(np.median(pts_norm[:, 1]))
+                    qx = np.percentile(pts_norm[:, 0], [25, 75])
+                    qy = np.percentile(pts_norm[:, 1], [25, 75])
+                    xerr = [[max(mx - qx[0], 0.0)], [max(qx[1] - mx, 0.0)]]
+                    yerr = [[max(my - qy[0], 0.0)], [max(qy[1] - my, 0.0)]]
+                    ax.errorbar(
+                        mx, my, xerr=xerr, yerr=yerr,
+                        fmt=marker, markersize=7.5,
+                        markerfacecolor=face, markeredgecolor=color,
+                        markeredgewidth=1.2,
+                        ecolor=color, elinewidth=0.9, capsize=3, capthick=0.9,
+                        label=display, zorder=5,
+                    )
+                else:
+                    # Fall back to a proxy handle so the legend is still complete.
+                    ax.plot([], [], color=color, linewidth=1.6, label=display)
 
             # Global Pareto: best of best across ALL seven algorithms,
             # independent of --algorithms selection. Rendered in the
@@ -277,10 +365,12 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
         y=1.02,
     )
     caption = (
-        'Scatter = per-seed solutions from each algorithm; black line = '
-        'global Pareto front pooled across all seven algorithms. '
-        'Axes normalised per scenario to [0, 1]; raw units shown on top '
-        '(x) and right (y) axes. White star marks the ideal point.'
+        'Per algorithm: 50% empirical attainment surface (solid) with '
+        '[25%, 75%] band (shaded) across 10 seeds, plus median marker with '
+        'IQR error bars. Black line = global Pareto front pooled across all '
+        'seven algorithms. Axes normalised per scenario to [0, 1]; raw '
+        'units shown on top (x) and right (y) axes. White star marks the '
+        'ideal point.'
     )
     fig.text(0.5, 0.965, caption, ha='center', fontsize=8.5,
              style='italic', color='#333333', wrap=True)
