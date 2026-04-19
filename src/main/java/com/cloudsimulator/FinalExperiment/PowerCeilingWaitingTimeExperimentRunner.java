@@ -34,9 +34,11 @@ import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrateg
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGAwithDominanceStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGAwithDominancePowerCeilingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingWithDominanceStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingWithDominancePowerCeilingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
@@ -48,7 +50,9 @@ import java.util.function.BiConsumer;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2PowerCeilingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_SPEA2TaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_SPEA2PowerCeilingTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_AMOSATaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_AMOSAPowerCeilingTaskSchedulingStrategy;
 
 // Objectives
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.MakespanObjective;
@@ -83,25 +87,36 @@ public class PowerCeilingWaitingTimeExperimentRunner {
 
     // ---- WHICH ALGORITHMS TO RUN ----
     // Edit this list to include/exclude algorithms. Comment out lines to skip.
-    // Available: FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
-    //            GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy,
-    //            GA_WaitingTime_Dominance, GA_Energy_Dominance,
+    // Available: GA_WaitingTime_Dominance, GA_Energy_Dominance,
     //            SA_WaitingTime_Dominance, SA_Energy_Dominance,
-    //            NSGA-II, SPEA-II, AMOSA
+    //            NSGA-II, SPEA-II, AMOSA,
+    //            plus {family}_PC_{cap} constrained-domination variants.
+    //
+    // Dropped from the runner at Step 3b so the feasibility study focuses on
+    // algorithms that surface a Pareto front (single-objective metaheuristics
+    // and fast deterministic heuristics produce a single point each, so
+    // constraining them adds no constrained-front insight):
+    //   FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
+    //   GA_WaitingTime, GA_Energy, SA_WaitingTime, SA_Energy
+    //
     // Ordering here controls the order they appear in CSVs and plots.
     private static final String[] ALGORITHM_LABELS = {
-        // Baseline heuristics (deterministic, non-preemptive, fast)
-        "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
-        // Single-objective metaheuristics (return only the scalar best)
-        "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
-        // Dominance-archive variants (same search, expose every non-dominated
-        // objective vector so the runner simulates each archive member)
+        // Dominance-archive variants of GA/SA (same search, expose every
+        // non-dominated objective vector)
         "GA_WaitingTime_Dominance", "GA_Energy_Dominance",
         "SA_WaitingTime_Dominance", "SA_Energy_Dominance",
         // Multi-objective metaheuristics
         "NSGA-II", "SPEA-II", "AMOSA",
         // Constrained-domination (Deb) variants at the calibrated cap tiers
-        "NSGA-II_PC_190kW", "NSGA-II_PC_120kW"
+        // — MOEA framework arms
+        "NSGA-II_PC_190kW", "NSGA-II_PC_120kW",
+        "SPEA-II_PC_190kW", "SPEA-II_PC_120kW",
+        "AMOSA_PC_190kW",   "AMOSA_PC_120kW",
+        // Constrained-domination archive variants — native GA/SA
+        "GA_WaitingTime_Dominance_PC_190kW", "GA_WaitingTime_Dominance_PC_120kW",
+        "GA_Energy_Dominance_PC_190kW",      "GA_Energy_Dominance_PC_120kW",
+        "SA_WaitingTime_Dominance_PC_190kW", "SA_WaitingTime_Dominance_PC_120kW",
+        "SA_Energy_Dominance_PC_190kW",      "SA_Energy_Dominance_PC_120kW"
     };
 
     private static final int POPULATION_SIZE = 200;
@@ -545,6 +560,66 @@ public class PowerCeilingWaitingTimeExperimentRunner {
                 int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
                 return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 120000.0);
             }
+            case "SPEA-II_PC_190kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSPEA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 190000.0);
+            }
+            case "SPEA-II_PC_120kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSPEA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 120000.0);
+            }
+            case "AMOSA_PC_190kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createAMOSAPowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 190000.0);
+            }
+            case "AMOSA_PC_120kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createAMOSAPowerCeilingStrategy(hosts, seed, waSeed, eaSeed, 120000.0);
+            }
+            case "GA_WaitingTime_Dominance_PC_190kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGADominancePowerCeilingStrategy(
+                    new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed, hosts, 190000.0);
+            }
+            case "GA_WaitingTime_Dominance_PC_120kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGADominancePowerCeilingStrategy(
+                    new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed, hosts, 120000.0);
+            }
+            case "GA_Energy_Dominance_PC_190kW": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGADominancePowerCeilingStrategy(
+                    createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed, hosts, 190000.0);
+            }
+            case "GA_Energy_Dominance_PC_120kW": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGADominancePowerCeilingStrategy(
+                    createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed, hosts, 120000.0);
+            }
+            case "SA_WaitingTime_Dominance_PC_190kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createSADominancePowerCeilingStrategy(
+                    new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed, hosts, 190000.0);
+            }
+            case "SA_WaitingTime_Dominance_PC_120kW": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createSADominancePowerCeilingStrategy(
+                    new WaitingTimeObjective(), createEnergyObjective(hosts), waSeed, hosts, 120000.0);
+            }
+            case "SA_Energy_Dominance_PC_190kW": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSADominancePowerCeilingStrategy(
+                    createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed, hosts, 190000.0);
+            }
+            case "SA_Energy_Dominance_PC_120kW": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSADominancePowerCeilingStrategy(
+                    createEnergyObjective(hosts), new WaitingTimeObjective(), eaSeed, hosts, 120000.0);
+            }
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -805,6 +880,87 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
         strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
         return strategy;
+    }
+
+    private static TaskAssignmentStrategy createSPEA2PowerCeilingStrategy(List<Host> hosts, long seed,
+                                                                          int[] waSeed, int[] eaSeed,
+                                                                          double powerCapWatts) {
+        WaitingTimeObjective waitingTime = new WaitingTimeObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .addObjective(waitingTime)
+            .addObjective(energy)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
+            .randomSeed(seed)
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        return new MOEA_SPEA2PowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
+    }
+
+    private static TaskAssignmentStrategy createAMOSAPowerCeilingStrategy(List<Host> hosts, long seed,
+                                                                          int[] waSeed, int[] eaSeed,
+                                                                          double powerCapWatts) {
+        WaitingTimeObjective waitingTime = new WaitingTimeObjective();
+        EnergyObjective energy = new EnergyObjective();
+        energy.setHosts(hosts);
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
+            .populationSize(AMOSA_SOFT_LIMIT)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(AMOSA_MUTATION_RATE)
+            .addObjective(waitingTime)
+            .addObjective(energy)
+            .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
+            .randomSeed(seed)
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_AMOSAPowerCeilingTaskSchedulingStrategy strategy =
+            new MOEA_AMOSAPowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
+        strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
+        strategy.setAlpha(AMOSA_ALPHA);
+        strategy.setSoftLimit(AMOSA_SOFT_LIMIT);
+        strategy.setHardLimit(AMOSA_HARD_LIMIT);
+        strategy.setGamma(AMOSA_GAMMA);
+        strategy.setIterationsPerTemperature(AMOSA_ITERATIONS_PER_TEMP);
+        strategy.setHillClimbingIterations(AMOSA_HILL_CLIMBING_ITERS);
+        return strategy;
+    }
+
+    private static TaskAssignmentStrategy createGADominancePowerCeilingStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed,
+            List<Host> hosts,
+            double powerCapWatts) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .elitePercentage(GA_ELITE_PERCENTAGE)
+            .tournamentSize(GA_TOURNAMENT_SIZE)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
+            .verboseLogging(VERBOSE_LOGGING);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+        return new GenerationalGAwithDominancePowerCeilingStrategy(builder.build(), powerCapWatts, hosts);
+    }
+
+    private static TaskAssignmentStrategy createSADominancePowerCeilingStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed,
+            List<Host> hosts,
+            double powerCapWatts) {
+        SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
+        return new SimulatedAnnealingWithDominancePowerCeilingStrategy(config, powerCapWatts, hosts);
     }
 
     // =========================================================================
