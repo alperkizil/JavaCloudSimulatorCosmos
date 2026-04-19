@@ -25,8 +25,6 @@ import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancin
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
-import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
-import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
@@ -423,8 +421,7 @@ public class ScenarioComparisonExperimentRunner {
     // STRATEGY CREATION
     // =========================================================================
 
-    private static TaskAssignmentStrategy createStrategy(String label, SimulationContext context, long seed) {
-        List<Host> hosts = context.getHosts();
+    private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
         switch (label) {
             case "GA_Makespan":
                 return createGAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
@@ -438,65 +435,11 @@ public class ScenarioComparisonExperimentRunner {
                 return createNSGA2Strategy(hosts, seed);
             case "SPEA-II":
                 return createSPEA2Strategy(hosts, seed);
-            case "AMOSA": {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createAMOSAStrategy(hosts, seed, waSeed, eaSeed);
-            }
+            case "AMOSA":
+                return createAMOSAStrategy(hosts, seed);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
-    }
-
-    /**
-     * Runs a greedy heuristic on the unassigned tasks / running VMs in the
-     * context to produce a task->VM index assignment, then resets the context
-     * so the real strategy runs on a clean slate. The returned int[] can be
-     * injected as an initial-population seed via {@code addSeedAssignment}.
-     */
-    private static int[] computeHeuristicSeed(TaskAssignmentStrategy heuristic, SimulationContext context) {
-        List<Task> unassigned = new ArrayList<>();
-        for (Task t : context.getTasks()) {
-            if (!t.isAssigned()) unassigned.add(t);
-        }
-        List<VM> runningVMs = new ArrayList<>();
-        for (VM vm : context.getVms()) {
-            if (vm.isAssignedToHost()) runningVMs.add(vm);
-        }
-
-        if (runningVMs.isEmpty() || unassigned.isEmpty()) {
-            context.resetForRescheduling();
-            return null;
-        }
-
-        Map<Task, VM> assignments = heuristic.assignAll(unassigned, runningVMs, context.getCurrentTime());
-
-        Map<Long, Integer> vmIdToIndex = new HashMap<>();
-        for (int i = 0; i < runningVMs.size(); i++) {
-            vmIdToIndex.put(runningVMs.get(i).getId(), i);
-        }
-
-        int[] seed = new int[unassigned.size()];
-        int missing = 0;
-        for (int i = 0; i < unassigned.size(); i++) {
-            VM assigned = assignments.get(unassigned.get(i));
-            Integer idx = (assigned != null) ? vmIdToIndex.get(assigned.getId()) : null;
-            if (idx != null) {
-                seed[i] = idx;
-            } else {
-                seed[i] = i % runningVMs.size();
-                missing++;
-            }
-        }
-
-        if (missing > 0) {
-            System.out.println("    [seed] " + heuristic.getClass().getSimpleName() +
-                " left " + missing + "/" + unassigned.size() +
-                " task(s) unassigned; filled via round-robin fallback.");
-        }
-
-        context.resetForRescheduling();
-        return seed;
     }
 
     private static EnergyObjective createEnergyObjective(List<Host> hosts) {
@@ -606,12 +549,11 @@ public class ScenarioComparisonExperimentRunner {
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed,
-                                                              int[] waSeed, int[] eaSeed) {
+    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
+        NSGA2Configuration config = NSGA2Configuration.builder()
             .populationSize(AMOSA_SOFT_LIMIT)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(AMOSA_MUTATION_RATE)
@@ -619,10 +561,8 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
-        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
-        NSGA2Configuration config = builder.build();
+            .verboseLogging(VERBOSE_LOGGING)
+            .build();
         MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
         strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
@@ -669,7 +609,7 @@ public class ScenarioComparisonExperimentRunner {
         vmStep.execute(context);
 
         // Create strategy AFTER step 4 so hosts are available for EnergyObjective
-        TaskAssignmentStrategy strategy = createStrategy(label, context, seed);
+        TaskAssignmentStrategy strategy = createStrategy(label, context.getHosts(), seed);
 
         // Step 5: Task Assignment (TIMED)
         long assignStart = System.currentTimeMillis();
