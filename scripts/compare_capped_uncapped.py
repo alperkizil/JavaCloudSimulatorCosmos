@@ -24,9 +24,11 @@ Algorithm IDs (--algorithms 1,2,3 to restrict; default: all):
   3  SA_WaitingTime_Dominance   7  AMOSA
   4  SA_Energy_Dominance
 
-The "global Pareto" line on each subplot is computed from the selected
-algorithms only, so if you pass --algorithms 1,2 the line will reflect the
-best front achievable by those two algorithms together.
+The "Global Pareto" line on each subplot is always computed from ALL
+seven base algorithms regardless of the --algorithms filter, so it shows
+the true best-of-best front for that (scenario, cap) combination. The
+--algorithms filter only affects which per-algorithm scatter points are
+drawn.
 """
 import argparse
 import os
@@ -87,8 +89,10 @@ def non_dominated_mask(points):
     return keep
 
 
-def load_graph(scenario, reports_dir, algo_names):
-    """Concatenate uncapped + capped Pareto-graph rows for one scenario."""
+def load_graph(scenario, reports_dir):
+    """Concatenate uncapped + capped Pareto-graph rows for one scenario.
+    Keeps every base algorithm so the global Pareto can be computed
+    across all of them; caller filters for scatter plotting."""
     unc = pd.read_csv(os.path.join(
         reports_dir, "new", f"scenario_{scenario}_pareto_graph_data.csv"))
     unc["CapLevel"] = "Uncapped"
@@ -109,33 +113,37 @@ def load_graph(scenario, reports_dir, algo_names):
     cap["CapLevel"] = parsed.apply(lambda x: x[1])
     cap = cap[cap["CapLevel"].notna()]
 
-    df = pd.concat([unc, cap], ignore_index=True)
-    return df[df["BaseAlgorithm"].isin(algo_names)].copy()
+    return pd.concat([unc, cap], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
 # 1. Normalised Pareto fronts
 # ---------------------------------------------------------------------------
 def plot_fronts(reports_dir, out_dir, algo_ids):
-    names = [ALGO_MAP[i] for i in algo_ids]
+    selected = [ALGO_MAP[i] for i in algo_ids]
+    all_names = list(ALGO_MAP.values())
     fig, axes = plt.subplots(len(SCENARIOS), len(CAP_LEVELS),
                              figsize=(16, 12), sharex=True, sharey=True)
 
     for row, (sid, sname) in enumerate(SCENARIOS):
-        df = load_graph(sid, reports_dir, names)
-        if df.empty:
+        full = load_graph(sid, reports_dir)
+        # Only keep the seven base algorithms (drops admission-control and
+        # any other non-core variants) so the global front is comparable.
+        full = full[full["BaseAlgorithm"].isin(all_names)]
+        if full.empty:
             continue
-        wt_min, wt_max = df["WaitingTime"].min(), df["WaitingTime"].max()
-        e_min, e_max = df["Energy"].min(), df["Energy"].max()
+        wt_min, wt_max = full["WaitingTime"].min(), full["WaitingTime"].max()
+        e_min, e_max = full["Energy"].min(), full["Energy"].max()
         wt_rng = max(wt_max - wt_min, 1e-9)
         e_rng = max(e_max - e_min, 1e-9)
 
         for col, (cap_label, _) in enumerate(CAP_LEVELS):
             ax = axes[row, col]
-            sub = df[df["CapLevel"] == cap_label]
+            sub_full = full[full["CapLevel"] == cap_label]
+            sub_sel = sub_full[sub_full["BaseAlgorithm"].isin(selected)]
 
-            for base in names:
-                s = sub[sub["BaseAlgorithm"] == base]
+            for base in selected:
+                s = sub_sel[sub_sel["BaseAlgorithm"] == base]
                 if s.empty:
                     continue
                 x = (s["WaitingTime"] - wt_min) / wt_rng
@@ -143,15 +151,17 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
                 ax.scatter(x, y, s=10, alpha=0.4,
                            color=COLOURS[base], label=base)
 
-            if not sub.empty:
-                pts = sub[["WaitingTime", "Energy"]].to_numpy()
+            # Global Pareto: best of best across ALL seven algorithms,
+            # independent of --algorithms selection.
+            if not sub_full.empty:
+                pts = sub_full[["WaitingTime", "Energy"]].to_numpy()
                 mask = non_dominated_mask(pts)
                 g = pts[mask]
                 gx = (g[:, 0] - wt_min) / wt_rng
                 gy = (g[:, 1] - e_min) / e_rng
                 order = np.argsort(gx)
                 ax.plot(gx[order], gy[order], color="black", lw=1.4,
-                        marker="o", ms=4, label="Global Pareto (selected)")
+                        marker="o", ms=4, label="Global Pareto (all algos)")
 
             ax.set_title(f"{sname} - {cap_label}", fontsize=10)
             if row == len(SCENARIOS) - 1:
