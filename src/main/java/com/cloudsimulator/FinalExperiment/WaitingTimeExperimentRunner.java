@@ -499,10 +499,16 @@ public class WaitingTimeExperimentRunner {
                 int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
                 return createNSGA2Strategy(hosts, seed, waSeed, eaSeed);
             }
-            case "SPEA-II":
-                return createSPEA2Strategy(hosts, seed);
-            case "AMOSA":
-                return createAMOSAStrategy(hosts, seed);
+            case "SPEA-II": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSPEA2Strategy(hosts, seed, waSeed, eaSeed);
+            }
+            case "AMOSA": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createAMOSAStrategy(hosts, seed, waSeed, eaSeed);
+            }
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
@@ -696,11 +702,12 @@ public class WaitingTimeExperimentRunner {
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         WaitingTimeObjective waitingTime = new WaitingTimeObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -708,18 +715,20 @@ public class WaitingTimeExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         WaitingTimeObjective waitingTime = new WaitingTimeObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(AMOSA_SOFT_LIMIT)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(AMOSA_MUTATION_RATE)
@@ -727,9 +736,10 @@ public class WaitingTimeExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
         strategy.setAlpha(AMOSA_ALPHA);
