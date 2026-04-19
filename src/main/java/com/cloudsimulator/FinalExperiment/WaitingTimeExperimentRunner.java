@@ -145,11 +145,18 @@ public class WaitingTimeExperimentRunner {
         WorkloadType.FURMARK, WorkloadType.IMAGE_GEN_GPU, WorkloadType.LLM_GPU
     };
 
-    // Varied instruction lengths (1B - 15B) for task diversity
+    // Heavy-tailed bimodal workload: 80% small (~275M IPS mean),
+    // 20% whale (~32.5B IPS mean). Total compute demand matches the
+    // previous uniform-1B-to-15B mean (6.7B) so per-task average work and
+    // system contention stay constant. Targets Min-Min-style greedy
+    // heuristics that pack whales onto fast VMs and starve small tasks.
+    // Sampled deterministically via INSTRUCTION_LENGTHS[i % 10].
     private static final long[] INSTRUCTION_LENGTHS = {
-        1_000_000_000L, 2_000_000_000L, 3_000_000_000L, 4_000_000_000L,
-        5_000_000_000L, 7_000_000_000L, 8_000_000_000L, 10_000_000_000L,
-        12_000_000_000L, 15_000_000_000L
+        // 8 small slots (80%): 100M, 200M, 300M, 500M × 2
+        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
+        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
+        // 2 whale slots (20%): 25B, 40B
+        25_000_000_000L, 40_000_000_000L
     };
 
     // Scenario task distributions: [cpuTasks, gpuTasks]
