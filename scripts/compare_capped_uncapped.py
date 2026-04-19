@@ -374,12 +374,46 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
 # ---------------------------------------------------------------------------
 # 2. Comparison table (HV / IGD / GD / Pareto contribution / runtime)
 # ---------------------------------------------------------------------------
+def compute_global_pareto_contributions(reports_dir, names):
+    """For each (scenario, cap level), recompute ParetoContribution against
+    the same Global Pareto the plot draws: the union of all `names` at that
+    cap level. This matters because Java's CSV reports contributions against
+    the scenario-wide Universal Pareto, which in the power-ceiling experiment
+    pools uncapped and capped variants together — capped algorithms then
+    appear to contribute nothing even when they dominate their own cap tier.
+
+    Returns dict keyed by (sname, cap_label, algo) -> int.
+    """
+    out = {}
+    for sid, sname in SCENARIOS:
+        full = load_graph(sid, reports_dir)
+        full = full[full["BaseAlgorithm"].isin(names)]
+        if full.empty:
+            continue
+        for cap_label, _ in CAP_LEVELS:
+            sub = full[full["CapLevel"] == cap_label].reset_index(drop=True)
+            if sub.empty:
+                continue
+            pts = sub[["WaitingTime", "Energy"]].to_numpy()
+            mask = non_dominated_mask(pts)
+            on = sub[mask]
+            counts = on.groupby("BaseAlgorithm").size().to_dict()
+            for base in names:
+                out[(sname, cap_label, base)] = int(counts.get(base, 0))
+    return out
+
+
 def build_table(reports_dir, out_dir, algo_ids):
     names = [ALGO_MAP[i] for i in algo_ids]
     unc = pd.read_csv(os.path.join(reports_dir, "new",
                                    "experiment_summary.csv"))
     cap = pd.read_csv(os.path.join(reports_dir, "powerceiling",
                                    "experiment_summary.csv"))
+    # Always recompute ParetoContribution across the seven base algorithms,
+    # so the pivot table agrees with the Pareto-front figure. The Java-side
+    # column in experiment_summary.csv is left untouched on disk but not
+    # propagated here.
+    contribs = compute_global_pareto_contributions(reports_dir, list(ALGO_MAP.values()))
 
     rows = []
     for sid, sname in SCENARIOS:
@@ -389,11 +423,12 @@ def build_table(reports_dir, out_dir, algo_ids):
                 sel = src[(src["Scenario"] == sid)
                          & (src["Algorithm"] == base + suffix)
                          & (src["Seed"].astype(str) == "MEAN")]
+                pc = contribs.get((sname, cap_label, base), 0)
                 if sel.empty:
                     rows.append({"Scenario": sname, "Algorithm": base,
                                  "Cap": cap_label, "HV": np.nan,
                                  "GD": np.nan, "IGD": np.nan,
-                                 "ParetoContribution": np.nan,
+                                 "ParetoContribution": pc,
                                  "TimeMs": np.nan})
                     continue
                 r = sel.iloc[0]
@@ -401,7 +436,7 @@ def build_table(reports_dir, out_dir, algo_ids):
                     "Scenario": sname, "Algorithm": base, "Cap": cap_label,
                     "HV": float(r["HV"]), "GD": float(r["GD"]),
                     "IGD": float(r["IGD"]),
-                    "ParetoContribution": int(r["ParetoContribution"]),
+                    "ParetoContribution": pc,
                     "TimeMs": int(r["TimeMs"]),
                 })
 
