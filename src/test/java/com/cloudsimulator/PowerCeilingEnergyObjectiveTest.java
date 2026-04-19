@@ -8,6 +8,7 @@ import com.cloudsimulator.model.VM;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.EnergyObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerCeilingEnergyObjective;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerCeilingViolationObjective;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +42,7 @@ public class PowerCeilingEnergyObjectiveTest {
         testConcurrentTasksPeak();
         testOverflowSecondsAboveCap();
         testSerialTasksNeverExceedSinglePeak();
+        testViolationObjectiveModes();
 
         System.out.println();
         if (failures == 0) {
@@ -165,6 +167,67 @@ public class PowerCeilingEnergyObjectiveTest {
             expectedPeak, obj.getLastPeakPower());
         expectNear("serial peak equals single-task peak",
             expectedPeak, obj.getLastPeakPower(), 1e-6);
+    }
+
+    // ----------------------------------------------------------------------
+    // Test 5: PowerCeilingViolationObjective matches the sweep-line results
+    //         and returns zero under a generous cap.
+    // ----------------------------------------------------------------------
+    private static void testViolationObjectiveModes() {
+        System.out.println("[5] PowerCeilingViolationObjective WATTS_OVER_CAP / OVERFLOW_SECONDS / OVERFLOW_JOULES");
+        Fixture f = buildTwoVmFixture();
+
+        // Probe to learn the peak
+        PowerCeilingEnergyObjective probe = new PowerCeilingEnergyObjective(Double.POSITIVE_INFINITY);
+        probe.evaluate(f.solution, f.tasks, f.vms);
+        double peak = probe.getLastPeakPower();
+        double idle = probe.getPowerModel().getScaledIdlePower();
+        double inc0 = probe.getPowerModel().calculateIncrementalPowerWithSpeedScaling(
+            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getTotalRequestedIps());
+
+        // Generous cap: must be feasible, all three modes must return 0
+        double generousCap = peak + 1_000.0;
+        PowerCeilingViolationObjective feasW = new PowerCeilingViolationObjective(
+            generousCap, PowerCeilingViolationObjective.Mode.WATTS_OVER_CAP);
+        PowerCeilingViolationObjective feasS = new PowerCeilingViolationObjective(
+            generousCap, PowerCeilingViolationObjective.Mode.OVERFLOW_SECONDS);
+        PowerCeilingViolationObjective feasJ = new PowerCeilingViolationObjective(
+            generousCap, PowerCeilingViolationObjective.Mode.OVERFLOW_JOULES);
+        expectNear("feasible WATTS_OVER_CAP",   0.0, feasW.evaluate(f.solution, f.tasks, f.vms), 1e-9);
+        expectNear("feasible OVERFLOW_SECONDS", 0.0, feasS.evaluate(f.solution, f.tasks, f.vms), 1e-9);
+        expectNear("feasible OVERFLOW_JOULES",  0.0, feasJ.evaluate(f.solution, f.tasks, f.vms), 1e-9);
+
+        // Tight cap: (idle·hosts + inc0 + 1) — overlap window violates by
+        //   watts: peak - cap     (should equal inc1 - 1, ≈ 230.6 W)
+        //   seconds: f.overlapTicks
+        //   joules: (peak - cap) * overlapTicks
+        double tightCap = idle * f.activeHostCount + inc0 + 1.0;
+
+        PowerCeilingViolationObjective tightW = new PowerCeilingViolationObjective(
+            tightCap, PowerCeilingViolationObjective.Mode.WATTS_OVER_CAP);
+        PowerCeilingViolationObjective tightS = new PowerCeilingViolationObjective(
+            tightCap, PowerCeilingViolationObjective.Mode.OVERFLOW_SECONDS);
+        PowerCeilingViolationObjective tightJ = new PowerCeilingViolationObjective(
+            tightCap, PowerCeilingViolationObjective.Mode.OVERFLOW_JOULES);
+
+        double vW = tightW.evaluate(f.solution, f.tasks, f.vms);
+        double vS = tightS.evaluate(f.solution, f.tasks, f.vms);
+        double vJ = tightJ.evaluate(f.solution, f.tasks, f.vms);
+
+        double expectedW = peak - tightCap;
+        double expectedS = f.overlapTicks;
+        double expectedJ = expectedW * expectedS;
+
+        System.out.printf("    peak=%.4f W  cap=%.4f W  overlap=%d s%n", peak, tightCap, f.overlapTicks);
+        expectNear("tight WATTS_OVER_CAP",   expectedW, vW, 1e-6);
+        expectNear("tight OVERFLOW_SECONDS", expectedS, vS, 1e-6);
+        expectNear("tight OVERFLOW_JOULES",  expectedJ, vJ, 1e-6);
+
+        // Sanity: minimization + units
+        expectTrue("isMinimization() == true", tightW.isMinimization());
+        expectTrue("unit W", "W".equals(tightW.getUnit()));
+        expectTrue("unit s", "s".equals(tightS.getUnit()));
+        expectTrue("unit J", "J".equals(tightJ.getUnit()));
     }
 
     // ----------------------------------------------------------------------
