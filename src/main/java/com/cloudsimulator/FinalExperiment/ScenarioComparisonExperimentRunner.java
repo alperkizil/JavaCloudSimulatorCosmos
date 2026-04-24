@@ -25,15 +25,24 @@ import com.cloudsimulator.PlacementStrategy.hostPlacement.PowerAwareLoadBalancin
 import com.cloudsimulator.PlacementStrategy.VMPlacement.BestFitVMPlacementStrategy;
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
 
 // Metaheuristics
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGATaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GenerationalGAwithDominanceStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SimulatedAnnealingWithDominanceStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SAConfiguration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
+
+import java.util.function.BiConsumer;
 
 // MOEA Framework strategies
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea.MOEA_NSGA2TaskSchedulingStrategy;
@@ -68,30 +77,45 @@ public class ScenarioComparisonExperimentRunner {
     // =========================================================================
     // ALGORITHM PARAMETERS
     // =========================================================================
+
+    // ---- WHICH ALGORITHMS TO RUN ----
+    // Edit this list to include/exclude algorithms. Comment out lines to skip.
+    // Available: FirstAvailable, ShortestQueue, WorkloadAware, EnergyAware, RoundRobin,
+    //            GA_Makespan, GA_Energy, SA_Makespan, SA_Energy,
+    //            GA_Makespan_Dominance, GA_Energy_Dominance,
+    //            SA_Makespan_Dominance, SA_Energy_Dominance,
+    //            NSGA-II, SPEA-II, AMOSA
+    // Ordering here controls the order they appear in CSVs and plots.
+    private static final String[] ALGORITHM_LABELS = {
+        // Baseline heuristics (deterministic, non-preemptive, fast)
+        "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
+        // Single-objective metaheuristics (return only the scalar best)
+        "GA_Makespan", "GA_Energy", "SA_Makespan", "SA_Energy",
+        // Dominance-archive variants (same search, expose every non-dominated
+        // objective vector so the runner simulates each archive member)
+        "GA_Makespan_Dominance", "GA_Energy_Dominance",
+        "SA_Makespan_Dominance", "SA_Energy_Dominance",
+        // Multi-objective metaheuristics
+        "NSGA-II", "SPEA-II", "AMOSA"
+    };
+
     private static final int POPULATION_SIZE = 200;
-    private static final int ITERATION_COUNT = 40000; // Total evaluation budget for ALL algorithms
+    private static final int ITERATION_COUNT = 40000;
     private static final double CROSSOVER_RATE = 0.95;
     private static final double MUTATION_RATE = 0.05;
-    private static final double GA_ELITE_PERCENTAGE = 0.20;  // 20% of population
+    private static final double GA_ELITE_PERCENTAGE = 0.20;
     private static final int GA_TOURNAMENT_SIZE = 5;
-    // SA temperature: auto-calibrated from fitness landscape (T0 set so 80% of uphill moves accepted)
     private static final boolean SA_AUTO_TEMPERATURE = true;
     private static final double SA_INITIAL_ACCEPTANCE_PROBABILITY = 0.8;
     private static final int SA_TEMPERATURE_SAMPLE_SIZE = 100;
-    private static final int SA_ITERATIONS_PER_TEMP = 200; // Base (overridden by adaptive iterations)
-
-    // SA reheating: escape local optima when stagnating
+    private static final int SA_ITERATIONS_PER_TEMP = 200;
     private static final boolean SA_REHEAT_ENABLED = true;
     private static final double SA_REHEAT_FACTOR = 5.0;
     private static final int SA_REHEAT_STAGNATION_THRESHOLD = 15;
     private static final int SA_MAX_REHEATS = 3;
-
-    // SA adaptive iterations-per-temperature
     private static final boolean SA_ADAPTIVE_ITERATIONS = true;
     private static final int SA_MIN_ITERS_PER_TEMP = 50;
     private static final int SA_MAX_ITERS_PER_TEMP = 400;
-
-    // SA temperature-scaled perturbation
     private static final boolean SA_SCALED_PERTURBATION = true;
     private static final int SA_MAX_PERTURBATION_MUTATIONS = 4;
     private static final long BASE_SEED = 200L;
@@ -101,30 +125,24 @@ public class ScenarioComparisonExperimentRunner {
 
     // AMOSA-specific parameters (AMOSA formula is inverted vs standard SA: prob=1/(1+exp(ΔDom*T)),
     // so high T means LESS acceptance of worse solutions).
-    // ΔDom now uses GEOMETRIC MEAN of normalized diffs (not raw product) — for 2 objectives
-    // with 30% diffs, geo-mean ΔDom ≈ 0.3 (vs product 0.09). This gives the sigmoid proper
-    // discrimination: at T=15, acceptance ranges from 1% (large gaps) to 18% (small gaps).
+    // ΔDom uses GEOMETRIC MEAN of normalized diffs — for 2 objectives with 30% diffs,
+    // geo-mean ΔDom ≈ 0.3. This gives the sigmoid proper discrimination.
     //
     // Budget allocation (gamma=2.0, SL=100, hillClimbing=50):
     //   Init: 200 solutions × 50 hill-climb iters = ~10,200 evals (25% of budget)
     //   Main loop: ~29,800 evals → 142 temp steps at 200 iters/step
     //   T sweep: 15 × 0.95^142 ≈ 0.011 (acceptance: 1-18% → ~50%)
-    private static final double AMOSA_INITIAL_TEMPERATURE = 15.0;  // Recalibrated for geometric mean ΔDom
-    private static final double AMOSA_ALPHA = 0.95;  // Sweep from selective→permissive within budget
-    private static final int AMOSA_HARD_LIMIT = 50;   // Proper HL < SL for clustering to prune effectively
+    private static final double AMOSA_INITIAL_TEMPERATURE = 15.0;
+    private static final double AMOSA_ALPHA = 0.95;
+    private static final int AMOSA_HARD_LIMIT = 50;
     private static final int AMOSA_SOFT_LIMIT = 100;
-    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;  // 149 temp steps = smooth cooling
-    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;   // 25% of budget on init, 75% on main loop
-    private static final double AMOSA_GAMMA = 2.0;  // 200 initial solutions for archive seeding
-    private static final double AMOSA_MUTATION_RATE = 0.01; // ~1 task/mutation, appropriate for SA-based search
+    private static final int AMOSA_ITERATIONS_PER_TEMP = 200;
+    private static final int AMOSA_HILL_CLIMBING_ITERS = 50;
+    private static final double AMOSA_GAMMA = 2.0;
+    private static final double AMOSA_MUTATION_RATE = 0.05;
 
     private static final String REPORTS_BASE_DIR = "reports";
     private static String REPORTS_DIR; // Set at runtime with timestamp
-
-    private static final String[] ALGORITHM_LABELS = {
-        "GA_Makespan", "GA_Energy", "SA_Makespan", "SA_Energy",
-        "NSGA-II", "SPEA-II", "AMOSA"
-    };
 
     // CPU workload types (6)
     private static final WorkloadType[] CPU_WORKLOADS = {
@@ -137,11 +155,18 @@ public class ScenarioComparisonExperimentRunner {
         WorkloadType.FURMARK, WorkloadType.IMAGE_GEN_GPU, WorkloadType.LLM_GPU
     };
 
-    // Varied instruction lengths (1B - 15B) for task diversity
+    // Heavy-tailed bimodal workload: 80% small (~275M IPS mean),
+    // 20% whale (~32.5B IPS mean). Total compute demand matches the
+    // previous uniform-1B-to-15B mean (6.7B) so per-task average work and
+    // system contention stay constant. Targets Min-Min-style greedy
+    // heuristics that pack whales onto fast VMs and starve small tasks.
+    // Sampled deterministically via INSTRUCTION_LENGTHS[i % 10].
     private static final long[] INSTRUCTION_LENGTHS = {
-        1_000_000_000L, 2_000_000_000L, 3_000_000_000L, 4_000_000_000L,
-        5_000_000_000L, 7_000_000_000L, 8_000_000_000L, 10_000_000_000L,
-        12_000_000_000L, 15_000_000_000L
+        // 8 small slots (80%): 100M, 200M, 300M, 500M × 2
+        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
+        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
+        // 2 whale slots (20%): 25B, 40B
+        25_000_000_000L, 40_000_000_000L
     };
 
     // Scenario task distributions: [cpuTasks, gpuTasks]
@@ -184,6 +209,10 @@ public class ScenarioComparisonExperimentRunner {
         final Map<String, List<AlgorithmResult>> perSeedResults = new LinkedHashMap<>();
         List<double[]> universalParetoSet;
         double universalHV;
+        // Per-algorithm count of distinct universal-Pareto points matched by
+        // at least one seed (the union across seeds). This is bounded above
+        // by universalParetoSet.size() unlike the sum of per-seed counts.
+        final Map<String, Integer> paretoContributionUnion = new LinkedHashMap<>();
 
         ScenarioResult(int scenarioNumber, String scenarioName) {
             this.scenarioNumber = scenarioNumber;
@@ -201,8 +230,9 @@ public class ScenarioComparisonExperimentRunner {
         REPORTS_DIR = REPORTS_BASE_DIR + "/" + timestamp;
 
         System.out.println("============================================================");
-        System.out.println("  SCENARIO COMPARISON EXPERIMENT RUNNER");
+        System.out.println("  MAKESPAN vs ENERGY EXPERIMENT RUNNER");
         System.out.println("  Algorithms: GA(M), GA(E), SA(M), SA(E), NSGA-II, SPEA-II, AMOSA");
+        System.out.println("  Objectives: Makespan (s) vs Energy (kWh)");
         System.out.println("  Scenarios: Balanced, GPU Stress, CPU Stress");
         System.out.println("  Seeds: " + BASE_SEED + "-" + (BASE_SEED + NUM_RUNS - 1) + " (" + NUM_RUNS + " runs each)");
         System.out.println("  Infrastructure: 40 hosts, 60 VMs, 500 tasks/scenario");
@@ -337,13 +367,14 @@ public class ScenarioComparisonExperimentRunner {
                 131072, 20000, 2097152, "HighPerformancePowerModel"));
         }
 
-        // 60 VMs with DIVERSE speeds to create makespan-energy trade-off
-        // Fast VMs: finish tasks quickly but consume more power (speed scaling ^1.5)
-        // Slow VMs: take longer but are energy-efficient
+        // 60 VMs with DIVERSE speeds to create makespan vs energy trade-off.
+        // Speed range is 10x (500M to 5B IPS) — matches real-world cloud VM family spread
+        // (e.g. burstable vs. compute-optimized instances) and combines with the
+        // DVFS-like power scaling exponent (2.0) to give a wide Pareto front.
         // CPU VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                4_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // fast
+                5_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -351,13 +382,13 @@ public class ScenarioComparisonExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // slow
+                500_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY));  // slow
         }
 
         // GPU VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                4_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // fast
+                5_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -365,13 +396,13 @@ public class ScenarioComparisonExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // slow
+                500_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.GPU_ONLY));  // slow
         }
 
         // Mixed VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                3_500_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // fast
+                5_000_000_000L, 4, 2, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // fast
         }
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
@@ -379,7 +410,7 @@ public class ScenarioComparisonExperimentRunner {
         }
         for (int i = 0; i < 4; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",
-                1_000_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // slow
+                500_000_000L, 4, 1, 4096, 102400, 1000, ComputeType.CPU_GPU_MIXED));  // slow
         }
 
         // Tasks — scenario-specific distribution
@@ -421,25 +452,125 @@ public class ScenarioComparisonExperimentRunner {
     // STRATEGY CREATION
     // =========================================================================
 
-    private static TaskAssignmentStrategy createStrategy(String label, List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createStrategy(String label, SimulationContext context, long seed) {
+        List<Host> hosts = context.getHosts();
         switch (label) {
-            case "GA_Makespan":
-                return createGAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
-            case "GA_Energy":
-                return createGAStrategy(createEnergyObjective(hosts), new MakespanObjective());
+            case "FirstAvailable":
+                return new FirstAvailableTaskAssignmentStrategy();
+            case "ShortestQueue":
+                return new ShortestQueueTaskAssignmentStrategy();
+            case "WorkloadAware":
+                return new WorkloadAwareTaskAssignmentStrategy();
+            case "EnergyAware":
+                return new EnergyAwareTaskAssignmentStrategy();
+            case "RoundRobin":
+                return new RoundRobinTaskAssignmentStrategy();
+            case "GA_Makespan": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGAStrategy(new MakespanObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "GA_Energy": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGAStrategy(createEnergyObjective(hosts), new MakespanObjective(), eaSeed);
+            }
             case "SA_Makespan":
-                return createSAStrategy(new MakespanObjective(), createEnergyObjective(hosts));
+                return createSAStrategy(new MakespanObjective(), createEnergyObjective(hosts), null);
             case "SA_Energy":
-                return createSAStrategy(createEnergyObjective(hosts), new MakespanObjective());
-            case "NSGA-II":
-                return createNSGA2Strategy(hosts, seed);
-            case "SPEA-II":
-                return createSPEA2Strategy(hosts, seed);
-            case "AMOSA":
-                return createAMOSAStrategy(hosts, seed);
+                return createSAStrategy(createEnergyObjective(hosts), new MakespanObjective(), null);
+            case "GA_Makespan_Dominance": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createGADominanceStrategy(new MakespanObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "GA_Energy_Dominance": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createGADominanceStrategy(createEnergyObjective(hosts), new MakespanObjective(), eaSeed);
+            }
+            case "SA_Makespan_Dominance": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                return createSADominanceStrategy(new MakespanObjective(), createEnergyObjective(hosts), waSeed);
+            }
+            case "SA_Energy_Dominance": {
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSADominanceStrategy(createEnergyObjective(hosts), new MakespanObjective(), eaSeed);
+            }
+            case "NSGA-II": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createNSGA2Strategy(hosts, seed, waSeed, eaSeed);
+            }
+            case "SPEA-II": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createSPEA2Strategy(hosts, seed, waSeed, eaSeed);
+            }
+            case "AMOSA": {
+                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+                return createAMOSAStrategy(hosts, seed, waSeed, eaSeed);
+            }
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + label);
         }
+    }
+
+    /**
+     * Runs a greedy heuristic on the simulation context's unassigned tasks and
+     * running VMs to produce a task->VM index assignment that can be injected
+     * as a seed into a metaheuristic's initial population.
+     *
+     * Mutates assignment state on the real Task and VM objects, then calls
+     * {@link SimulationContext#resetForRescheduling()} to undo it so the
+     * metaheuristic sees a clean slate when it runs afterwards.
+     */
+    private static int[] computeHeuristicSeed(TaskAssignmentStrategy heuristic, SimulationContext context) {
+        List<Task> unassigned = new ArrayList<>();
+        for (Task t : context.getTasks()) {
+            if (!t.isAssigned()) unassigned.add(t);
+        }
+        List<VM> runningVMs = new ArrayList<>();
+        for (VM vm : context.getVms()) {
+            if (vm.isAssignedToHost()) runningVMs.add(vm);
+        }
+
+        if (runningVMs.isEmpty() || unassigned.isEmpty()) {
+            context.resetForRescheduling();
+            return null;
+        }
+
+        Map<Task, VM> assignments = heuristic.assignAll(unassigned, runningVMs, context.getCurrentTime());
+
+        Map<Long, Integer> vmIdToIndex = new HashMap<>();
+        for (int i = 0; i < runningVMs.size(); i++) {
+            vmIdToIndex.put(runningVMs.get(i).getId(), i);
+        }
+
+        int[] seed = new int[unassigned.size()];
+        int missing = 0;
+        for (int i = 0; i < unassigned.size(); i++) {
+            VM assigned = assignments.get(unassigned.get(i));
+            Integer idx = (assigned != null) ? vmIdToIndex.get(assigned.getId()) : null;
+            if (idx != null) {
+                seed[i] = idx;
+            } else {
+                // Heuristic left this task unassigned (or to a VM not in the
+                // running set). Fall back to a deterministic round-robin
+                // index so we don't silently bias the seeded chromosome
+                // toward VM 0.
+                seed[i] = i % runningVMs.size();
+                missing++;
+            }
+        }
+
+        if (missing > 0) {
+            System.out.println("    [seed] " + heuristic.getClass().getSimpleName() +
+                " left " + missing + "/" + unassigned.size() +
+                " task(s) unassigned; filled via round-robin fallback.");
+        }
+
+        // Undo the heuristic's assignment so the real strategy runs on a
+        // clean context. Infrastructure placement is preserved.
+        context.resetForRescheduling();
+        return seed;
     }
 
     private static EnergyObjective createEnergyObjective(List<Host> hosts) {
@@ -450,8 +581,9 @@ public class ScenarioComparisonExperimentRunner {
 
     private static TaskAssignmentStrategy createGAStrategy(
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
-        GAConfiguration config = GAConfiguration.builder()
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -459,30 +591,38 @@ public class ScenarioComparisonExperimentRunner {
             .tournamentSize(GA_TOURNAMENT_SIZE)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
-            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1)) // -1: initial pop eval counts toward budget
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        return new GenerationalGATaskSchedulingStrategy(config);
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
+            .verboseLogging(VERBOSE_LOGGING);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+        return new GenerationalGATaskSchedulingStrategy(builder.build());
     }
 
     private static TaskAssignmentStrategy createSAStrategy(
             com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
-            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective) {
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
+        return new SimulatedAnnealingTaskSchedulingStrategy(config);
+    }
+
+    private static SAConfiguration buildSAConfig(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
         SAConfiguration.Builder builder = SAConfiguration.builder();
 
-        // Temperature initialization: auto-calibrate from fitness landscape
         if (SA_AUTO_TEMPERATURE) {
             builder.autoInitialTemperature(true)
                    .initialAcceptanceProbability(SA_INITIAL_ACCEPTANCE_PROBABILITY)
                    .temperatureSampleSize(SA_TEMPERATURE_SAMPLE_SIZE);
         }
 
-        // Retuned adaptive cooling: higher target, slower rates for more thorough search
         builder.coolingSchedule(new AdaptiveCoolingSchedule(0.5, 0.15, 0.90, 0.97, 0.995))
                .iterationsPerTemperature(SA_ITERATIONS_PER_TEMP)
                .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT));
 
-        // Reheating on stagnation
         if (SA_REHEAT_ENABLED) {
             builder.reheatEnabled(true)
                    .reheatFactor(SA_REHEAT_FACTOR)
@@ -490,14 +630,12 @@ public class ScenarioComparisonExperimentRunner {
                    .maxReheats(SA_MAX_REHEATS);
         }
 
-        // Adaptive iterations-per-temperature
         if (SA_ADAPTIVE_ITERATIONS) {
             builder.adaptiveIterationsEnabled(true)
                    .adaptiveIterationsBounds(SA_MIN_ITERS_PER_TEMP, SA_MAX_ITERS_PER_TEMP)
                    .adaptiveIterationsThresholds(0.7, 0.1);
         }
 
-        // Temperature-scaled perturbation
         if (SA_SCALED_PERTURBATION) {
             builder.temperatureScaledPerturbation(true)
                    .maxPerturbationMutations(SA_MAX_PERTURBATION_MUTATIONS);
@@ -507,15 +645,47 @@ public class ScenarioComparisonExperimentRunner {
                .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
                .verboseLogging(VERBOSE_LOGGING);
 
-        SAConfiguration config = builder.build();
-        return new SimulatedAnnealingTaskSchedulingStrategy(config);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+
+        return builder.build();
     }
 
-    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createGADominanceStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        GAConfiguration.Builder builder = GAConfiguration.builder()
+            .populationSize(POPULATION_SIZE)
+            .crossoverRate(CROSSOVER_RATE)
+            .mutationRate(MUTATION_RATE)
+            .elitePercentage(GA_ELITE_PERCENTAGE)
+            .tournamentSize(GA_TOURNAMENT_SIZE)
+            .addWeightedObjective(primaryObjective, 1.0)
+            .addWeightedObjective(tiebreakerObjective, TIEBREAKER_WEIGHT)
+            .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE - 1))
+            .verboseLogging(VERBOSE_LOGGING);
+        if (heuristicSeed != null) {
+            builder.addSeedAssignment(heuristicSeed);
+        }
+        return new GenerationalGAwithDominanceStrategy(builder.build());
+    }
+
+    private static TaskAssignmentStrategy createSADominanceStrategy(
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective primaryObjective,
+            com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective tiebreakerObjective,
+            int[] heuristicSeed) {
+        SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
+        return new SimulatedAnnealingWithDominanceStrategy(config);
+    }
+
+    private static TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -523,18 +693,20 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(POPULATION_SIZE)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(MUTATION_RATE)
@@ -542,18 +714,20 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(ITERATION_COUNT / POPULATION_SIZE))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
-    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed) {
+    private static TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed,
+                                                              int[] waSeed, int[] eaSeed) {
         MakespanObjective makespan = new MakespanObjective();
         EnergyObjective energy = new EnergyObjective();
         energy.setHosts(hosts);
-        NSGA2Configuration config = NSGA2Configuration.builder()
+        NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(AMOSA_SOFT_LIMIT)
             .crossoverRate(CROSSOVER_RATE)
             .mutationRate(AMOSA_MUTATION_RATE)
@@ -561,9 +735,10 @@ public class ScenarioComparisonExperimentRunner {
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(ITERATION_COUNT))
             .randomSeed(seed)
-            .verboseLogging(VERBOSE_LOGGING)
-            .build();
-        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(config);
+            .verboseLogging(VERBOSE_LOGGING);
+        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (eaSeed != null) builder.addSeedAssignment(eaSeed);
+        MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         strategy.setInitialTemperature(AMOSA_INITIAL_TEMPERATURE);
         strategy.setAlpha(AMOSA_ALPHA);
@@ -608,8 +783,9 @@ public class ScenarioComparisonExperimentRunner {
         VMPlacementStep vmStep = new VMPlacementStep(new BestFitVMPlacementStrategy());
         vmStep.execute(context);
 
-        // Create strategy AFTER step 4 so hosts are available for EnergyObjective
-        TaskAssignmentStrategy strategy = createStrategy(label, context.getHosts(), seed);
+        // Create strategy AFTER step 4 so hosts/VMs are available. For GA and
+        // NSGA-II this also runs the heuristics to extract injection seeds.
+        TaskAssignmentStrategy strategy = createStrategy(label, context, seed);
 
         // Step 5: Task Assignment (TIMED)
         long assignStart = System.currentTimeMillis();
@@ -641,12 +817,10 @@ public class ScenarioComparisonExperimentRunner {
         if (strategy instanceof MultiObjectiveTaskSchedulingStrategy) {
             solutions = simulateAllParetoSolutions(strategy, context);
             if (solutions.isEmpty()) {
-                // Fallback: use actual simulation result from the selected solution
                 solutions = new ArrayList<>();
                 solutions.add(new double[]{actualMakespan, actualEnergyKWh});
             }
         } else {
-            // Single-objective: use actual simulation result
             solutions = new ArrayList<>();
             solutions.add(new double[]{actualMakespan, actualEnergyKWh});
         }
@@ -740,13 +914,29 @@ public class ScenarioComparisonExperimentRunner {
     // UNIVERSAL PARETO COMPUTATION
     // =========================================================================
 
+    /**
+     * A failure sentinel is the fallback solution inserted when a run throws
+     * ({@code [Double.MAX_VALUE, Double.MAX_VALUE]}). These must be excluded
+     * from Pareto/best-of analytics or they silently dominate the reporting.
+     */
+    private static boolean isFailureSentinel(double[] sol) {
+        return sol == null
+            || sol.length < 2
+            || sol[0] >= Double.MAX_VALUE
+            || sol[1] >= Double.MAX_VALUE;
+    }
+
     private static List<double[]> computeUniversalPareto(
             Map<String, List<AlgorithmResult>> perSeedResults) {
 
         List<double[]> allSolutions = new ArrayList<>();
         for (List<AlgorithmResult> seedResults : perSeedResults.values()) {
             for (AlgorithmResult result : seedResults) {
-                allSolutions.addAll(result.solutions);
+                for (double[] sol : result.solutions) {
+                    if (!isFailureSentinel(sol)) {
+                        allSolutions.add(sol);
+                    }
+                }
             }
         }
 
@@ -829,21 +1019,34 @@ public class ScenarioComparisonExperimentRunner {
 
     private static void calculateParetoContributions(ScenarioResult scenarioResult) {
         System.out.println("  Pareto contributions:");
+        List<double[]> universal = scenarioResult.universalParetoSet;
         for (Map.Entry<String, List<AlgorithmResult>> entry : scenarioResult.perSeedResults.entrySet()) {
-            int totalContribution = 0;
+            Set<Integer> unionMatched = new HashSet<>();
             for (AlgorithmResult ar : entry.getValue()) {
-                int contribution = 0;
+                Set<Integer> seedMatched = new HashSet<>();
                 for (double[] sol : ar.solutions) {
-                    if (isInUniversalPareto(sol, scenarioResult.universalParetoSet)) {
-                        contribution++;
-                    }
+                    int idx = universalParetoIndexOf(sol, universal);
+                    if (idx >= 0) seedMatched.add(idx);
                 }
-                ar.paretoContribution = contribution;
-                totalContribution += contribution;
+                ar.paretoContribution = seedMatched.size();
+                unionMatched.addAll(seedMatched);
             }
-            System.out.println("    " + entry.getKey() + ": " + totalContribution +
-                " / " + scenarioResult.universalParetoSet.size() + " (across " + NUM_RUNS + " seeds)");
+            scenarioResult.paretoContributionUnion.put(entry.getKey(), unionMatched.size());
+            System.out.println("    " + entry.getKey() + ": " + unionMatched.size() +
+                " / " + universal.size() + " unique universal Pareto points matched (across " +
+                NUM_RUNS + " seeds)");
         }
+    }
+
+    private static int universalParetoIndexOf(double[] sol, List<double[]> universalPareto) {
+        if (isFailureSentinel(sol)) return -1;
+        for (int i = 0; i < universalPareto.size(); i++) {
+            double[] u = universalPareto.get(i);
+            if (Math.abs(u[0] - sol[0]) < 1e-9 && Math.abs(u[1] - sol[1]) < 1e-9) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static void calculatePerformanceMetrics(ScenarioResult scenarioResult) {
@@ -925,7 +1128,7 @@ public class ScenarioComparisonExperimentRunner {
             double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
             double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
             double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
-            int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+            int unionPCont = result.paretoContributionUnion.getOrDefault(entry.getKey(), 0);
 
             System.out.printf("%-15s | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %8.6f±%-8.6f | %-6d%n",
                 entry.getKey(),
@@ -933,7 +1136,7 @@ public class ScenarioComparisonExperimentRunner {
                 mean(gds), stddev(gds),
                 mean(igds), stddev(igds),
                 mean(spacings), stddev(spacings),
-                totalPCont);
+                unionPCont);
         }
 
         System.out.printf("%-15s | %-18.6f | %-18s | %-18s | %-18s | %-6d%n",
@@ -1011,7 +1214,7 @@ public class ScenarioComparisonExperimentRunner {
                 double avgND = seeds.stream().mapToInt(a -> a.nonDominatedSolutions != null
                     ? a.nonDominatedSolutions.size() : a.solutions.size()).average().orElse(0);
                 double avgTotal = seeds.stream().mapToInt(a -> a.solutions.size()).average().orElse(0);
-                int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                int unionPCont = result.paretoContributionUnion.getOrDefault(label, 0);
                 long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
                 long avgTime = successfulRuns > 0
                     ? seeds.stream().filter(a -> a.executionTimeMs > 0)
@@ -1020,7 +1223,7 @@ public class ScenarioComparisonExperimentRunner {
 
                 w.printf("%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d%n",
                     label, mean(hvs), mean(gds), mean(igds), mean(spacings),
-                    avgND, avgTotal, totalPCont, avgTime);
+                    avgND, avgTotal, unionPCont, avgTime);
 
                 // STDDEV row
                 w.printf("%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,%n",
@@ -1055,8 +1258,10 @@ public class ScenarioComparisonExperimentRunner {
                     // Per-seed rows
                     for (AlgorithmResult ar : seeds) {
                         double bestMakespan = ar.solutions.stream()
+                            .filter(s -> !isFailureSentinel(s))
                             .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
                         double bestEnergy = ar.solutions.stream()
+                            .filter(s -> !isFailureSentinel(s))
                             .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
                         int ndCount = ar.nonDominatedSolutions != null
                             ? ar.nonDominatedSolutions.size() : ar.solutions.size();
@@ -1073,7 +1278,7 @@ public class ScenarioComparisonExperimentRunner {
                     double[] gds = seeds.stream().mapToDouble(a -> a.gd).toArray();
                     double[] igds = seeds.stream().mapToDouble(a -> a.igd).toArray();
                     double[] spacings = seeds.stream().mapToDouble(a -> a.spacing).toArray();
-                    int totalPCont = seeds.stream().mapToInt(a -> a.paretoContribution).sum();
+                    int unionPCont = sr.paretoContributionUnion.getOrDefault(label, 0);
                     long successfulRuns = seeds.stream().filter(a -> a.executionTimeMs > 0).count();
                 long avgTime = successfulRuns > 0
                     ? seeds.stream().filter(a -> a.executionTimeMs > 0)
@@ -1081,15 +1286,17 @@ public class ScenarioComparisonExperimentRunner {
                     : 0;
                     double bestMakespanAll = seeds.stream()
                         .flatMap(a -> a.solutions.stream())
+                        .filter(s -> !isFailureSentinel(s))
                         .mapToDouble(s -> s[0]).min().orElse(Double.MAX_VALUE);
                     double bestEnergyAll = seeds.stream()
                         .flatMap(a -> a.solutions.stream())
+                        .filter(s -> !isFailureSentinel(s))
                         .mapToDouble(s -> s[1]).min().orElse(Double.MAX_VALUE);
 
                     w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f%n",
                         sr.scenarioNumber, sr.scenarioName, label,
                         mean(hvs), mean(gds), mean(igds), mean(spacings),
-                        totalPCont, avgTime,
+                        unionPCont, avgTime,
                         bestMakespanAll, bestEnergyAll);
                 }
             }
