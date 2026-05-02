@@ -355,17 +355,17 @@ public class WaitingTimeExperimentRunner {
         for (int i = 0; i < 16; i++) {
             config.addHostConfig(new HostConfig(
                 2_500_000_000L, 16, ComputeType.CPU_ONLY, 0,
-                65536, 20000, 2097152, "StandardPowerModel"));
+                65536, 20000, 2097152, "MeasurementBasedPowerModel"));
         }
         for (int i = 0; i < 12; i++) {
             config.addHostConfig(new HostConfig(
                 2_800_000_000L, 8, ComputeType.GPU_ONLY, 4,
-                65536, 20000, 2097152, "HighPerformancePowerModel"));
+                65536, 20000, 2097152, "MeasurementBasedPowerModel"));
         }
         for (int i = 0; i < 12; i++) {
             config.addHostConfig(new HostConfig(
                 3_000_000_000L, 32, ComputeType.CPU_GPU_MIXED, 4,
-                131072, 20000, 2097152, "HighPerformancePowerModel"));
+                131072, 20000, 2097152, "MeasurementBasedPowerModel"));
         }
 
         // 60 VMs with DIVERSE speeds to create waiting-time vs energy trade-off.
