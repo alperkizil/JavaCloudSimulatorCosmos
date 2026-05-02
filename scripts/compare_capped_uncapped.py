@@ -188,17 +188,17 @@ def compute_eaf_grid(seed_fronts, grid_x, grid_y):
     return freq
 
 
-def load_graph(scenario, reports_dir):
+def load_graph(scenario, reports_dir, unc_subdir="new", cap_subdir="powerceiling"):
     """Concatenate uncapped + capped Pareto-graph rows for one scenario.
     Keeps every base algorithm so the global Pareto can be computed
     across all of them; caller filters for scatter plotting."""
     unc = pd.read_csv(os.path.join(
-        reports_dir, "new", f"scenario_{scenario}_pareto_graph_data.csv"))
+        reports_dir, unc_subdir, f"scenario_{scenario}_pareto_graph_data.csv"))
     unc["CapLevel"] = "Uncapped"
     unc["BaseAlgorithm"] = unc["Algorithm"]
 
     cap = pd.read_csv(os.path.join(
-        reports_dir, "powerceiling",
+        reports_dir, cap_subdir,
         f"scenario_{scenario}_pareto_graph_data.csv"))
 
     def classify(name):
@@ -218,7 +218,7 @@ def load_graph(scenario, reports_dir):
 # ---------------------------------------------------------------------------
 # 1. Normalised Pareto fronts
 # ---------------------------------------------------------------------------
-def plot_fronts(reports_dir, out_dir, algo_ids):
+def plot_fronts(reports_dir, out_dir, algo_ids, unc_subdir="new", cap_subdir="powerceiling"):
     selected = [ALGO_MAP[i] for i in algo_ids]
     all_names = list(ALGO_MAP.values())
     fig, axes = plt.subplots(len(SCENARIOS), len(CAP_LEVELS),
@@ -228,7 +228,7 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
     grid_y = np.linspace(0.0, 1.05, 220)
 
     for row, (sid, sname) in enumerate(SCENARIOS):
-        full = load_graph(sid, reports_dir)
+        full = load_graph(sid, reports_dir, unc_subdir, cap_subdir)
         # Only keep the seven base algorithms (drops admission-control and
         # any other non-core variants) so the global front is comparable.
         full = full[full["BaseAlgorithm"].isin(all_names)]
@@ -374,7 +374,7 @@ def plot_fronts(reports_dir, out_dir, algo_ids):
 # ---------------------------------------------------------------------------
 # 2. Comparison table (HV / IGD / GD / Pareto contribution / runtime)
 # ---------------------------------------------------------------------------
-def compute_global_pareto_contributions(reports_dir, names):
+def compute_global_pareto_contributions(reports_dir, names, unc_subdir="new", cap_subdir="powerceiling"):
     """For each (scenario, cap level), recompute ParetoContribution against
     the same Global Pareto the plot draws: the union of all `names` at that
     cap level. This matters because Java's CSV reports contributions against
@@ -386,7 +386,7 @@ def compute_global_pareto_contributions(reports_dir, names):
     """
     out = {}
     for sid, sname in SCENARIOS:
-        full = load_graph(sid, reports_dir)
+        full = load_graph(sid, reports_dir, unc_subdir, cap_subdir)
         full = full[full["BaseAlgorithm"].isin(names)]
         if full.empty:
             continue
@@ -403,17 +403,18 @@ def compute_global_pareto_contributions(reports_dir, names):
     return out
 
 
-def build_table(reports_dir, out_dir, algo_ids):
+def build_table(reports_dir, out_dir, algo_ids, unc_subdir="new", cap_subdir="powerceiling"):
     names = [ALGO_MAP[i] for i in algo_ids]
-    unc = pd.read_csv(os.path.join(reports_dir, "new",
+    unc = pd.read_csv(os.path.join(reports_dir, unc_subdir,
                                    "experiment_summary.csv"))
-    cap = pd.read_csv(os.path.join(reports_dir, "powerceiling",
+    cap = pd.read_csv(os.path.join(reports_dir, cap_subdir,
                                    "experiment_summary.csv"))
     # Always recompute ParetoContribution across the seven base algorithms,
     # so the pivot table agrees with the Pareto-front figure. The Java-side
     # column in experiment_summary.csv is left untouched on disk but not
     # propagated here.
-    contribs = compute_global_pareto_contributions(reports_dir, list(ALGO_MAP.values()))
+    contribs = compute_global_pareto_contributions(
+        reports_dir, list(ALGO_MAP.values()), unc_subdir, cap_subdir)
 
     rows = []
     for sid, sname in SCENARIOS:
@@ -514,12 +515,12 @@ def plot_runtimes(df, out_dir):
 # ---------------------------------------------------------------------------
 # 4. Admission-control disaster
 # ---------------------------------------------------------------------------
-def plot_admission_disaster(reports_dir, out_dir):
+def plot_admission_disaster(reports_dir, out_dir, unc_subdir="new", cap_subdir="powerceiling"):
     """Contrasts naive runtime admission against constrained MOEA and the
     unconstrained baseline, using WaitingTime_Best from the MEAN row."""
-    unc = pd.read_csv(os.path.join(reports_dir, "new",
+    unc = pd.read_csv(os.path.join(reports_dir, unc_subdir,
                                    "experiment_summary.csv"))
-    cap = pd.read_csv(os.path.join(reports_dir, "powerceiling",
+    cap = pd.read_csv(os.path.join(reports_dir, cap_subdir,
                                    "experiment_summary.csv"))
 
     picks = [
@@ -576,10 +577,15 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     default_reports = os.path.join(os.path.dirname(here), "reports")
     ap.add_argument("--reports-dir", type=str, default=default_reports,
-                    help="Root containing new/ and powerceiling/.")
+                    help="Root containing the uncapped and capped subdirs.")
     default_out = os.path.join(os.path.dirname(here), "final_experiment_results")
     ap.add_argument("--out-dir", type=str, default=None,
                     help=f"Output directory. Default: {default_out}")
+    ap.add_argument("--unc-subdir", default="new",
+                    help="Subdir under --reports-dir holding the uncapped baseline. "
+                         "Set equal to --cap-subdir when both pipelines share one folder.")
+    ap.add_argument("--cap-subdir", default="powerceiling",
+                    help="Subdir holding the power-capped runs (algos with _PC_* suffix).")
     args = ap.parse_args()
 
     ids = parse_algorithm_ids(args.algorithms)
@@ -587,12 +593,13 @@ def main():
     os.makedirs(out, exist_ok=True)
     print(f"Algorithms : {[ALGO_MAP[i] for i in ids]}")
     print(f"Reports dir: {args.reports_dir}")
+    print(f"Subdirs    : uncapped={args.unc_subdir!r}, capped={args.cap_subdir!r}")
     print(f"Output dir : {out}\n")
 
-    plot_fronts(args.reports_dir, out, ids)
-    df = build_table(args.reports_dir, out, ids)
+    plot_fronts(args.reports_dir, out, ids, args.unc_subdir, args.cap_subdir)
+    df = build_table(args.reports_dir, out, ids, args.unc_subdir, args.cap_subdir)
     plot_runtimes(df, out)
-    plot_admission_disaster(args.reports_dir, out)
+    plot_admission_disaster(args.reports_dir, out, args.unc_subdir, args.cap_subdir)
     print("\nDone.")
 
 
