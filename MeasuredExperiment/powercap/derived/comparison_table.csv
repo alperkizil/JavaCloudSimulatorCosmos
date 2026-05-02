@@ -1,0 +1,81 @@
+# HV is the per-algorithm Java-computed hypervolume from
+#   reports/{new,powerceiling}/experiment_summary.csv (MEAN rows).
+#   Each algorithm uses its own reference point, so HV values are
+#   ranked consistently within a (scenario, cap) cell but should
+#   be read as relative, not absolute.
+# HV_fixed (scenario-fixed reference point, fair across algorithms)
+#   is available in quality_indicators_all_scenarios.csv for each
+#   run, but the reference points differ ~10x between the uncapped
+#   and power-ceiling experiments (the latter has admission-control
+#   and infeasible variants that inflate the nadir), so HV_fixed is
+#   NOT directly comparable across the Uncapped / 190kW / 120kW
+#   columns. Java HV is the less-bad option for this pivot.
+# GD / IGD: unitless distance to each run's reference front; lower
+#   is better. Values are taken as-is from experiment_summary.csv.
+# ParetoContribution: recomputed here per (scenario, cap) against
+#   the pooled non-dominated set of the seven MO algorithms at
+#   that cap level, so it matches pareto_fronts_comparison.png.
+Scenario,Algorithm,Cap,HV,GD,IGD,ParetoContribution,TimeMs
+Balanced,GA_WaitingTime_Dominance,Uncapped,0.369074,0.010835,0.177974,18,2046
+Balanced,GA_WaitingTime_Dominance,190kW,0.215746,0.144451,0.298632,0,6591
+Balanced,GA_WaitingTime_Dominance,120kW,0.059962,0.424028,0.555352,0,6651
+Balanced,GA_Energy_Dominance,Uncapped,0.633167,0.125517,0.137045,0,2052
+Balanced,GA_Energy_Dominance,190kW,0.627481,0.126141,0.140571,1,6139
+Balanced,GA_Energy_Dominance,120kW,0.414125,0.131683,0.506171,0,6056
+Balanced,SA_WaitingTime_Dominance,Uncapped,0.365125,0.012825,0.191846,2,833
+Balanced,SA_WaitingTime_Dominance,190kW,0.167792,0.101328,0.35115,1,5211
+Balanced,SA_WaitingTime_Dominance,120kW,0.163299,0.103931,0.355145,1,5199
+Balanced,SA_Energy_Dominance,Uncapped,0.684332,0.116436,0.142508,7,884
+Balanced,SA_Energy_Dominance,190kW,0.68255,0.116623,0.145694,7,4402
+Balanced,SA_Energy_Dominance,120kW,0.556145,0.10377,0.594347,7,4387
+Balanced,NSGA-II,Uncapped,0.595544,0.022411,0.070129,11,2201
+Balanced,NSGA-II,190kW,0.518123,0.097831,0.137346,25,6697
+Balanced,NSGA-II,120kW,0.39161,0.202937,0.293528,0,6425
+Balanced,SPEA-II,Uncapped,0.599068,0.015613,0.067752,32,2791
+Balanced,SPEA-II,190kW,0.531632,0.073671,0.131402,19,7414
+Balanced,SPEA-II,120kW,0.429657,0.120771,0.268384,11,7009
+Balanced,AMOSA,Uncapped,0.418211,0.030455,0.148558,16,3960
+Balanced,AMOSA,190kW,0.420984,0.073683,0.159236,11,8611
+Balanced,AMOSA,120kW,0.197798,0.374628,0.411843,0,8439
+GPU_Stress,GA_WaitingTime_Dominance,Uncapped,0.377224,0.024273,0.158182,17,2093
+GPU_Stress,GA_WaitingTime_Dominance,190kW,0.027201,0.300646,0.50507,0,6785
+GPU_Stress,GA_WaitingTime_Dominance,120kW,0.027201,0.300646,0.50507,0,6800
+GPU_Stress,GA_Energy_Dominance,Uncapped,0.612396,0.16067,0.141238,0,2090
+GPU_Stress,GA_Energy_Dominance,190kW,0.597657,0.171995,0.168352,0,5873
+GPU_Stress,GA_Energy_Dominance,120kW,0.355693,0.196226,0.621409,0,5833
+GPU_Stress,SA_WaitingTime_Dominance,Uncapped,0.392612,0.05039,0.164714,0,822
+GPU_Stress,SA_WaitingTime_Dominance,190kW,0.10161,0.119254,0.383094,1,5162
+GPU_Stress,SA_WaitingTime_Dominance,120kW,0.10161,0.119254,0.383094,4,5153
+GPU_Stress,SA_Energy_Dominance,Uncapped,0.666899,0.077229,0.165447,8,840
+GPU_Stress,SA_Energy_Dominance,190kW,0.661994,0.0666,0.179604,8,4193
+GPU_Stress,SA_Energy_Dominance,120kW,0.579655,0.064728,0.612294,8,4184
+GPU_Stress,NSGA-II,Uncapped,0.574162,0.027799,0.062234,19,2339
+GPU_Stress,NSGA-II,190kW,0.497152,0.103001,0.143951,0,6552
+GPU_Stress,NSGA-II,120kW,0.318083,0.305488,0.3577,0,6175
+GPU_Stress,SPEA-II,Uncapped,0.568669,0.020725,0.061943,56,2957
+GPU_Stress,SPEA-II,190kW,0.511988,0.068405,0.134063,44,7198
+GPU_Stress,SPEA-II,120kW,0.329303,0.257957,0.353497,0,6692
+GPU_Stress,AMOSA,Uncapped,0.401623,0.02795,0.137787,1,4031
+GPU_Stress,AMOSA,190kW,0.367997,0.084108,0.180022,15,8428
+GPU_Stress,AMOSA,120kW,0.123528,0.412833,0.491443,0,8329
+CPU_Stress,GA_WaitingTime_Dominance,Uncapped,0.301013,0.017088,0.243061,21,1950
+CPU_Stress,GA_WaitingTime_Dominance,190kW,0.267766,0.029658,0.270173,14,6633
+CPU_Stress,GA_WaitingTime_Dominance,120kW,0.031908,0.444923,0.589885,0,6636
+CPU_Stress,GA_Energy_Dominance,Uncapped,0.699513,0.114417,0.114626,7,2117
+CPU_Stress,GA_Energy_Dominance,190kW,0.699513,0.114417,0.114626,7,6095
+CPU_Stress,GA_Energy_Dominance,120kW,0.678463,0.118568,0.123268,26,6103
+CPU_Stress,SA_WaitingTime_Dominance,Uncapped,0.287345,0.026552,0.258432,0,792
+CPU_Stress,SA_WaitingTime_Dominance,190kW,0.153146,0.087144,0.36635,0,5166
+CPU_Stress,SA_WaitingTime_Dominance,120kW,0.041734,0.119695,0.473889,2,5175
+CPU_Stress,SA_Energy_Dominance,Uncapped,0.705603,0.08675,0.131432,26,841
+CPU_Stress,SA_Energy_Dominance,190kW,0.705603,0.08675,0.131432,23,4322
+CPU_Stress,SA_Energy_Dominance,120kW,0.64591,0.080985,0.241069,12,4306
+CPU_Stress,NSGA-II,Uncapped,0.590221,0.018114,0.078939,12,2139
+CPU_Stress,NSGA-II,190kW,0.598057,0.015655,0.083916,14,6633
+CPU_Stress,NSGA-II,120kW,0.498412,0.117999,0.166032,0,6546
+CPU_Stress,SPEA-II,Uncapped,0.595487,0.014059,0.072684,38,2852
+CPU_Stress,SPEA-II,190kW,0.592886,0.014616,0.081702,36,7297
+CPU_Stress,SPEA-II,120kW,0.504717,0.098697,0.163877,0,7191
+CPU_Stress,AMOSA,Uncapped,0.455736,0.012746,0.142567,10,4196
+CPU_Stress,AMOSA,190kW,0.457954,0.009416,0.15714,9,8494
+CPU_Stress,AMOSA,120kW,0.435896,0.066157,0.183366,19,8493
