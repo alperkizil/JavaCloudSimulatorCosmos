@@ -29,11 +29,16 @@ bandwidth quota. Defined in
 Forty hosts in three families. "MIPS" below stands for millions of
 instructions per second — a coarse proxy for compute throughput.
 
-| Family   | Count | CPU cores | CPU MIPS | GPU units | RAM (GB) | Storage (GB) | Network   | Power model        |
-|----------|-------|-----------|----------|-----------|----------|--------------|-----------|--------------------|
-| CPU-only | 16    | 16        | 2 500    | 0         | 64       | 2 048        | 20 Gbps   | `StandardPowerModel` |
-| GPU-only | 12    | 8         | 2 800    | 4         | 64       | 2 048        | 20 Gbps   | `HighPerformancePowerModel` |
-| Mixed    | 12    | 32        | 3 000    | 4         | 128      | 2 048        | 20 Gbps   | `HighPerformancePowerModel` |
+| Family   | Count | CPU cores | CPU MIPS | GPU units | RAM (GB) | Storage (GB) | Network   | Power model                  |
+|----------|-------|-----------|----------|-----------|----------|--------------|-----------|------------------------------|
+| CPU-only | 16    | 16        | 2 500    | 0         | 64       | 2 048        | 20 Gbps   | `MeasurementBasedPowerModel` |
+| GPU-only | 12    | 8         | 2 800    | 4         | 64       | 2 048        | 20 Gbps   | `MeasurementBasedPowerModel` |
+| Mixed    | 12    | 32        | 3 000    | 4         | 128      | 2 048        | 20 Gbps   | `MeasurementBasedPowerModel` |
+
+All hosts use the same `MeasurementBasedPowerModel`, which derives
+power figures from real wall-plug measurements rather than generic
+utilization curves. See [`01b-power-model.md`](01b-power-model.md) for
+a full explanation.
 
 Source: `WaitingTimeExperimentRunner.java:354-369`,
 `config/HostConfig.java:14-37`.

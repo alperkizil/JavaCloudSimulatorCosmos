@@ -34,27 +34,22 @@ whole integers, e.g. `2_500_000_000L` = 2.5 billion IPS.)
 
 | Family   | Count | CPU cores | CPU IPS (per host)    | GPU units | RAM (MB) | Storage (MB) | Network     | Power-model label            |
 |----------|-------|-----------|-----------------------|-----------|----------|--------------|-------------|------------------------------|
-| CPU-only | 16    | 16        | 2 500 000 000         | 0         | 65 536   | 2 097 152    | 20 000 Mbps | `StandardPowerModel`         |
-| GPU-only | 12    | 8         | 2 800 000 000         | 4         | 65 536   | 2 097 152    | 20 000 Mbps | `HighPerformancePowerModel`  |
-| Mixed    | 12    | 32        | 3 000 000 000         | 4         | 131 072  | 2 097 152    | 20 000 Mbps | `HighPerformancePowerModel`  |
+| CPU-only | 16    | 16        | 2 500 000 000         | 0         | 65 536   | 2 097 152    | 20 000 Mbps | `MeasurementBasedPowerModel` |
+| GPU-only | 12    | 8         | 2 800 000 000         | 4         | 65 536   | 2 097 152    | 20 000 Mbps | `MeasurementBasedPowerModel` |
+| Mixed    | 12    | 32        | 3 000 000 000         | 4         | 131 072  | 2 097 152    | 20 000 Mbps | `MeasurementBasedPowerModel` |
 
 Source: `ScenarioComparisonExperimentRunner.java:352-368`.
 
-The power-model **label** attached to each host is looked up by
-`factory/PowerModelFactory.java` (lines 31–35), which maps:
-
-- `StandardPowerModel` → maximum CPU 300 W, maximum GPU 250 W, idle
-  CPU 50 W, idle GPU 30 W, other components 100 W;
-- `HighPerformancePowerModel` → maximum CPU 500 W, maximum GPU 400 W,
-  idle CPU 80 W, idle GPU 50 W, other components 150 W.
-
-At evaluation time the energy objective actually uses the
-`MeasurementBasedPowerModel`
-(`src/main/java/com/cloudsimulator/model/MeasurementBasedPowerModel.java`)
-instead of these legacy numbers, because the measurement model ties
-power to the **workload type** (`SEVEN_ZIP`, `FURMARK`, `LLM_GPU`, …)
-rather than to a blanket "CPU utilization" value. See
-[`03-objectives.md`](03-objectives.md) for details.
+All hosts use `MeasurementBasedPowerModel`, an empirical model that
+derives power figures from real wall-plug measurements on a Dell
+Precision 7920 + Nvidia 5080 GPU. Unlike the legacy
+`StandardPowerModel` / `HighPerformancePowerModel` (which use
+blanket utilization curves), this model ties power to the **workload
+type** (`SEVEN_ZIP`, `FURMARK`, `LLM_GPU`, ...) and applies
+quadratic speed-scaling across VMs. See
+[`01b-power-model.md`](01b-power-model.md) for the full explanation
+and [`03-objectives.md`](03-objectives.md) for how the energy
+objective uses it.
 
 Why three families? To make the scheduler's life interesting. Some
 hosts are only useful for CPU work, some only for GPU work, and some
