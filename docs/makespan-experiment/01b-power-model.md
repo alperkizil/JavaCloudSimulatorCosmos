@@ -130,14 +130,41 @@ different intensity, the incremental power is scaled in proportion:
 
        ratio = currentUtil / typicalUtil
 
-3. Clamp the ratio to **[0.0, 1.5]** — power can drop to zero, but can
-   exceed the benchmark figure by at most 50 % (modest
-   over-utilization).
+3. Clamp the ratio to **[0.0, 1.5]** (explained below).
 4. Multiply: `incrementalPower × ratio`.
 
 Concretely: a `SEVEN_ZIP` task at 50 % CPU draws half its benchmark
 increment (≈ 65 W above idle); a `FURMARK` task at 100 % GPU draws the
 full 352 W above idle, regardless of its (tiny) CPU usage.
+
+**Why the clamp?** Step 2 is a linear extrapolation from a *single
+measured point*, and extrapolations are only trustworthy near that
+point. The two bounds are guard rails:
+
+- **Lower bound 0.0** — incremental power is watts *above* idle, and a
+  running workload cannot make the machine draw less than idle, so the
+  increment can shrink to zero but never go negative.
+- **Upper bound 1.5** — protects against runaway extrapolation, which
+  matters most for workloads benchmarked at *low* utilization. Take
+  `DATABASE`: it was measured at only 12 % CPU drawing +39.59 W (it is
+  disk-bound; the CPU is not where its power goes). If a simulated
+  database task ran at 60 % CPU, the unclamped ratio would be
+  0.6 / 0.12 = 5.0, predicting +198 W — a figure never observed on the
+  real machine (the benchmark's measured *peak* was 133.6 W total).
+  With the cap, `DATABASE` can never draw more than
+  39.59 × 1.5 ≈ 59.4 W above idle, however high the simulated CPU
+  utilization goes.
+- **Why allow anything above 1.0 at all?** The profile numbers are
+  benchmark *averages*, and the same runs recorded peaks well above
+  them — so running modestly hotter than the benchmark conditions is
+  realistic. Up to +50 % is permitted as "modest over-utilization"
+  before the cap kicks in.
+
+A useful side effect: for workloads whose typical utilization is
+already 100 % (`SEVEN_ZIP`, `CINEBENCH`, `PRIME95SmallFFT`, and
+`FURMARK` on the GPU side), the ratio can never exceed 1.0 — current
+utilization tops out at 100 % — so the upper clamp only ever activates
+for the low-typical-utilization profiles.
 
 Source: `EmpiricalWorkloadProfile.java:83-105`.
 
