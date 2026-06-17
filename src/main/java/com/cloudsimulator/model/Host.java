@@ -61,7 +61,7 @@ public class Host {
     // Resource allocation tracking
     private long allocatedRamMB;
     private int allocatedCpuCores;
-    private int allocatedGpus;
+    private final List<Gpu> gpus = new ArrayList<>(); // Physical GPUs (identity + exclusive 1:1 VM binding)
     private long allocatedStorageMB;
     private long allocatedBandwidthMbps;
 
@@ -108,10 +108,14 @@ public class Host {
         // Initialize resource allocation tracking
         this.allocatedRamMB = 0;
         this.allocatedCpuCores = 0;
-        this.allocatedGpus = 0;
         this.allocatedStorageMB = 0;
         this.allocatedBandwidthMbps = 0;
         this.totalEnergyConsumedJoules = 0.0;
+
+        // Install physical GPUs as identity objects, each bindable to one VM
+        for (int i = 0; i < this.numberOfGpus; i++) {
+            this.gpus.add(new Gpu(this.id));
+        }
     }
 
     /**
@@ -127,7 +131,7 @@ public class Host {
     public boolean hasCapacityFor(long ramMB, int vcpus, int gpus) {
         return (allocatedRamMB + ramMB <= ramCapacityMB) &&
                (allocatedCpuCores + vcpus <= numberOfCpuCores) &&
-               (allocatedGpus + gpus <= numberOfGpus);
+               (gpus <= getAvailableGpus());
     }
 
     /**
@@ -148,9 +152,9 @@ public class Host {
     public void allocateResources(VM vm) {
         allocatedRamMB += vm.getRequestedRamMB();
         allocatedCpuCores += vm.getRequestedVcpuCount();
-        allocatedGpus += vm.getRequestedGpuCount();
         allocatedStorageMB += vm.getRequestedStorageMB();
         allocatedBandwidthMbps += vm.getRequestedBandwidthMbps();
+        bindGpus(vm);
     }
 
     /**
@@ -159,9 +163,57 @@ public class Host {
     public void deallocateResources(VM vm) {
         allocatedRamMB = Math.max(0, allocatedRamMB - vm.getRequestedRamMB());
         allocatedCpuCores = Math.max(0, allocatedCpuCores - vm.getRequestedVcpuCount());
-        allocatedGpus = Math.max(0, allocatedGpus - vm.getRequestedGpuCount());
         allocatedStorageMB = Math.max(0, allocatedStorageMB - vm.getRequestedStorageMB());
         allocatedBandwidthMbps = Math.max(0, allocatedBandwidthMbps - vm.getRequestedBandwidthMbps());
+        unbindGpus(vm);
+    }
+
+    /**
+     * Binds the requested number of free physical GPUs on this host to the VM,
+     * recording the binding on both the {@link Gpu} objects and the VM. Each GPU
+     * is exclusively bound to a single VM (1:1). Callers must ensure capacity
+     * via {@link #hasCapacityForVM(VM)} first.
+     */
+    private void bindGpus(VM vm) {
+        int need = vm.getRequestedGpuCount();
+        if (need <= 0) {
+            return;
+        }
+        int bound = 0;
+        for (Gpu gpu : gpus) {
+            if (bound >= need) {
+                break;
+            }
+            if (gpu.isFree()) {
+                gpu.bindTo(vm.getId());
+                vm.addBoundGpuId(gpu.getId());
+                bound++;
+            }
+        }
+        if (bound < need) {
+            throw new IllegalStateException("Host " + id + " has only " + bound +
+                " free GPU(s); VM " + vm.getId() + " requested " + need);
+        }
+    }
+
+    /**
+     * Releases every GPU on this host that is bound to the given VM.
+     */
+    private void unbindGpus(VM vm) {
+        for (Gpu gpu : gpus) {
+            Long boundVm = gpu.getBoundVmId();
+            if (boundVm != null && boundVm == vm.getId()) {
+                gpu.unbind();
+            }
+        }
+        vm.clearBoundGpuIds();
+    }
+
+    /**
+     * Gets the physical GPUs installed in this host, each carrying its binding state.
+     */
+    public List<Gpu> getGpus() {
+        return gpus;
     }
 
     /**
@@ -182,7 +234,13 @@ public class Host {
      * Gets available GPUs.
      */
     public int getAvailableGpus() {
-        return numberOfGpus - allocatedGpus;
+        int free = 0;
+        for (Gpu gpu : gpus) {
+            if (gpu.isFree()) {
+                free++;
+            }
+        }
+        return free;
     }
 
     /**
@@ -498,6 +556,12 @@ public class Host {
 
     public void setNumberOfGpus(int numberOfGpus) {
         this.numberOfGpus = numberOfGpus;
+        // Re-install physical GPUs to match the new count. Config-time operation:
+        // this clears any existing bindings.
+        this.gpus.clear();
+        for (int i = 0; i < numberOfGpus; i++) {
+            this.gpus.add(new Gpu(this.id));
+        }
     }
 
     public long getRamCapacityMB() {
