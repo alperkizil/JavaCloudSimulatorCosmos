@@ -56,6 +56,9 @@ public class VM {
     // Host assignment tracking
     private Long assignedHostId;
 
+    // GPU binding: ids of the specific physical GPUs the host bound to this VM
+    private List<Long> boundGpuIds;
+
     // Task execution tracking
     private Task currentExecutingTask;
     private long currentTaskProgress;
@@ -97,6 +100,7 @@ public class VM {
 
         // Initialize host assignment and task execution
         this.assignedHostId = null;
+        this.boundGpuIds = new ArrayList<>();
         this.currentExecutingTask = null;
         this.currentTaskProgress = 0;
     }
@@ -183,6 +187,34 @@ public class VM {
 
     public void setAssignedHostId(Long hostId) {
         this.assignedHostId = hostId;
+    }
+
+    /**
+     * Records that the host bound a specific physical GPU to this VM.
+     */
+    public void addBoundGpuId(long gpuId) {
+        this.boundGpuIds.add(gpuId);
+    }
+
+    /**
+     * Clears this VM's GPU bindings (called when the host releases its GPUs).
+     */
+    public void clearBoundGpuIds() {
+        this.boundGpuIds.clear();
+    }
+
+    /**
+     * Gets the ids of the physical GPUs bound to this VM.
+     */
+    public List<Long> getBoundGpuIds() {
+        return boundGpuIds;
+    }
+
+    /**
+     * Gets the number of physical GPUs currently bound to this VM.
+     */
+    public int getBoundGpuCount() {
+        return boundGpuIds.size();
     }
 
     public boolean isAssignedToHost() {
