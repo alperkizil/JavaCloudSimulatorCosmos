@@ -11,25 +11,27 @@ import java.util.Optional;
  *
  * Algorithm:
  * For each task:
- *   1. Calculate estimated completion time for each candidate VM:
- *      estimated_time = (current_queue_workload + task.instructionLength) / vm.totalIPS
- *   2. Select the VM with the lowest estimated completion time
- *   3. Ties are broken by selecting the first VM encountered
+ *   1. Estimate the VM's completion time if the task were added, under the
+ *      per-vCPU FIFO scheduler: the VM's queued tasks plus the new task are
+ *      distributed across its vCPU lanes (each running at the host-clamped
+ *      effective per-vCPU IPS, least-loaded lane first), and the estimate is the
+ *      busiest lane's finish time.
+ *   2. Select the VM with the lowest estimated completion time.
+ *   3. Ties are broken by selecting the first VM encountered.
  *
  * Where:
- * - current_queue_workload = sum of remaining instructions for all pending tasks in VM queue
- * - task.instructionLength = total instructions for the new task
- * - vm.totalIPS = vm.ipsPerVCPU * vm.vcpuCount
+ * - each lane runs one task at a time at vm.effectiveIpsPerVcpu
+ * - a task of length L costs ceil(L / effectiveIpsPerVcpu) ticks
+ * - lane count = vm.requestedVcpuCount (true parallelism width)
  *
  * Characteristics:
  * - Time complexity: O(m * k) per task where m = VMs, k = avg queue length
- * - Considers task instruction length (bigger tasks matter more)
- * - Considers VM processing power (faster VMs can handle more)
- * - Considers current queue load (not just count, but total work)
- * - Minimizes makespan (total time to complete all tasks) with greedy heuristic
+ * - Considers task instruction length, VM speed (clamped to host per-core IPS),
+ *   parallelism width, and current per-lane queue load
+ * - Minimizes makespan with a greedy heuristic consistent with the simulation
  *
  * Use case:
- * - Heterogeneous VM environments (different processing powers)
+ * - Heterogeneous VM environments (different processing powers / widths)
  * - Tasks with varying execution times
  * - When minimizing total completion time is important
  */
@@ -42,28 +44,17 @@ public class WorkloadAwareTaskAssignmentStrategy implements TaskAssignmentStrate
         }
 
         VM bestVM = null;
-        double lowestEstimatedTime = Double.MAX_VALUE;
+        long lowestCompletionTicks = Long.MAX_VALUE;
 
         for (VM vm : candidateVMs) {
-            // Calculate current queue workload (sum of remaining instructions)
-            long currentQueueWorkload = calculateQueueWorkload(vm);
-
-            // Add the new task's instruction length
-            long totalWorkload = currentQueueWorkload + task.getInstructionLength();
-
-            // Calculate VM's total IPS
-            long vmTotalIps = vm.getTotalRequestedIps();
-
-            // Avoid division by zero
-            if (vmTotalIps == 0) {
-                continue;
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps <= 0) {
+                continue; // VM has no usable processing power
             }
 
-            // Estimate completion time for all tasks including this one
-            double estimatedTime = (double) totalWorkload / vmTotalIps;
-
-            if (estimatedTime < lowestEstimatedTime) {
-                lowestEstimatedTime = estimatedTime;
+            long completionTicks = estimateCompletionTicks(vm, task, effIps);
+            if (completionTicks < lowestCompletionTicks) {
+                lowestCompletionTicks = completionTicks;
                 bestVM = vm;
             }
         }
@@ -72,20 +63,40 @@ public class WorkloadAwareTaskAssignmentStrategy implements TaskAssignmentStrate
     }
 
     /**
-     * Calculates the total remaining workload in a VM's task queue.
-     *
-     * @param vm The VM to calculate workload for
-     * @return Total remaining instructions across all queued tasks
+     * Estimates the VM's completion time (busiest vCPU lane) after adding the new
+     * task, mirroring the per-vCPU FIFO scheduler: queued tasks (by remaining
+     * instructions) and the new task are placed on the least-loaded lane in turn,
+     * each costing ceil(instructions / effIpsPerVcpu) ticks.
      */
-    private long calculateQueueWorkload(VM vm) {
-        long totalWorkload = 0;
+    private long estimateCompletionTicks(VM vm, Task newTask, long effIps) {
+        long[] lanes = new long[Math.max(1, vm.getRequestedVcpuCount())];
 
-        for (Task queuedTask : vm.getAssignedTasks()) {
-            // Use remaining instructions (not total) for tasks in progress
-            totalWorkload += queuedTask.getRemainingInstructions();
+        for (Task queued : vm.getAssignedTasks()) {
+            addToLeastLoaded(lanes, ceilDiv(queued.getRemainingInstructions(), effIps));
         }
+        addToLeastLoaded(lanes, ceilDiv(newTask.getInstructionLength(), effIps));
 
-        return totalWorkload;
+        long max = 0L;
+        for (long load : lanes) {
+            if (load > max) {
+                max = load;
+            }
+        }
+        return max;
+    }
+
+    private static void addToLeastLoaded(long[] lanes, long ticks) {
+        int idx = 0;
+        for (int i = 1; i < lanes.length; i++) {
+            if (lanes[i] < lanes[idx]) {
+                idx = i;
+            }
+        }
+        lanes[idx] += ticks;
+    }
+
+    private static long ceilDiv(long instructions, long ipsPerVcpu) {
+        return (instructions + ipsPerVcpu - 1) / ipsPerVcpu;
     }
 
     @Override
@@ -95,7 +106,8 @@ public class WorkloadAwareTaskAssignmentStrategy implements TaskAssignmentStrate
 
     @Override
     public String getDescription() {
-        return "Assigns each task to minimize estimated completion time. " +
-               "Considers task instruction length, VM processing power, and current queue workload.";
+        return "Assigns each task to minimize estimated completion time under the " +
+               "per-vCPU FIFO scheduler. Considers task length, host-clamped VM " +
+               "speed, parallelism width, and current per-lane queue load.";
     }
 }

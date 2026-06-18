@@ -103,9 +103,15 @@ public class PowerCeilingAdmissionTaskAssignmentStrategy implements TaskAssignme
         Map<Task, VM> finalAssignments = new LinkedHashMap<>();
         if (tasks.isEmpty() || vms.isEmpty()) return finalAssignments;
 
-        // Calibrate the speed-scaling reference to the actual VM fleet so
-        // incremental-power estimates match EnergyObjective's accounting.
-        powerModel.calculateReferenceIpsFromVMs(vms);
+        // Calibrate the speed-scaling reference so incremental-power estimates
+        // match the host power model / EnergyObjective. Prefer the per-core host
+        // median (dimensionally consistent with per-vCPU speed scaling); fall back
+        // to the VM fleet only when no hosts were supplied.
+        if (hosts != null && !hosts.isEmpty()) {
+            powerModel.calculateReferenceIpsFromHosts(hosts);
+        } else {
+            powerModel.calculateReferenceIpsFromVMs(vms);
+        }
 
         double baselineWatts = currentHostPowerSum();
 
@@ -117,10 +123,11 @@ public class PowerCeilingAdmissionTaskAssignmentStrategy implements TaskAssignme
             Optional<VM> pick = inner.selectVM(task, candidates);
             if (!pick.isPresent()) continue;
             VM vm = pick.get();
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps <= 0) continue;
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps <= 0) continue;
 
-            long execTicks = Math.max(1L, (task.getInstructionLength() + vmIps - 1) / vmIps);
+            // One task runs on one vCPU lane at the host-clamped per-vCPU IPS.
+            long execTicks = Math.max(1L, (task.getInstructionLength() + effIps - 1) / effIps);
             double incr = incrementalPowerFor(task, vm);
             plans.add(new TaskPlan(task, vm, execTicks, incr));
         }
@@ -133,25 +140,37 @@ public class PowerCeilingAdmissionTaskAssignmentStrategy implements TaskAssignme
         // 3. Projected power timeline as a sorted map of time -> delta.
         //    Baseline is represented implicitly as an additive offset.
         TreeMap<Long, Double> deltas = new TreeMap<>();
-        Map<Long, Long> vmQueueFinish = new java.util.HashMap<>();
-        for (VM vm : vms) vmQueueFinish.put(vm.getId(), 0L);
+        // Per-VM vCPU lane finish times (per-vCPU FIFO scheduler): a task joins the
+        // least-loaded lane, so same-VM tasks can run concurrently across lanes.
+        Map<Long, long[]> vmLanes = new java.util.HashMap<>();
+        for (VM vm : vms) {
+            vmLanes.put(vm.getId(), new long[Math.max(1, vm.getRequestedVcpuCount())]);
+        }
 
         for (TaskPlan plan : plans) {
-            long vmId = plan.vm.getId();
-            long queueFinish = vmQueueFinish.getOrDefault(vmId, 0L);
+            long[] lanes = vmLanes.computeIfAbsent(plan.vm.getId(),
+                id -> new long[Math.max(1, plan.vm.getRequestedVcpuCount())]);
+            int lane = leastLoadedLane(lanes);
+            long queueFinish = lanes[lane];
             long admissionTime = earliestFeasibleAdmission(
                 deltas, baselineWatts, queueFinish, plan.incrementalWatts, plan.execTicks);
+
+            plan.admissionTime = admissionTime;
+            if (admissionTime == Long.MAX_VALUE) {
+                // Task can never be admitted; do not reserve a lane (step 4 counts
+                // it as a failure).
+                continue;
+            }
 
             if (admissionTime > queueFinish) {
                 tasksDeferredCount++;
                 totalDeferralTicks += (admissionTime - queueFinish);
             }
-            plan.admissionTime = admissionTime;
 
             // Commit to the timeline so subsequent tasks see this one's footprint.
             deltas.merge(admissionTime, plan.incrementalWatts, Double::sum);
             deltas.merge(admissionTime + plan.execTicks, -plan.incrementalWatts, Double::sum);
-            vmQueueFinish.put(vmId, admissionTime + plan.execTicks);
+            lanes[lane] = admissionTime + plan.execTicks;
         }
 
         // 4. Finalize: assign in admission order so FIFO VM queues reflect deferrals.
@@ -254,7 +273,7 @@ public class PowerCeilingAdmissionTaskAssignmentStrategy implements TaskAssignme
     private double incrementalPowerFor(Task task, VM vm) {
         double[] util = utilizationProfile(task.getWorkloadType());
         return powerModel.calculateIncrementalPowerWithSpeedScaling(
-            task.getWorkloadType(), util[0], util[1], vm.getTotalRequestedIps());
+            task.getWorkloadType(), util[0], util[1], vm.getEffectiveIpsPerVcpu());
     }
 
     private double[] utilizationProfile(WorkloadType workloadType) {
@@ -280,6 +299,16 @@ public class PowerCeilingAdmissionTaskAssignmentStrategy implements TaskAssignme
             case IDLE:
             default:            return new double[]{0.0, 0.0};
         }
+    }
+
+    private static int leastLoadedLane(long[] lanes) {
+        int idx = 0;
+        for (int i = 1; i < lanes.length; i++) {
+            if (lanes[i] < lanes[idx]) {
+                idx = i;
+            }
+        }
+        return idx;
     }
 
     private List<VM> filterCandidates(Task task, List<VM> vms) {
