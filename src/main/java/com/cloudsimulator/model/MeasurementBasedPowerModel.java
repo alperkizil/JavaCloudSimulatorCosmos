@@ -316,39 +316,6 @@ public class MeasurementBasedPowerModel {
     }
 
     /**
-     * Gets the raw incremental power for a workload at 100% typical utilization.
-     * Useful for power estimation without current utilization values.
-     *
-     * @param workloadType The workload type
-     * @return Incremental power at typical utilization, in Watts
-     */
-    public double getTypicalIncrementalPower(WorkloadType workloadType) {
-        EmpiricalWorkloadProfile profile = workloadProfiles.get(workloadType);
-        return profile != null ? profile.getIncrementalPowerWatts() : 0.0;
-    }
-
-    /**
-     * Gets the typical total power for a workload.
-     *
-     * @param workloadType The workload type
-     * @return Total power at typical utilization, in Watts
-     */
-    public double getTypicalTotalPower(WorkloadType workloadType) {
-        return (baseIdlePowerWatts + getTypicalIncrementalPower(workloadType)) * hardwareScaleFactor;
-    }
-
-    /**
-     * Gets the peak power observed for a workload.
-     *
-     * @param workloadType The workload type
-     * @return Peak observed power in Watts
-     */
-    public double getPeakPower(WorkloadType workloadType) {
-        EmpiricalWorkloadProfile profile = workloadProfiles.get(workloadType);
-        return profile != null ? profile.getPeakPowerWatts() * hardwareScaleFactor : baseIdlePowerWatts * hardwareScaleFactor;
-    }
-
-    /**
      * Fallback power calculation when no profile exists.
      * Uses a simple linear model based on utilization.
      */
@@ -367,15 +334,6 @@ public class MeasurementBasedPowerModel {
      */
     public EmpiricalWorkloadProfile getWorkloadProfile(WorkloadType workloadType) {
         return workloadProfiles.get(workloadType);
-    }
-
-    /**
-     * Adds or updates a workload profile.
-     *
-     * @param profile The profile to add
-     */
-    public void addWorkloadProfile(EmpiricalWorkloadProfile profile) {
-        workloadProfiles.put(profile.getWorkloadType(), profile);
     }
 
     /**
@@ -400,10 +358,6 @@ public class MeasurementBasedPowerModel {
 
     public double getHardwareScaleFactor() {
         return hardwareScaleFactor;
-    }
-
-    public void setHardwareScaleFactor(double hardwareScaleFactor) {
-        this.hardwareScaleFactor = hardwareScaleFactor;
     }
 
     public Map<WorkloadType, EmpiricalWorkloadProfile> getWorkloadProfiles() {
@@ -584,33 +538,5 @@ public class MeasurementBasedPowerModel {
         double basePower = calculateIncrementalPower(workloadType, cpuUtilization, gpuUtilization);
         double speedFactor = calculateSpeedPowerFactor(vmIps);
         return basePower * speedFactor;
-    }
-
-    /**
-     * Calculates total power with VM speed scaling applied.
-     *
-     * @param workloadType The type of workload being executed
-     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
-     * @param vmIps The VM's processing speed in instructions per second
-     * @return Speed-scaled total power in Watts
-     */
-    public double calculateTotalPowerWithSpeedScaling(
-            WorkloadType workloadType,
-            double cpuUtilization,
-            double gpuUtilization,
-            long vmIps) {
-        double incrementalPower = calculateIncrementalPowerWithSpeedScaling(
-                workloadType, cpuUtilization, gpuUtilization, vmIps);
-        return (baseIdlePowerWatts + incrementalPower) * hardwareScaleFactor;
-    }
-
-    /**
-     * Gets the power scaling exponent.
-     *
-     * @return Power scaling exponent
-     */
-    public static double getPowerScalingExponent() {
-        return POWER_SCALING_EXPONENT;
     }
 }
