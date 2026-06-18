@@ -60,6 +60,10 @@ public class VM {
     // GPU binding: ids of the specific physical GPUs the host bound to this VM
     private List<Long> boundGpuIds;
 
+    // CPU core binding: ids ("<processorId>-<coreIndex>") of the physical cores
+    // the host bound 1:1 to this VM's vCPUs (identity bookkeeping)
+    private List<String> boundCoreIds;
+
     // Per-vCPU FIFO scheduler state. Each vCPU is an execution lane that runs one
     // task at a time at the effective per-vCPU IPS. The VM's FIFO task queue
     // (assignedTasks) feeds the lanes: each tick, every free vCPU pulls the next
@@ -107,6 +111,7 @@ public class VM {
         // Initialize host assignment and task execution
         this.assignedHostId = null;
         this.boundGpuIds = new ArrayList<>();
+        this.boundCoreIds = new ArrayList<>();
     }
 
     /**
@@ -219,6 +224,34 @@ public class VM {
      */
     public int getBoundGpuCount() {
         return boundGpuIds.size();
+    }
+
+    /**
+     * Records that the host bound a specific physical core to this VM.
+     */
+    public void addBoundCoreId(String coreId) {
+        this.boundCoreIds.add(coreId);
+    }
+
+    /**
+     * Clears this VM's core bindings (called when the host releases its cores).
+     */
+    public void clearBoundCoreIds() {
+        this.boundCoreIds.clear();
+    }
+
+    /**
+     * Gets the ids of the physical cores bound to this VM.
+     */
+    public List<String> getBoundCoreIds() {
+        return boundCoreIds;
+    }
+
+    /**
+     * Gets the number of physical cores currently bound to this VM.
+     */
+    public int getBoundCoreCount() {
+        return boundCoreIds.size();
     }
 
     public boolean isAssignedToHost() {

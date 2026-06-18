@@ -62,6 +62,7 @@ public class Host {
     private long allocatedRamMB;
     private int allocatedCpuCores;
     private final List<Gpu> gpus = new ArrayList<>(); // Physical GPUs (identity + exclusive 1:1 VM binding)
+    private final List<Processor> processors = new ArrayList<>(); // CPU socket(s); cores bind 1:1 to vCPUs (identity bookkeeping)
     private long allocatedStorageMB;
     private long allocatedBandwidthMbps;
 
@@ -116,6 +117,10 @@ public class Host {
         for (int i = 0; i < this.numberOfGpus; i++) {
             this.gpus.add(new Gpu(this.id));
         }
+
+        // Install one physical processor (id = host id) holding this host's cores,
+        // each bindable 1:1 to a vCPU. Enforces 1 core -> 1 vCPU; bookkeeping only.
+        this.processors.add(new Processor(this.id, this.numberOfCpuCores));
     }
 
     /**
@@ -154,6 +159,7 @@ public class Host {
         allocatedCpuCores += vm.getRequestedVcpuCount();
         allocatedStorageMB += vm.getRequestedStorageMB();
         allocatedBandwidthMbps += vm.getRequestedBandwidthMbps();
+        bindCores(vm);
         bindGpus(vm);
     }
 
@@ -165,6 +171,7 @@ public class Host {
         allocatedCpuCores = Math.max(0, allocatedCpuCores - vm.getRequestedVcpuCount());
         allocatedStorageMB = Math.max(0, allocatedStorageMB - vm.getRequestedStorageMB());
         allocatedBandwidthMbps = Math.max(0, allocatedBandwidthMbps - vm.getRequestedBandwidthMbps());
+        unbindCores(vm);
         unbindGpus(vm);
     }
 
@@ -214,6 +221,92 @@ public class Host {
      */
     public List<Gpu> getGpus() {
         return gpus;
+    }
+
+    /**
+     * Binds {@code requestedVcpuCount} free physical cores on this host to the VM,
+     * recording the binding on both the {@link CpuCore}s and the VM (1:1 core →
+     * vCPU). Each core is exclusively bound to a single VM. This runs alongside —
+     * and never replaces — the authoritative core-count admission in
+     * {@link #hasCapacityFor}; it is identity bookkeeping that does not change any
+     * timing, admission, or power calculation. Callers reach this only after
+     * {@link #hasCapacityForVM(VM)} has confirmed capacity.
+     */
+    private void bindCores(VM vm) {
+        int need = vm.getRequestedVcpuCount();
+        if (need <= 0) {
+            return;
+        }
+        int bound = 0;
+        for (Processor processor : processors) {
+            for (CpuCore core : processor.getCores()) {
+                if (bound >= need) {
+                    break;
+                }
+                if (core.isFree()) {
+                    core.bindTo(vm.getId());
+                    vm.addBoundCoreId(core.getId());
+                    bound++;
+                }
+            }
+            if (bound >= need) {
+                break;
+            }
+        }
+        if (bound < need) {
+            throw new IllegalStateException("Host " + id + " has only " + bound +
+                " free core(s); VM " + vm.getId() + " requested " + need);
+        }
+    }
+
+    /**
+     * Releases every core on this host that is bound to the given VM.
+     */
+    private void unbindCores(VM vm) {
+        for (Processor processor : processors) {
+            for (CpuCore core : processor.getCores()) {
+                Long boundVm = core.getBoundVmId();
+                if (boundVm != null && boundVm == vm.getId()) {
+                    core.unbind();
+                }
+            }
+        }
+        vm.clearBoundCoreIds();
+    }
+
+    /**
+     * Gets the physical processors (CPU sockets) installed in this host.
+     */
+    public List<Processor> getProcessors() {
+        return processors;
+    }
+
+    /**
+     * Gets all physical cores across this host's processors, each carrying its
+     * binding state.
+     */
+    public List<CpuCore> getCpuCores() {
+        List<CpuCore> all = new ArrayList<>();
+        for (Processor processor : processors) {
+            all.addAll(processor.getCores());
+        }
+        return all;
+    }
+
+    /**
+     * Counts free (unbound) physical cores — a bookkeeping mirror of
+     * {@link #getAvailableCpuCores()}; not used in admission.
+     */
+    public int getAvailableCoreCount() {
+        int free = 0;
+        for (Processor processor : processors) {
+            for (CpuCore core : processor.getCores()) {
+                if (core.isFree()) {
+                    free++;
+                }
+            }
+        }
+        return free;
     }
 
     /**
@@ -538,6 +631,10 @@ public class Host {
 
     public void setNumberOfCpuCores(int numberOfCpuCores) {
         this.numberOfCpuCores = numberOfCpuCores;
+        // Re-install the host's processor/cores to match the new count.
+        // Config-time operation: this clears any existing core bindings.
+        this.processors.clear();
+        this.processors.add(new Processor(this.id, numberOfCpuCores));
     }
 
     public ComputeType getComputeType() {
