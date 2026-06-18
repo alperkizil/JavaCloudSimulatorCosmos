@@ -303,10 +303,12 @@ public class SingleHostGADemoRunner {
                 double base = pm.calculateIncrementalPower(l.getWorkloadType(), l.getCpuUtilization(), l.getGpuUtilization());
                 double laneP = base * factor; // = calculateIncrementalPowerWithSpeedScaling(...)
                 runningIncr += laneP;
-                boolean gpu = pm.getWorkloadProfile(l.getWorkloadType()).isGpuIntensive();
-                if (gpu) runningGpu += laneP; else runningCpu += laneP;
-                System.out.printf("    lane%d %-9s base=%7.4f W x %.6f = %8.4f W   [%s]   running Sum incr=%9.4f W%n",
-                    i, l.getWorkloadType(), base, factor, laneP, gpu ? "gpu" : "cpu", runningIncr);
+                double[] split = pm.splitIncrementalPower(l.getWorkloadType(), laneP);
+                runningCpu += split[0];
+                runningGpu += split[1];
+                double cpuPct = laneP > 0 ? split[0] / laneP * 100.0 : 100.0;
+                System.out.printf("    lane%d %-9s base=%7.4f W x %.6f = %8.4f W   [cpu %4.1f%% / gpu %4.1f%%]   running Sum incr=%9.4f W%n",
+                    i, l.getWorkloadType(), base, factor, laneP, cpuPct, 100.0 - cpuPct, runningIncr);
             }
         }
 
