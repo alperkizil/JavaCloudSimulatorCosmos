@@ -1,7 +1,5 @@
 package com.cloudsimulator.model;
 
-import com.cloudsimulator.enums.WorkloadType;
-
 /**
  * PowerModel calculates the power consumption of a Host based on its utilization.
  * It considers CPU utilization, GPU utilization, and other components.
@@ -89,69 +87,30 @@ public class PowerModel {
         return cpuPower + gpuPower + otherComponentsPower;
     }
 
-    /**
-     * Calculates power draw for a specific workload type.
-     * Different workloads have different power characteristics.
-     *
-     * @param workloadType The type of workload being executed
-     * @param cpuUtilization CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization GPU utilization (0.0 to 1.0)
-     * @return Power draw in Watts
-     */
-    public double calculateWorkloadPower(WorkloadType workloadType,
-                                         double cpuUtilization,
-                                         double gpuUtilization) {
-        return calculateTotalPower(cpuUtilization, gpuUtilization);
-    }
-
-    // Getters and Setters
+    // Getters
 
     public String getModelName() {
         return modelName;
-    }
-
-    public void setModelName(String modelName) {
-        this.modelName = modelName;
     }
 
     public double getMaxCpuPower() {
         return maxCpuPower;
     }
 
-    public void setMaxCpuPower(double maxCpuPower) {
-        this.maxCpuPower = maxCpuPower;
-    }
-
     public double getMaxGpuPower() {
         return maxGpuPower;
-    }
-
-    public void setMaxGpuPower(double maxGpuPower) {
-        this.maxGpuPower = maxGpuPower;
     }
 
     public double getIdleCpuPower() {
         return idleCpuPower;
     }
 
-    public void setIdleCpuPower(double idleCpuPower) {
-        this.idleCpuPower = idleCpuPower;
-    }
-
     public double getIdleGpuPower() {
         return idleGpuPower;
     }
 
-    public void setIdleGpuPower(double idleGpuPower) {
-        this.idleGpuPower = idleGpuPower;
-    }
-
     public double getOtherComponentsPower() {
         return otherComponentsPower;
-    }
-
-    public void setOtherComponentsPower(double otherComponentsPower) {
-        this.otherComponentsPower = otherComponentsPower;
     }
 
     @Override
