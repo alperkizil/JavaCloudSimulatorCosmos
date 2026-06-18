@@ -60,19 +60,6 @@ public class EmpiricalWorkloadProfile {
     }
 
     /**
-     * Simplified constructor for basic power measurements.
-     */
-    public EmpiricalWorkloadProfile(
-            WorkloadType workloadType,
-            double incrementalPowerWatts,
-            double peakPowerWatts,
-            double typicalCpuUtilization,
-            double typicalGpuUtilization) {
-        this(workloadType, incrementalPowerWatts, peakPowerWatts, 0.0, 0.0,
-             typicalCpuUtilization, typicalGpuUtilization, 0.0, "", "");
-    }
-
-    /**
      * Returns this workload's incremental power above idle, in Watts.
      *
      * The value is the empirically measured wall-plug delta at the workload's
@@ -93,20 +80,12 @@ public class EmpiricalWorkloadProfile {
 
     // Getters
 
-    public WorkloadType getWorkloadType() {
-        return workloadType;
-    }
-
     public double getIncrementalPowerWatts() {
         return incrementalPowerWatts;
     }
 
     public double getPeakPowerWatts() {
         return peakPowerWatts;
-    }
-
-    public double getLowestPowerWatts() {
-        return lowestPowerWatts;
     }
 
     public double getAveragePowerWatts() {
@@ -119,18 +98,6 @@ public class EmpiricalWorkloadProfile {
 
     public double getTypicalGpuUtilization() {
         return typicalGpuUtilization;
-    }
-
-    public double getEnergyPerUnitJoules() {
-        return energyPerUnitJoules;
-    }
-
-    public String getThroughputDescription() {
-        return throughputDescription;
-    }
-
-    public String getMeasurementNotes() {
-        return measurementNotes;
     }
 
     @Override
