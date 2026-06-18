@@ -27,6 +27,7 @@ public class VM {
 
     // Resource requests
     private long requestedIpsPerVcpu;        // Instructions per second per vCPU
+    private long effectiveIpsPerVcpu;        // Per-vCPU IPS after clamping to the assigned host's per-core speed (A2)
     private int requestedVcpuCount;          // Number of virtual CPU cores
     private int requestedGpuCount;           // Number of GPUs (0 for CPU-only VMs)
     private long requestedRamMB;             // Requested RAM in megabytes
@@ -72,6 +73,8 @@ public class VM {
         this.id = idGenerator.incrementAndGet();
         this.userId = userId;
         this.requestedIpsPerVcpu = requestedIpsPerVcpu;
+        // Until the VM is placed on a host, the effective per-vCPU speed equals the request.
+        this.effectiveIpsPerVcpu = requestedIpsPerVcpu;
         this.requestedVcpuCount = requestedVcpuCount;
         this.requestedGpuCount = requestedGpuCount;
         this.requestedRamMB = requestedRamMB;
@@ -503,6 +506,29 @@ public class VM {
      */
     public long getTotalRequestedIps() {
         return requestedIpsPerVcpu * requestedVcpuCount;
+    }
+
+    /**
+     * Per-vCPU IPS actually delivered after clamping to the assigned host's
+     * per-core speed: a vCPU cannot run faster than a physical core (A2). Set
+     * when the VM is placed on a host; defaults to the requested per-vCPU IPS
+     * while the VM is unplaced.
+     */
+    public long getEffectiveIpsPerVcpu() {
+        return effectiveIpsPerVcpu;
+    }
+
+    public void setEffectiveIpsPerVcpu(long effectiveIpsPerVcpu) {
+        this.effectiveIpsPerVcpu = effectiveIpsPerVcpu;
+    }
+
+    /**
+     * Aggregate effective IPS across all vCPU lanes (effective per-vCPU × vCPU
+     * count). This is the VM's peak throughput when every lane is busy; a single
+     * task runs at {@link #getEffectiveIpsPerVcpu()}, not this aggregate.
+     */
+    public long getEffectiveTotalIps() {
+        return effectiveIpsPerVcpu * requestedVcpuCount;
     }
 
     // Getters and Setters

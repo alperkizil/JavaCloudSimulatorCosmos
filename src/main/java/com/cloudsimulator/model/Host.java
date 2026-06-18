@@ -269,6 +269,12 @@ public class Host {
 
         // Set assigned host in VM
         vm.setAssignedHostId(this.id);
+
+        // Clamp the VM's per-vCPU speed to this host's per-core IPS: a vCPU cannot
+        // run faster than a physical core (A2). Cached on the VM so downstream
+        // execution and the scheduling objectives read the effective speed without
+        // needing a reference to the Host.
+        vm.setEffectiveIpsPerVcpu(Math.min(vm.getRequestedIpsPerVcpu(), this.instructionsPerSecond));
     }
 
     /**
