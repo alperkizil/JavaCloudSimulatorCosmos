@@ -2,143 +2,139 @@ package com.cloudsimulator.model;
 
 import com.cloudsimulator.enums.WorkloadType;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * Represents the utilization state of a VM at a specific point in time.
- * Tracks the workload being executed and resource utilization.
+ * Snapshot of a VM's utilization for the current simulation tick under the
+ * per-vCPU FIFO scheduler.
+ *
+ * A VM runs up to one task per vCPU lane concurrently, so its utilization this
+ * tick is a set of per-lane entries — each carrying the workload type running on
+ * that lane and that lane's CPU/GPU utilization. An empty lane list means the VM
+ * is idle.
+ *
+ * The aggregate getters ({@link #getActiveWorkloadType()},
+ * {@link #getCpuUtilization()}, {@link #getGpuUtilization()}) collapse the lanes
+ * into a single VM-level figure for the legacy utilization-based power path and
+ * for reporting. The workload-aware power model reads the per-lane breakdown via
+ * {@link #getLanes()} instead.
  */
 public class VMUtilization {
-    private long workloadLength;          // Total length/duration of workload (seconds)
-    private long workloadProgress;        // Current progress in workload execution (seconds)
-    private WorkloadType activeWorkloadType;
-    private double cpuUtilization;        // CPU utilization (0.0 to 1.0)
-    private double gpuUtilization;        // GPU utilization (0.0 to 1.0)
-    private double powerDrawWatts;        // Power draw for this workload (Watts)
 
     /**
-     * Full constructor.
+     * Utilization of a single busy vCPU lane during the current tick.
      */
-    public VMUtilization(long workloadLength, long workloadProgress,
-                        WorkloadType activeWorkloadType,
-                        double cpuUtilization, double gpuUtilization,
-                        double powerDrawWatts) {
-        this.workloadLength = workloadLength;
-        this.workloadProgress = workloadProgress;
-        this.activeWorkloadType = activeWorkloadType;
-        this.cpuUtilization = cpuUtilization;
-        this.gpuUtilization = gpuUtilization;
-        this.powerDrawWatts = powerDrawWatts;
-    }
+    public static final class LaneUtilization {
+        private final WorkloadType workloadType;
+        private final double cpuUtilization;   // 0.0..1.0 for this one lane
+        private final double gpuUtilization;   // 0.0..1.0 for this one lane
 
-    /**
-     * Constructor for starting a new workload (progress = 0).
-     */
-    public VMUtilization(long workloadLength, WorkloadType activeWorkloadType,
-                        double cpuUtilization, double gpuUtilization,
-                        double powerDrawWatts) {
-        this(workloadLength, 0, activeWorkloadType, cpuUtilization, gpuUtilization, powerDrawWatts);
-    }
+        public LaneUtilization(WorkloadType workloadType, double cpuUtilization, double gpuUtilization) {
+            this.workloadType = workloadType;
+            this.cpuUtilization = cpuUtilization;
+            this.gpuUtilization = gpuUtilization;
+        }
 
-    /**
-     * Constructor for IDLE state.
-     */
-    public VMUtilization() {
-        this(0, 0, WorkloadType.IDLE, 0.0, 0.0, 0.0);
-    }
+        public WorkloadType getWorkloadType() {
+            return workloadType;
+        }
 
-    /**
-     * Increments the workload progress by one second.
-     */
-    public void incrementProgress() {
-        if (workloadProgress < workloadLength) {
-            workloadProgress++;
+        public double getCpuUtilization() {
+            return cpuUtilization;
+        }
+
+        public double getGpuUtilization() {
+            return gpuUtilization;
         }
     }
 
+    // One entry per busy vCPU lane this tick; empty means the VM is idle.
+    private final List<LaneUtilization> lanes = new ArrayList<>();
+
     /**
-     * Checks if the workload is complete.
+     * Creates an IDLE snapshot (no busy lanes).
      */
-    public boolean isWorkloadComplete() {
-        return workloadProgress >= workloadLength;
+    public VMUtilization() {
     }
 
     /**
-     * Gets the remaining workload time in seconds.
+     * Records a busy vCPU lane running the given workload at the given utilization.
      */
-    public long getRemainingWorkloadTime() {
-        return Math.max(0, workloadLength - workloadProgress);
+    public void addLane(WorkloadType workloadType, double cpuUtilization, double gpuUtilization) {
+        lanes.add(new LaneUtilization(workloadType, cpuUtilization, gpuUtilization));
     }
 
     /**
-     * Resets the utilization to IDLE state.
+     * Clears all lanes; the VM is idle this tick.
      */
     public void resetToIdle() {
-        this.workloadLength = 0;
-        this.workloadProgress = 0;
-        this.activeWorkloadType = WorkloadType.IDLE;
-        this.cpuUtilization = 0.0;
-        this.gpuUtilization = 0.0;
-        this.powerDrawWatts = 0.0;
+        lanes.clear();
     }
 
-    // Getters and Setters
-
-    public long getWorkloadLength() {
-        return workloadLength;
+    /**
+     * Per-lane utilizations for the current tick (one entry per concurrently
+     * running task). Empty when the VM is idle.
+     */
+    public List<LaneUtilization> getLanes() {
+        return lanes;
     }
 
-    public void setWorkloadLength(long workloadLength) {
-        this.workloadLength = workloadLength;
+    /**
+     * Whether the VM has no busy lanes this tick.
+     */
+    public boolean isIdle() {
+        return lanes.isEmpty();
     }
 
-    public long getWorkloadProgress() {
-        return workloadProgress;
+    /**
+     * Number of busy vCPU lanes this tick (tasks running concurrently).
+     */
+    public int getActiveLaneCount() {
+        return lanes.size();
     }
 
-    public void setWorkloadProgress(long workloadProgress) {
-        this.workloadProgress = workloadProgress;
-    }
+    // ---- Aggregate accessors (legacy utilization-based power path + reporting) ----
 
+    /**
+     * Representative workload for the VM: the workload on the first busy lane, or
+     * IDLE when the VM has no busy lanes. With the per-vCPU scheduler a VM may run
+     * several workloads at once; use {@link #getLanes()} for the full breakdown.
+     */
     public WorkloadType getActiveWorkloadType() {
-        return activeWorkloadType;
+        return lanes.isEmpty() ? WorkloadType.IDLE : lanes.get(0).workloadType;
     }
 
-    public void setActiveWorkloadType(WorkloadType activeWorkloadType) {
-        this.activeWorkloadType = activeWorkloadType;
-    }
-
+    /**
+     * Aggregate CPU utilization across all busy lanes, capped at 1.0 (a VM cannot
+     * exceed 100% CPU). For the legacy utilization-based power path and reporting.
+     */
     public double getCpuUtilization() {
-        return cpuUtilization;
+        double sum = 0.0;
+        for (LaneUtilization lane : lanes) {
+            sum += lane.cpuUtilization;
+        }
+        return Math.min(1.0, sum);
     }
 
-    public void setCpuUtilization(double cpuUtilization) {
-        this.cpuUtilization = cpuUtilization;
-    }
-
+    /**
+     * Aggregate GPU utilization across all busy lanes, capped at 1.0.
+     */
     public double getGpuUtilization() {
-        return gpuUtilization;
-    }
-
-    public void setGpuUtilization(double gpuUtilization) {
-        this.gpuUtilization = gpuUtilization;
-    }
-
-    public double getPowerDrawWatts() {
-        return powerDrawWatts;
-    }
-
-    public void setPowerDrawWatts(double powerDrawWatts) {
-        this.powerDrawWatts = powerDrawWatts;
+        double sum = 0.0;
+        for (LaneUtilization lane : lanes) {
+            sum += lane.gpuUtilization;
+        }
+        return Math.min(1.0, sum);
     }
 
     @Override
     public String toString() {
         return "VMUtilization{" +
-                "workloadLength=" + workloadLength +
-                ", workloadProgress=" + workloadProgress +
-                ", activeWorkloadType=" + activeWorkloadType +
-                ", cpuUtilization=" + cpuUtilization +
-                ", gpuUtilization=" + gpuUtilization +
-                ", powerDrawWatts=" + powerDrawWatts +
+                "lanes=" + lanes.size() +
+                ", workload=" + getActiveWorkloadType() +
+                ", cpuUtilization=" + getCpuUtilization() +
+                ", gpuUtilization=" + getGpuUtilization() +
                 '}';
     }
 }

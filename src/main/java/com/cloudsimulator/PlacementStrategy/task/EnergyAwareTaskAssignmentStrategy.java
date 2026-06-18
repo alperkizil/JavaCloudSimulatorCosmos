@@ -18,25 +18,28 @@ import java.util.HashSet;
  * Energy-aware task assignment: per-task greedy minimisation of marginal energy cost.
  *
  * For each task, pick the VM v that minimises the incremental energy introduced
- * by adding the task to v:
+ * by adding the task to v under the per-vCPU FIFO scheduler:
  *
- *   execTicks   = ceil(task.instructions / v.totalIPS)
+ *   execTicks   = ceil(task.instructions / v.effectiveIpsPerVcpu)   // one lane
  *   execEnergy  = incrementalPower(task.workloadType, v) * execTicks
- *   newFinish   = queueTicks(v) + execTicks
+ *   newFinish   = max(v.busiestLane, v.leastLoadedLane + execTicks) // task joins a lane
  *   idleDelta   = max(0, newFinish - currentGlobalMakespan) * activeHostCount * idleHostPower
  *   ΔEnergy     = execEnergy + idleDelta
  *
  * The two terms capture the two drivers of energy in the simulator's
  * EnergyObjective (see EnergyObjective.evaluate):
  *   1. Task execution energy — workload-specific incremental power × run time.
- *      Under speed-based scaling (POWER_SCALING_EXPONENT = 2.0) this term
- *      tends to prefer slower, more power-efficient VMs.
+ *      Run time is the single-lane time (per-vCPU IPS); speed-based scaling
+ *      (POWER_SCALING_EXPONENT = 2.0) uses the same per-core speed, so faster
+ *      cores cost quadratically more power.
  *   2. Host-idle energy — extending the global makespan multiplies the idle
- *      cost across every active host. This term keeps the heuristic from
- *      piling work onto slow VMs once doing so would push out the makespan.
+ *      cost across every active host. A task that joins a free lane on a VM does
+ *      not extend that VM's completion, so consolidating onto wide VMs is cheap.
  *
- * Mirrors WorkloadAwareTaskAssignmentStrategy in structure: O(m·k) per task,
- * greedy, online, respects user ownership and compute-type compatibility.
+ * Greedy, online, O(m·lanes) per task; respects user ownership and compute-type
+ * compatibility. The speed-scaling reference is the median effective per-vCPU
+ * (per-core) IPS of the fleet, keeping power estimates dimensionally consistent
+ * with the host power model and EnergyObjective.
  */
 public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy {
 
@@ -46,7 +49,8 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
     private double idleHostPower;
     private int activeHostCount = 1;
     private long globalMakespanTicks = 0;
-    private Map<VM, Long> completionTicksByVm = new IdentityHashMap<>();
+    // Per-VM vCPU lane loads (ticks), mirroring the per-vCPU FIFO scheduler.
+    private Map<VM, long[]> laneLoadsByVm = new IdentityHashMap<>();
     private boolean contextInitialized = false;
 
     @Override
@@ -60,13 +64,7 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
                 continue;
             }
 
-            long vmIps = chosen.getTotalRequestedIps();
-            long execTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
-            long newFinish = completionTicksByVm.get(chosen) + execTicks;
-            completionTicksByVm.put(chosen, newFinish);
-            if (newFinish > globalMakespanTicks) {
-                globalMakespanTicks = newFinish;
-            }
+            placeOnLane(chosen, task);
 
             task.assignToVM(chosen.getId(), currentTime);
             chosen.assignTask(task);
@@ -90,19 +88,13 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
 
         VM best = pickBestVm(task, candidateVMs);
         if (best != null) {
-            long vmIps = best.getTotalRequestedIps();
-            long execTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
-            long newFinish = completionTicksByVm.getOrDefault(best, 0L) + execTicks;
-            completionTicksByVm.put(best, newFinish);
-            if (newFinish > globalMakespanTicks) {
-                globalMakespanTicks = newFinish;
-            }
+            placeOnLane(best, task);
         }
         return Optional.ofNullable(best);
     }
 
     private void initializeContext(List<VM> vms) {
-        powerModel.calculateReferenceIpsFromVMs(vms);
+        powerModel.setReferenceVmIps(perCoreReferenceIps(vms));
         idleHostPower = powerModel.getScaledIdlePower();
 
         Set<Long> hostIds = new HashSet<>();
@@ -113,22 +105,40 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
         }
         activeHostCount = Math.max(1, hostIds.size());
 
-        completionTicksByVm = new IdentityHashMap<>();
+        laneLoadsByVm = new IdentityHashMap<>();
         globalMakespanTicks = 0;
         for (VM vm : vms) {
-            long vmIps = vm.getTotalRequestedIps();
-            long ticks = 0;
-            if (vmIps > 0) {
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            long[] lanes = new long[Math.max(1, vm.getRequestedVcpuCount())];
+            if (effIps > 0) {
                 for (Task queued : vm.getAssignedTasks()) {
-                    ticks += (queued.getRemainingInstructions() + vmIps - 1) / vmIps;
+                    long ticks = (queued.getRemainingInstructions() + effIps - 1) / effIps;
+                    lanes[leastLoadedLane(lanes)] += ticks;
                 }
             }
-            completionTicksByVm.put(vm, ticks);
-            if (ticks > globalMakespanTicks) {
-                globalMakespanTicks = ticks;
+            laneLoadsByVm.put(vm, lanes);
+            long vmMax = maxLoad(lanes);
+            if (vmMax > globalMakespanTicks) {
+                globalMakespanTicks = vmMax;
             }
         }
         contextInitialized = true;
+    }
+
+    /** Commits the task to the chosen VM's least-loaded lane and updates makespan. */
+    private void placeOnLane(VM vm, Task task) {
+        long effIps = vm.getEffectiveIpsPerVcpu();
+        if (effIps <= 0) {
+            return;
+        }
+        long execTicks = (task.getInstructionLength() + effIps - 1) / effIps;
+        long[] lanes = laneLoadsByVm.computeIfAbsent(vm,
+            v -> new long[Math.max(1, v.getRequestedVcpuCount())]);
+        lanes[leastLoadedLane(lanes)] += execTicks;
+        long vmMax = maxLoad(lanes);
+        if (vmMax > globalMakespanTicks) {
+            globalMakespanTicks = vmMax;
+        }
     }
 
     private VM pickBestVm(Task task, List<VM> candidates) {
@@ -142,19 +152,22 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
             if (!vm.canAcceptTask(task)) {
                 continue;
             }
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps <= 0) {
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps <= 0) {
                 continue;
             }
 
-            long execTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
+            long execTicks = (task.getInstructionLength() + effIps - 1) / effIps;
             double[] util = getUtilizationProfile(task.getWorkloadType());
             double incrPower = powerModel.calculateIncrementalPowerWithSpeedScaling(
-                    task.getWorkloadType(), util[0], util[1], vmIps);
+                    task.getWorkloadType(), util[0], util[1], effIps);
 
             double execEnergyJoules = incrPower * execTicks;
-            long currentTicks = completionTicksByVm.getOrDefault(vm, 0L);
-            long newFinish = currentTicks + execTicks;
+
+            long[] lanes = laneLoadsByVm.get(vm);
+            long laneFinish = (lanes == null ? 0L : lanes[leastLoadedLane(lanes)]) + execTicks;
+            long vmCurrentMax = (lanes == null ? 0L : maxLoad(lanes));
+            long newFinish = Math.max(vmCurrentMax, laneFinish);
             long extension = Math.max(0L, newFinish - globalMakespanTicks);
             double idleEnergyJoules = (double) extension * activeHostCount * idleHostPower;
 
@@ -165,6 +178,40 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
             }
         }
         return best;
+    }
+
+    /** Median effective per-vCPU (per-core) IPS of the fleet, for power scaling. */
+    private long perCoreReferenceIps(List<VM> vms) {
+        long[] vals = vms.stream()
+                .mapToLong(VM::getEffectiveIpsPerVcpu)
+                .filter(v -> v > 0)
+                .sorted()
+                .toArray();
+        if (vals.length == 0) {
+            return MeasurementBasedPowerModel.DEFAULT_REFERENCE_IPS;
+        }
+        int mid = vals.length / 2;
+        return (vals.length % 2 == 0) ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+    }
+
+    private static int leastLoadedLane(long[] lanes) {
+        int idx = 0;
+        for (int i = 1; i < lanes.length; i++) {
+            if (lanes[i] < lanes[idx]) {
+                idx = i;
+            }
+        }
+        return idx;
+    }
+
+    private static long maxLoad(long[] lanes) {
+        long max = 0L;
+        for (long load : lanes) {
+            if (load > max) {
+                max = load;
+            }
+        }
+        return max;
     }
 
     private double[] getUtilizationProfile(WorkloadType workloadType) {
@@ -199,6 +246,7 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
     @Override
     public String getDescription() {
         return "Assigns each task to minimise marginal energy: workload-aware "
-             + "execution energy plus idle-power cost from any makespan extension.";
+             + "execution energy plus idle-power cost from any makespan extension, "
+             + "using the per-vCPU FIFO scheduler.";
     }
 }

@@ -53,24 +53,18 @@ public class MakespanObjective implements SchedulingObjective {
                 continue;
             }
 
-            long vmIps = vm.getTotalRequestedIps();
+            long effIps = vm.getEffectiveIpsPerVcpu();
 
-            if (vmIps == 0) {
+            if (effIps == 0) {
                 // VM has no processing power - assign very high penalty
                 return Double.MAX_VALUE / 2;
             }
 
-            // Calculate total ticks for this VM using ceiling division
-            // This models the discrete 1-second time steps in simulation
-            long vmCompletionTicks = 0;
-            for (int taskIdx : taskOrder) {
-                Task task = tasks.get(taskIdx);
-                long instrLen = task.getInstructionLength();
-                // Ceiling division: ceil(instructionLength / vmIps)
-                // When a task finishes mid-tick, remaining IPS is wasted
-                long ticksForTask = (instrLen + vmIps - 1) / vmIps;
-                vmCompletionTicks += ticksForTask;
-            }
+            // Distribute the VM's tasks across its vCPU lanes (per-vCPU FIFO
+            // scheduler); the VM's completion time is the busiest lane's load.
+            long vmCompletionTicks = LaneSchedule
+                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount())
+                .getCompletionTicks();
 
             if (vmCompletionTicks > maxCompletionTicks) {
                 maxCompletionTicks = vmCompletionTicks;

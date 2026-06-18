@@ -63,19 +63,15 @@ public class LoadBalanceObjective implements SchedulingObjective {
                 continue; // VM has no tasks — not active
             }
 
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps == 0) {
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps == 0) {
                 continue; // Invalid VM
             }
 
-            long vmCompletionTicks = 0;
-            for (int taskIdx : taskOrder) {
-                Task task = tasks.get(taskIdx);
-                long instrLen = task.getInstructionLength();
-                // Ceiling division: matches discrete 1-second simulation ticks
-                long ticksForTask = (instrLen + vmIps - 1) / vmIps;
-                vmCompletionTicks += ticksForTask;
-            }
+            // VM completion time = busiest vCPU lane under the per-vCPU FIFO scheduler.
+            long vmCompletionTicks = LaneSchedule
+                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount())
+                .getCompletionTicks();
 
             completionTimes[vmIdx] = vmCompletionTicks;
             sumCompletionTimes += vmCompletionTicks;
