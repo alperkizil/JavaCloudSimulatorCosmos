@@ -64,23 +64,16 @@ public class WaitingTimeObjective implements SchedulingObjective {
                 continue;
             }
 
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps == 0) {
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps == 0) {
                 continue; // Invalid VM
             }
 
-            // Process tasks in execution order on this VM
-            long currentTime = 0;
-            for (int taskIdx : taskOrder) {
-                Task task = tasks.get(taskIdx);
-
-                // This task waits until all prior tasks on this VM finish
-                totalWaitingTime += currentTime;
-
-                // Calculate execution ticks using ceiling division
-                long instrLen = task.getInstructionLength();
-                long ticksForTask = (instrLen + vmIps - 1) / vmIps;
-                currentTime += ticksForTask;
+            // Each task waits until its vCPU lane is free; under the per-vCPU FIFO
+            // scheduler that is the lane's load when the task is dispatched.
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            for (int pos = 0; pos < sched.size(); pos++) {
+                totalWaitingTime += sched.getStartTick(pos);
             }
         }
 

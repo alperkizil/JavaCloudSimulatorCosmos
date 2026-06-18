@@ -119,26 +119,26 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
             if (taskOrder.isEmpty()) continue;
 
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps <= 0) continue;
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps <= 0) continue;
 
-            long cursor = 0L;
-            for (int taskIdx : taskOrder) {
-                Task task = tasks.get(taskIdx);
-                long executionTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
+            // Per-vCPU FIFO scheduler: each task runs on a lane from its start tick
+            // (its lane's load when dispatched) for its tick cost.
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            for (int pos = 0; pos < taskOrder.size(); pos++) {
+                Task task = tasks.get(taskOrder.get(pos));
+                long executionTicks = sched.getTaskTicks(pos);
                 if (executionTicks <= 0) continue;
 
                 double incPower = incrementalPowerForWorkloadOnVM(task.getWorkloadType(), vm);
 
-                double start = (double) cursor;
-                double end   = (double) (cursor + executionTicks);
+                double start = (double) sched.getStartTick(pos);
+                double end   = start + executionTicks;
 
                 events.add(new double[]{ start, +incPower });
                 events.add(new double[]{ end,   -incPower });
-
-                cursor += executionTicks;
             }
-            if (cursor > makespan) makespan = cursor;
+            if (sched.getCompletionTicks() > makespan) makespan = sched.getCompletionTicks();
         }
 
         lastMakespanTicks = makespan;
@@ -210,7 +210,7 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
             double[] util = utilizationProfile(workloadType, powerModel);
             if (isUsingSpeedBasedScaling()) {
                 return powerModel.calculateIncrementalPowerWithSpeedScaling(
-                    workloadType, util[0], util[1], vm.getTotalRequestedIps());
+                    workloadType, util[0], util[1], vm.getEffectiveIpsPerVcpu());
             }
             return powerModel.calculateIncrementalPower(workloadType, util[0], util[1]);
         }

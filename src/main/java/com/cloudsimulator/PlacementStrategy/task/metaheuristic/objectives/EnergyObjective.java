@@ -150,24 +150,27 @@ public class EnergyObjective implements SchedulingObjective {
             }
 
             activeVmCount++;
-            long vmIps = vm.getTotalRequestedIps();
-            if (vmIps == 0) {
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            if (effIps == 0) {
                 continue; // Invalid VM
             }
 
-            // Calculate incremental energy for each task on this VM
-            for (int taskIdx : taskOrder) {
-                Task task = tasks.get(taskIdx);
+            // Distribute this VM's tasks across its vCPU lanes (per-vCPU FIFO
+            // scheduler). The VM completion time is the busiest lane's load; the
+            // per-task tick costs drive the incremental-energy integral.
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            vmCompletionTicks[vmIdx] = sched.getCompletionTicks();
 
-                // Calculate execution ticks using ceiling division
-                // This models the discrete 1-second time steps in simulation
-                long executionTicks = (task.getInstructionLength() + vmIps - 1) / vmIps;
-                vmCompletionTicks[vmIdx] += executionTicks;
+            for (int pos = 0; pos < taskOrder.size(); pos++) {
+                Task task = tasks.get(taskOrder.get(pos));
+                long executionTicks = sched.getTaskTicks(pos);
 
                 // Calculate INCREMENTAL power (above idle) for this workload
                 double incrementalPower = calculateIncrementalPowerForWorkload(task.getWorkloadType(), vm);
 
-                // Incremental Energy (Joules) = Incremental Power (Watts) × Time (seconds)
+                // Incremental Energy (Joules) = Incremental Power (Watts) × Time (seconds).
+                // The per-task sum is independent of lane parallelism; only the
+                // makespan term below shrinks as lanes overlap.
                 incrementalEnergyJoules += incrementalPower * executionTicks;
             }
 
@@ -237,7 +240,7 @@ public class EnergyObjective implements SchedulingObjective {
                         workloadType,
                         utilization[0],
                         utilization[1],
-                        vm.getTotalRequestedIps()
+                        vm.getEffectiveIpsPerVcpu()
                 );
             } else {
                 // Original behavior: no speed scaling
