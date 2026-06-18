@@ -376,38 +376,30 @@ public class Host {
         double cpuIncrementalPower = 0.0;
         double gpuIncrementalPower = 0.0;
 
-        // Calculate incremental power for each VM based on its workload
+        // Calculate incremental power per VM by summing over its busy vCPU lanes.
+        // Each lane runs one task at the host-clamped effective per-vCPU IPS, so a
+        // VM running several workloads at once draws the sum of its lane powers.
+        // Speed scaling uses the per-vCPU (per-core) speed against the per-core
+        // reference, keeping the scaling factor dimensionally consistent. A VM with
+        // no busy lanes (idle) contributes no incremental power.
         for (VM vm : assignedVMs) {
-            // Get workload type and utilization from VMUtilization object
-            // This correctly reflects the workload even after task completion
-            // (vm.getCurrentWorkloadType() would return IDLE after task completes)
-            WorkloadType workloadType = WorkloadType.IDLE;
-            double cpuUtil = 0.0;
-            double gpuUtil = 0.0;
+            long effIps = vm.getEffectiveIpsPerVcpu();
 
-            if (vm.getCurrentUtilization() != null) {
-                workloadType = vm.getCurrentUtilization().getActiveWorkloadType();
-                cpuUtil = vm.getCurrentUtilization().getCpuUtilization();
-                gpuUtil = vm.getCurrentUtilization().getGpuUtilization();
-            }
+            for (VMUtilization.LaneUtilization lane : vm.getActiveLaneUtilizations()) {
+                // Incremental power for this lane's workload (with speed-based scaling)
+                double lanePower = measurementBasedPowerModel.calculateIncrementalPowerWithSpeedScaling(
+                    lane.getWorkloadType(), lane.getCpuUtilization(), lane.getGpuUtilization(), effIps);
 
-            // Get incremental power for this workload (with speed-based scaling)
-            double vmIncrementalPower = measurementBasedPowerModel.calculateIncrementalPowerWithSpeedScaling(
-                workloadType, cpuUtil, gpuUtil, vm.getTotalRequestedIps());
+                totalIncrementalPower += lanePower;
 
-            totalIncrementalPower += vmIncrementalPower;
-
-            // Classify power as CPU or GPU based on workload profile
-            EmpiricalWorkloadProfile profile = measurementBasedPowerModel.getWorkloadProfile(workloadType);
-            if (profile != null) {
-                if (profile.isGpuIntensive()) {
-                    gpuIncrementalPower += vmIncrementalPower;
+                // Classify power as CPU or GPU based on the lane's workload profile
+                EmpiricalWorkloadProfile profile = measurementBasedPowerModel.getWorkloadProfile(lane.getWorkloadType());
+                if (profile != null && profile.isGpuIntensive()) {
+                    gpuIncrementalPower += lanePower;
                 } else {
-                    cpuIncrementalPower += vmIncrementalPower;
+                    // Fallback / CPU workloads
+                    cpuIncrementalPower += lanePower;
                 }
-            } else {
-                // Fallback: assume CPU workload
-                cpuIncrementalPower += vmIncrementalPower;
             }
         }
 
