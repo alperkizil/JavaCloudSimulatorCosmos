@@ -45,6 +45,16 @@ public class MeasurementBasedPowerModel {
     // 1.0 = linear, 1.5 = super-linear (realistic for CPUs), 2.0 = quadratic
     public static final double POWER_SCALING_EXPONENT = 2.0;
 
+    // Reference full-load incremental power per component (Watts; wall/AC, average
+    // delta above idle), used to attribute a workload's single lumped incremental
+    // power between CPU and GPU in proportion to (typical utilization x component
+    // full-load power). Taken straight from the empirical table: CPU = CINEBENCH
+    // (strongest sustained ~100% CPU benchmark); GPU = FURMARK (GPU-stress case).
+    // Only their RATIO (~2.63) affects the split, so the choice of a common unit
+    // (wall vs PSU-corrected DC) is irrelevant — it cancels.
+    public static final double CPU_FULL_LOAD_WATTS = 133.76;
+    public static final double GPU_FULL_LOAD_WATTS = 352.18;
+
     // Default reference IPS (used if not calculated from hosts)
     public static final long DEFAULT_REFERENCE_IPS = 3_000_000_000L;  // 3 billion IPS
 
@@ -278,23 +288,31 @@ public class MeasurementBasedPowerModel {
     }
 
     /**
-     * Calculates power using the linear scaling method.
-     * Power scales linearly with the maximum utilization component.
+     * Splits a lane's incremental power between CPU and GPU in proportion to each
+     * component's expected draw (typical utilization x component full-load power).
+     * The two parts always sum to {@code lanePower}, so the host total power is
+     * unchanged; this only refines the CPU/GPU attribution (replacing the old
+     * winner-take-all boolean that dumped a workload's whole lumped wattage into a
+     * single bucket and mislabeled mixed GPU workloads as CPU).
      *
-     * @param workloadType The type of workload being executed
-     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
-     * @return Total power consumption in Watts
+     * A pure-CPU or pure-GPU workload collapses to 100% of that component; a
+     * profile with no utilization (IDLE) or an unknown workload is attributed
+     * entirely to CPU by convention (lanePower is typically 0 in that case).
+     *
+     * @param workloadType the workload running on the lane
+     * @param lanePower    the lane's (speed-scaled) incremental power in Watts
+     * @return {@code [cpuPower, gpuPower]} in Watts, summing to {@code lanePower}
      */
-    public double calculateTotalPowerLinear(WorkloadType workloadType, double cpuUtilization, double gpuUtilization) {
+    public double[] splitIncrementalPower(WorkloadType workloadType, double lanePower) {
         EmpiricalWorkloadProfile profile = workloadProfiles.get(workloadType);
-
         if (profile == null) {
-            return (baseIdlePowerWatts + calculateFallbackPower(cpuUtilization, gpuUtilization)) * hardwareScaleFactor;
+            return new double[]{ lanePower, 0.0 };
         }
-
-        double incrementalPower = profile.calculateIncrementalPowerLinear(cpuUtilization, gpuUtilization);
-        return (baseIdlePowerWatts + incrementalPower) * hardwareScaleFactor;
+        double cpuWeight = profile.getTypicalCpuUtilization() * CPU_FULL_LOAD_WATTS;
+        double gpuWeight = profile.getTypicalGpuUtilization() * GPU_FULL_LOAD_WATTS;
+        double total = cpuWeight + gpuWeight;
+        double cpuFraction = total > 0 ? cpuWeight / total : 1.0;
+        return new double[]{ lanePower * cpuFraction, lanePower * (1.0 - cpuFraction) };
     }
 
     /**

@@ -485,14 +485,15 @@ public class Host {
 
                 totalIncrementalPower += lanePower;
 
-                // Classify power as CPU or GPU based on the lane's workload profile
-                EmpiricalWorkloadProfile profile = measurementBasedPowerModel.getWorkloadProfile(lane.getWorkloadType());
-                if (profile != null && profile.isGpuIntensive()) {
-                    gpuIncrementalPower += lanePower;
-                } else {
-                    // Fallback / CPU workloads
-                    cpuIncrementalPower += lanePower;
-                }
+                // Attribute this lane's power to CPU vs GPU by util-weighted split
+                // (typical utilization x component full-load power). The two parts
+                // always sum to lanePower, so the host total is unchanged; this just
+                // gives a meaningful breakdown instead of the old all-or-nothing
+                // bucket that mislabeled mixed GPU workloads as CPU.
+                double[] split = measurementBasedPowerModel.splitIncrementalPower(
+                    lane.getWorkloadType(), lanePower);
+                cpuIncrementalPower += split[0];
+                gpuIncrementalPower += split[1];
             }
         }
 
