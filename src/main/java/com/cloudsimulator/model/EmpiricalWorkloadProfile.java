@@ -73,35 +73,22 @@ public class EmpiricalWorkloadProfile {
     }
 
     /**
-     * Calculates power draw at a given utilization level.
-     * Scales the incremental power based on the utilization ratio compared to typical.
+     * Returns this workload's incremental power above idle, in Watts.
      *
-     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
-     * @return Incremental power in Watts (above idle baseline)
+     * The value is the empirically measured wall-plug delta at the workload's
+     * typical utilization. The simulator always drives a workload at that fixed
+     * typical utilization (see {@code VM.calculateUtilization}), so the result is
+     * independent of the supplied utilization arguments — they are retained only
+     * for the caller API. (The previous ratio/dominant-axis/clamp scaling reduced
+     * to x1.0 for every actual call and has been removed; a future
+     * variable-utilization or contention model would reintroduce scaling here.)
+     *
+     * @param cpuUtilization current CPU utilization (currently unused)
+     * @param gpuUtilization current GPU utilization (currently unused)
+     * @return incremental power in Watts (above idle baseline)
      */
     public double calculateIncrementalPower(double cpuUtilization, double gpuUtilization) {
-        // Calculate utilization ratio compared to typical measurement conditions
-        double cpuRatio = typicalCpuUtilization > 0 ? cpuUtilization / typicalCpuUtilization : 0.0;
-        double gpuRatio = typicalGpuUtilization > 0 ? gpuUtilization / typicalGpuUtilization : 0.0;
-
-        // Determine the dominant component based on workload type
-        double utilizationRatio;
-        if (typicalGpuUtilization > typicalCpuUtilization) {
-            // GPU-dominant workload
-            utilizationRatio = gpuRatio;
-        } else if (typicalCpuUtilization > 0) {
-            // CPU-dominant workload
-            utilizationRatio = cpuRatio;
-        } else {
-            // IDLE workload
-            utilizationRatio = 0.0;
-        }
-
-        // Clamp ratio to reasonable bounds (0.0 to 1.5 for overutilization)
-        utilizationRatio = Math.max(0.0, Math.min(1.5, utilizationRatio));
-
-        return incrementalPowerWatts * utilizationRatio;
+        return incrementalPowerWatts;
     }
 
     // Getters
