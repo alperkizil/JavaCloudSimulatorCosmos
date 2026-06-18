@@ -60,9 +60,12 @@ public class VM {
     // GPU binding: ids of the specific physical GPUs the host bound to this VM
     private List<Long> boundGpuIds;
 
-    // Task execution tracking
-    private Task currentExecutingTask;
-    private long currentTaskProgress;
+    // Per-vCPU FIFO scheduler state. Each vCPU is an execution lane that runs one
+    // task at a time at the effective per-vCPU IPS. The VM's FIFO task queue
+    // (assignedTasks) feeds the lanes: each tick, every free vCPU pulls the next
+    // task from the head of the queue, so a VM runs up to requestedVcpuCount tasks
+    // concurrently (single-threaded tasks, one task per vCPU lane).
+    private final List<Task> runningTasks = new ArrayList<>();   // tasks occupying a vCPU lane (size <= requestedVcpuCount)
 
     /**
      * Constructor with custom specifications.
@@ -104,8 +107,6 @@ public class VM {
         // Initialize host assignment and task execution
         this.assignedHostId = null;
         this.boundGpuIds = new ArrayList<>();
-        this.currentExecutingTask = null;
-        this.currentTaskProgress = 0;
     }
 
     /**
@@ -278,58 +279,91 @@ public class VM {
     }
 
     /**
-     * Executes tasks for one simulation second.
+     * Executes one simulation second under the per-vCPU FIFO scheduler.
+     *
+     * Each vCPU is an execution lane that runs a single task at the effective
+     * per-vCPU IPS ({@link #getEffectiveIpsPerVcpu()}). The VM's FIFO task queue
+     * feeds the lanes: any lane free at the start of the tick pulls the next
+     * queued task. A lane that finishes a task mid-tick is only refilled on the
+     * next tick, so the remainder of the finishing second is wasted — matching the
+     * discrete ceiling-division timing the scheduling objectives assume.
      */
     public void executeOneSecond(long currentTime) {
         if (vmState != VmState.RUNNING) {
             return;
         }
 
-        // Get or start next task
-        if (currentExecutingTask == null && !assignedTasks.isEmpty()) {
-            currentExecutingTask = assignedTasks.peek();
-            currentExecutingTask.startExecution(currentTime);
-            currentTaskProgress = 0;
+        // Refill any vCPU lanes that are free at the start of this tick.
+        fillLanes(currentTime);
+
+        // Rebuild this tick's per-lane utilization snapshot from scratch.
+        currentUtilization.resetToIdle();
+
+        if (runningTasks.isEmpty()) {
+            // No tasks to run: the VM is idle this tick.
+            return;
         }
 
-        if (currentExecutingTask != null) {
-            // Calculate IPS available for this task
-            long availableIps = getTotalRequestedIps();
+        long effIps = getEffectiveIpsPerVcpu();
+        List<Task> completed = null;
 
-            // Execute instructions
-            currentTaskProgress += availableIps;
-            currentExecutingTask.executeInstructions(availableIps);
+        // Advance every busy vCPU lane by one second of work (one core's worth).
+        for (Task task : runningTasks) {
+            task.executeInstructions(effIps);
 
-            // Calculate utilization based on workload type
-            double[] utilization = calculateUtilization(currentExecutingTask.getWorkloadType());
+            double[] utilization = calculateUtilization(task.getWorkloadType());
             double cpuUtil = utilization[0];
             double gpuUtil = utilization[1];
 
-            // Update current utilization
-            currentUtilization.setActiveWorkloadType(currentExecutingTask.getWorkloadType());
-            currentUtilization.setCpuUtilization(cpuUtil);
-            currentUtilization.setGpuUtilization(gpuUtil);
-            currentUtilization.incrementProgress();
+            // Record this lane in the current-tick utilization (consumed by the
+            // workload-aware host power model, which sums power across lanes).
+            currentUtilization.addLane(task.getWorkloadType(), cpuUtil, gpuUtil);
 
-            // Record utilization
-            double powerDraw = calculatePowerDraw(cpuUtil, gpuUtil);
-            recordUtilization(currentTime, currentExecutingTask.getId(),
-                             currentExecutingTask.getWorkloadType(),
-                             cpuUtil, gpuUtil, powerDraw);
+            // Per-lane utilization history record (VM-level bookkeeping).
+            double powerDraw = calculatePowerDraw(task.getWorkloadType(), cpuUtil, gpuUtil);
+            recordUtilization(currentTime, task.getId(), task.getWorkloadType(),
+                              cpuUtil, gpuUtil, powerDraw);
 
-            // Check if task is complete
-            if (currentTaskProgress >= currentExecutingTask.getInstructionLength()) {
-                currentExecutingTask.finishExecution(currentTime);
-                finishTask(currentExecutingTask);
-                currentExecutingTask = null;
-                currentTaskProgress = 0;
-                // NOTE: Don't reset utilization here! Keep it set so Host.updateState()
-                // can read the correct workload for this tick's energy calculation.
-                // Utilization will be reset on the next tick when we detect no current task.
+            // A task that reaches its instruction length finishes this tick; its
+            // lane is freed below and refilled on the next tick.
+            if (task.isComplete()) {
+                task.finishExecution(currentTime);
+                if (completed == null) {
+                    completed = new ArrayList<>();
+                }
+                completed.add(task);
             }
-        } else {
-            // VM is idle - reset utilization now (this is the start of an idle period)
-            currentUtilization.resetToIdle();
+        }
+
+        // Retire completed tasks, freeing their lanes. Done after the loop so the
+        // current-tick utilization above still reflects every lane that ran this
+        // second (Host.updateState reads it after executeOneSecond).
+        if (completed != null) {
+            for (Task task : completed) {
+                finishTask(task);
+                runningTasks.remove(task);
+            }
+        }
+    }
+
+    /**
+     * Fills idle vCPU lanes from the head of the FIFO task queue, up to
+     * requestedVcpuCount concurrent tasks. Tasks already occupying a lane are
+     * skipped; the next not-yet-started queued tasks are started in FIFO order.
+     */
+    private void fillLanes(long currentTime) {
+        if (runningTasks.size() >= requestedVcpuCount) {
+            return;
+        }
+        for (Task task : assignedTasks) {
+            if (runningTasks.size() >= requestedVcpuCount) {
+                break;
+            }
+            if (runningTasks.contains(task)) {
+                continue; // already running on a lane
+            }
+            task.startExecution(currentTime);
+            runningTasks.add(task);
         }
     }
 
@@ -370,13 +404,13 @@ public class VM {
     private MeasurementBasedPowerModel measurementBasedPowerModel;
 
     /**
-     * Calculate power draw based on utilization.
-     * If a MeasurementBasedPowerModel is set, uses workload-aware calculation.
-     * Otherwise, uses the simplified utilization-based calculation.
+     * Calculates the incremental power draw for a single vCPU lane running the
+     * given workload. Uses the workload-aware empirical model when set, otherwise
+     * the simplified utilization-based model.
      */
-    private double calculatePowerDraw(double cpuUtil, double gpuUtil) {
-        if (measurementBasedPowerModel != null && currentExecutingTask != null) {
-            return calculatePowerDrawMeasurementBased(cpuUtil, gpuUtil);
+    private double calculatePowerDraw(WorkloadType workloadType, double cpuUtil, double gpuUtil) {
+        if (measurementBasedPowerModel != null) {
+            return measurementBasedPowerModel.calculateIncrementalPower(workloadType, cpuUtil, gpuUtil);
         }
         return calculatePowerDrawSimplified(cpuUtil, gpuUtil);
     }
@@ -389,15 +423,6 @@ public class VM {
         double cpuPower = cpuUtil * requestedVcpuCount * 30.0;
         double gpuPower = gpuUtil * requestedGpuCount * 200.0;
         return basePower + cpuPower + gpuPower;
-    }
-
-    /**
-     * Workload-aware power calculation using empirical measurements.
-     * Returns only the VM's incremental power (not including host idle power).
-     */
-    private double calculatePowerDrawMeasurementBased(double cpuUtil, double gpuUtil) {
-        WorkloadType workloadType = getCurrentWorkloadType();
-        return measurementBasedPowerModel.calculateIncrementalPower(workloadType, cpuUtil, gpuUtil);
     }
 
     /**
@@ -452,25 +477,45 @@ public class VM {
     }
 
     /**
-     * Gets the workload type of the currently executing task.
-     * Returns IDLE if no task is currently executing.
+     * Gets the workload type on the first busy vCPU lane (a representative for the
+     * VM), or IDLE if no lane is busy. With the per-vCPU scheduler a VM may run
+     * several workloads at once; use {@link #getActiveLaneUtilizations()} for the
+     * full per-lane breakdown.
      *
-     * @return The current workload type
+     * @return The representative workload type
      */
     public WorkloadType getCurrentWorkloadType() {
-        if (currentExecutingTask != null) {
-            return currentExecutingTask.getWorkloadType();
+        if (!runningTasks.isEmpty()) {
+            return runningTasks.get(0).getWorkloadType();
         }
         return WorkloadType.IDLE;
     }
 
     /**
-     * Gets the currently executing task, if any.
+     * Gets the task on the first busy vCPU lane, or null if the VM is idle. With
+     * the per-vCPU scheduler a VM may run up to requestedVcpuCount tasks at once;
+     * this returns the head lane for callers expecting a single representative.
      *
-     * @return The current task, or null if idle
+     * @return The head-lane task, or null if idle
      */
     public Task getCurrentExecutingTask() {
-        return currentExecutingTask;
+        return runningTasks.isEmpty() ? null : runningTasks.get(0);
+    }
+
+    /**
+     * Number of vCPU lanes currently busy (tasks running concurrently this tick).
+     */
+    public int getRunningTaskCount() {
+        return runningTasks.size();
+    }
+
+    /**
+     * Per-busy-lane utilizations for the current tick (one entry per running
+     * task). Empty when the VM is idle. Consumed by the workload-aware host power
+     * model to sum power across concurrently running workloads.
+     */
+    public List<VMUtilization.LaneUtilization> getActiveLaneUtilizations() {
+        return currentUtilization.getLanes();
     }
 
     /**
@@ -705,8 +750,7 @@ public class VM {
         this.finishedTasks = new ArrayList<>();
 
         // Reset execution state
-        this.currentExecutingTask = null;
-        this.currentTaskProgress = 0;
+        this.runningTasks.clear();
 
         // Reset timing counters
         this.activeSeconds = 0;
