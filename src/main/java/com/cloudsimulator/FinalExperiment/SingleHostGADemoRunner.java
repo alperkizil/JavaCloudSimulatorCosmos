@@ -61,6 +61,7 @@ public class SingleHostGADemoRunner {
     private static final int  GPU_TASKS = 50;
     private static final String USER = "DemoUser";
     private static final String DC = "DC-Demo";
+    private static final long FOCUS_TICK = 2L; // dump the full power arithmetic for this one second (-1 = off)
 
     public static void main(String[] args) {
         RandomGenerator.initialize(SEED);
@@ -223,6 +224,7 @@ public class SingleHostGADemoRunner {
             tr.idleEnergyJ += host.getOtherComponentsPowerDraw(); // = base idle (75.79 W) while host has VMs
 
             // ---- print the tick ----
+            if (tick == FOCUS_TICK) dumpTickPower(tick, vms, host, pm);
             boolean verbose = (tick < 3);
             printTick(tick, vms, host, pm, verbose);
 
@@ -269,6 +271,58 @@ public class SingleHostGADemoRunner {
                 }
             }
         }
+    }
+
+    /**
+     * Re-derives, in full precision, the exact arithmetic that
+     * Host.updatePowerConsumptionWorkloadAware just performed for this tick, with a
+     * running incremental sum, the idle add, the host total, and the energy accrued
+     * this second. Verifies it matches the host's own currentTotalPowerDraw.
+     */
+    private static void dumpTickPower(long tick, List<VM> vms, Host host, MeasurementBasedPowerModel pm) {
+        System.out.println();
+        System.out.println("  ........................................................................");
+        System.out.printf("  FULL POWER ARITHMETIC FOR THE SECOND t=%d%n", tick);
+        System.out.println("  Host.updatePowerConsumptionWorkloadAware(): power = idle + Sum(lane incr)");
+        System.out.printf("  reference IPS = %.3fG   exponent = %.1f   idle = %.2f W%n",
+            pm.getReferenceVmIps() / 1e9, MeasurementBasedPowerModel.POWER_SCALING_EXPONENT, pm.getScaledIdlePower());
+        System.out.println("  ........................................................................");
+
+        double runningIncr = 0.0;
+        double runningCpu = 0.0;
+        double runningGpu = 0.0;
+        for (VM vm : vms) {
+            List<VMUtilization.LaneUtilization> lanes = vm.getActiveLaneUtilizations();
+            if (lanes.isEmpty()) continue;
+            long effIps = vm.getEffectiveIpsPerVcpu();
+            double factor = pm.calculateSpeedPowerFactor(effIps); // (effIps/ref)^2
+            System.out.printf("  VM%d  effIPS=%.3fG  speedFactor=(%.3f/%.3f)^2=%.6f%n",
+                vmIndex(vm, vms) + 1, effIps / 1e9, effIps / 1e9, pm.getReferenceVmIps() / 1e9, factor);
+            for (int i = 0; i < lanes.size(); i++) {
+                VMUtilization.LaneUtilization l = lanes.get(i);
+                double base = pm.calculateIncrementalPower(l.getWorkloadType(), l.getCpuUtilization(), l.getGpuUtilization());
+                double laneP = base * factor; // = calculateIncrementalPowerWithSpeedScaling(...)
+                runningIncr += laneP;
+                boolean gpu = pm.getWorkloadProfile(l.getWorkloadType()).isGpuIntensive();
+                if (gpu) runningGpu += laneP; else runningCpu += laneP;
+                System.out.printf("    lane%d %-9s base=%7.4f W x %.6f = %8.4f W   [%s]   running Sum incr=%9.4f W%n",
+                    i, l.getWorkloadType(), base, factor, laneP, gpu ? "gpu" : "cpu", runningIncr);
+            }
+        }
+
+        double idle = pm.getScaledIdlePower();
+        double total = idle + runningIncr;
+        System.out.println("  ------------------------------------------------------------------------");
+        System.out.printf("  Sum(lane incr) = %.4f W   (cpu %.4f + gpu %.4f)%n", runningIncr, runningCpu, runningGpu);
+        System.out.printf("  total power    = idle %.4f + Sum incr %.4f = %.4f W%n", idle, runningIncr, total);
+        System.out.printf("  host's own currentTotalPowerDraw = %.4f W   (match: %s)%n",
+            host.getCurrentTotalPowerDraw(), Math.abs(total - host.getCurrentTotalPowerDraw()) < 1e-6 ? "YES" : "NO");
+        double energyAfter = host.getTotalEnergyConsumed();
+        System.out.printf("  energy this second = %.4f W x 1 s = %.4f J%n", total, total);
+        System.out.printf("  host energy counter: %.4f J (before this tick) -> %.4f J (after)%n",
+            energyAfter - total, energyAfter);
+        System.out.println("  ........................................................................");
+        System.out.println();
     }
 
     private static String laneSummary(VM vm) {
