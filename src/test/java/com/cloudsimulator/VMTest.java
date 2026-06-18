@@ -511,9 +511,11 @@ public class VMTest {
                 passed = false;
                 errors.append("    - Current executing task should be task\n");
             }
-            if (task.getInstructionsExecuted() != vm.getTotalRequestedIps()) {
+            // Under the per-vCPU FIFO scheduler a single task runs on one lane,
+            // advancing by the effective per-vCPU IPS (not the VM's total IPS).
+            if (task.getInstructionsExecuted() != vm.getEffectiveIpsPerVcpu()) {
                 passed = false;
-                errors.append("    - Instructions executed should equal VM IPS\n");
+                errors.append("    - Instructions executed should equal one vCPU lane's IPS\n");
             }
             if (!task.isExecuting()) {
                 passed = false;
@@ -538,8 +540,9 @@ public class VMTest {
         try {
             VM vm = new VM("user1", 2_000_000_000L, 4, 0, 8192, 102400, 1000, ComputeType.CPU_ONLY);
             vm.setVmState(VmState.RUNNING);
-            // Task that will complete in one second (8B IPS * 1s = 8B instructions)
-            Task task = new Task("Task1", "user1", 8_000_000_000L, WorkloadType.SEVEN_ZIP);
+            // Task that completes in one second on one vCPU lane
+            // (2B IPS/vCPU * 1s = 2B instructions)
+            Task task = new Task("Task1", "user1", 2_000_000_000L, WorkloadType.SEVEN_ZIP);
 
             boolean passed = true;
             StringBuilder errors = new StringBuilder();
@@ -582,9 +585,10 @@ public class VMTest {
         try {
             VM vm = new VM("user1", 2_000_000_000L, 4, 0, 8192, 102400, 1000, ComputeType.CPU_ONLY);
             vm.setVmState(VmState.RUNNING);
-            // Each task completes in 1 second
-            Task task1 = new Task("Task1", "user1", 8_000_000_000L, WorkloadType.SEVEN_ZIP);
-            Task task2 = new Task("Task2", "user1", 8_000_000_000L, WorkloadType.DATABASE);
+            // Each task completes in one second on its own vCPU lane (2B IPS/vCPU).
+            // The 4-vCPU VM runs both concurrently, so both finish in the first tick.
+            Task task1 = new Task("Task1", "user1", 2_000_000_000L, WorkloadType.SEVEN_ZIP);
+            Task task2 = new Task("Task2", "user1", 2_000_000_000L, WorkloadType.DATABASE);
 
             boolean passed = true;
             StringBuilder errors = new StringBuilder();
@@ -592,8 +596,8 @@ public class VMTest {
             vm.assignTask(task1);
             vm.assignTask(task2);
 
-            vm.executeOneSecond(1000L); // Complete task1
-            vm.executeOneSecond(1001L); // Complete task2
+            vm.executeOneSecond(1000L); // Both tasks run in parallel and complete
+            vm.executeOneSecond(1001L); // No work left
 
             if (vm.getFinishedTasks().size() != 2) {
                 passed = false;

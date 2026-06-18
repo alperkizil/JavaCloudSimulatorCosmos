@@ -367,15 +367,40 @@ public class MOEA_SPEA2VerificationTest {
             List<Integer> taskOrder = solution.getTaskOrderForVM(vmIdx);
 
             if (!taskOrder.isEmpty()) {
-                long totalInstructions = 0;
-                for (int taskIdx : taskOrder) {
-                    totalInstructions += tasks.get(taskIdx).getInstructionLength();
-                }
-                double execTime = (double) totalInstructions / vm.getTotalRequestedIps();
+                // Busiest vCPU lane time under the per-vCPU FIFO scheduler.
+                long execTicks = busiestLaneTicks(taskOrder, tasks,
+                    vm.getEffectiveIpsPerVcpu(), vm.getRequestedVcpuCount());
 
-                System.out.printf("  VM %2d (IPS=%,12d): %2d tasks, total %.2fs, tasks=%s%n",
-                    vmIdx, vm.getTotalRequestedIps(), taskOrder.size(), execTime, taskOrder);
+                System.out.printf("  VM %2d (effIPS/vCPU=%,12d x%d vCPU): %2d tasks, busiest lane %ds, tasks=%s%n",
+                    vmIdx, vm.getEffectiveIpsPerVcpu(), vm.getRequestedVcpuCount(),
+                    taskOrder.size(), execTicks, taskOrder);
             }
         }
+    }
+
+    /** Busiest vCPU lane time (ticks) for a VM under the per-vCPU FIFO scheduler. */
+    private static long busiestLaneTicks(List<Integer> taskOrder, List<Task> tasks,
+                                         long effIps, int vcpuCount) {
+        if (effIps <= 0) {
+            return 0;
+        }
+        long[] lanes = new long[Math.max(1, vcpuCount)];
+        for (int taskIdx : taskOrder) {
+            long ticks = (tasks.get(taskIdx).getInstructionLength() + effIps - 1) / effIps;
+            int li = 0;
+            for (int l = 1; l < lanes.length; l++) {
+                if (lanes[l] < lanes[li]) {
+                    li = l;
+                }
+            }
+            lanes[li] += ticks;
+        }
+        long busiest = 0;
+        for (long load : lanes) {
+            if (load > busiest) {
+                busiest = load;
+            }
+        }
+        return busiest;
     }
 }
