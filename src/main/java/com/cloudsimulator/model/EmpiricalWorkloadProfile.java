@@ -104,20 +104,6 @@ public class EmpiricalWorkloadProfile {
         return incrementalPowerWatts * utilizationRatio;
     }
 
-    /**
-     * Calculates power draw using a simpler linear model.
-     * Power scales linearly with combined utilization.
-     *
-     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
-     * @return Incremental power in Watts
-     */
-    public double calculateIncrementalPowerLinear(double cpuUtilization, double gpuUtilization) {
-        // Use max utilization for scaling (whichever component is more active)
-        double effectiveUtilization = Math.max(cpuUtilization, gpuUtilization);
-        return incrementalPowerWatts * effectiveUtilization;
-    }
-
     // Getters
 
     public WorkloadType getWorkloadType() {
@@ -158,20 +144,6 @@ public class EmpiricalWorkloadProfile {
 
     public String getMeasurementNotes() {
         return measurementNotes;
-    }
-
-    /**
-     * Returns whether this is a GPU-intensive workload.
-     */
-    public boolean isGpuIntensive() {
-        return typicalGpuUtilization > typicalCpuUtilization;
-    }
-
-    /**
-     * Returns whether this is a CPU-intensive workload.
-     */
-    public boolean isCpuIntensive() {
-        return typicalCpuUtilization > typicalGpuUtilization;
     }
 
     @Override

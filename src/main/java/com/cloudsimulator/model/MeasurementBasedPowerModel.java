@@ -316,26 +316,6 @@ public class MeasurementBasedPowerModel {
     }
 
     /**
-     * Calculates power using the linear scaling method.
-     * Power scales linearly with the maximum utilization component.
-     *
-     * @param workloadType The type of workload being executed
-     * @param cpuUtilization Current CPU utilization (0.0 to 1.0)
-     * @param gpuUtilization Current GPU utilization (0.0 to 1.0)
-     * @return Total power consumption in Watts
-     */
-    public double calculateTotalPowerLinear(WorkloadType workloadType, double cpuUtilization, double gpuUtilization) {
-        EmpiricalWorkloadProfile profile = workloadProfiles.get(workloadType);
-
-        if (profile == null) {
-            return (baseIdlePowerWatts + calculateFallbackPower(cpuUtilization, gpuUtilization)) * hardwareScaleFactor;
-        }
-
-        double incrementalPower = profile.calculateIncrementalPowerLinear(cpuUtilization, gpuUtilization);
-        return (baseIdlePowerWatts + incrementalPower) * hardwareScaleFactor;
-    }
-
-    /**
      * Gets the raw incremental power for a workload at 100% typical utilization.
      * Useful for power estimation without current utilization values.
      *
