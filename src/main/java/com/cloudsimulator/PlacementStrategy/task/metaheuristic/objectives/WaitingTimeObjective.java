@@ -71,7 +71,7 @@ public class WaitingTimeObjective implements SchedulingObjective {
 
             // Each task waits until its vCPU lane is free; under the per-vCPU FIFO
             // scheduler that is the lane's load when the task is dispatched.
-            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount());
             for (int pos = 0; pos < sched.size(); pos++) {
                 totalWaitingTime += sched.getStartTick(pos);
             }

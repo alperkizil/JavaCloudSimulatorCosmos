@@ -158,7 +158,7 @@ public class EnergyObjective implements SchedulingObjective {
             // Distribute this VM's tasks across its vCPU lanes (per-vCPU FIFO
             // scheduler). The VM completion time is the busiest lane's load; the
             // per-task tick costs drive the incremental-energy integral.
-            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount());
             vmCompletionTicks[vmIdx] = sched.getCompletionTicks();
 
             for (int pos = 0; pos < taskOrder.size(); pos++) {

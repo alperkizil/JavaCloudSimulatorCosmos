@@ -296,9 +296,7 @@ public class VM {
     }
 
     private boolean isGpuWorkload(WorkloadType type) {
-        return type == WorkloadType.FURMARK ||
-               type == WorkloadType.IMAGE_GEN_GPU ||
-               type == WorkloadType.LLM_GPU;
+        return type.isGpuWorkload();
     }
 
     private boolean isCpuWorkload(WorkloadType type) {
@@ -388,6 +386,19 @@ public class VM {
         if (runningTasks.size() >= requestedVcpuCount) {
             return;
         }
+        // GPU-workload concurrency is capped by the number of physical GPUs bound
+        // to this VM: a GPU task needs one vCPU lane AND one GPU. CPU tasks are
+        // bounded only by vCPU lanes. Head-of-line non-blocking: a GPU task that
+        // cannot get a free GPU is skipped so later CPU tasks can still fill idle
+        // lanes this tick. (gpuCap == 0 ⇒ unconstrained, avoids deadlock for a
+        // misconfigured GPU-capable VM with no bound GPUs.)
+        int gpuCap = getBoundGpuCount();
+        int runningGpu = 0;
+        for (Task running : runningTasks) {
+            if (running.getWorkloadType().isGpuWorkload()) {
+                runningGpu++;
+            }
+        }
         for (Task task : assignedTasks) {
             if (runningTasks.size() >= requestedVcpuCount) {
                 break;
@@ -395,8 +406,15 @@ public class VM {
             if (runningTasks.contains(task)) {
                 continue; // already running on a lane
             }
+            boolean gpu = task.getWorkloadType().isGpuWorkload();
+            if (gpu && gpuCap > 0 && runningGpu >= gpuCap) {
+                continue; // no free GPU: skip (head-of-line non-blocking)
+            }
             task.startExecution(currentTime);
             runningTasks.add(task);
+            if (gpu) {
+                runningGpu++;
+            }
         }
     }
 

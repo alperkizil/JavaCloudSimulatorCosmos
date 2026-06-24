@@ -70,7 +70,7 @@ public class LoadBalanceObjective implements SchedulingObjective {
 
             // VM completion time = busiest vCPU lane under the per-vCPU FIFO scheduler.
             long vmCompletionTicks = LaneSchedule
-                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount())
+                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount())
                 .getCompletionTicks();
 
             completionTimes[vmIdx] = vmCompletionTicks;

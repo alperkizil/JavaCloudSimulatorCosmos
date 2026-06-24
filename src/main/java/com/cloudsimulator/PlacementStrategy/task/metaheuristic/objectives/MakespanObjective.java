@@ -63,7 +63,7 @@ public class MakespanObjective implements SchedulingObjective {
             // Distribute the VM's tasks across its vCPU lanes (per-vCPU FIFO
             // scheduler); the VM's completion time is the busiest lane's load.
             long vmCompletionTicks = LaneSchedule
-                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount())
+                .schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount())
                 .getCompletionTicks();
 
             if (vmCompletionTicks > maxCompletionTicks) {

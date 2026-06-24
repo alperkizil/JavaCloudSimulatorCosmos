@@ -14,5 +14,15 @@ public enum WorkloadType {
     CINEBENCH,          // Heavy CPU utilizing Application
     PRIME95SmallFFT,    // CPU saturating utilizing Application
     VERACRYPT,          // Disk encryption/decryption (CPU-intensive AES operations)
-    IDLE                // No Workload
+    IDLE;               // No Workload
+
+    /**
+     * GPU-accelerated workloads: they require a physical GPU and, in the
+     * simulator, occupy one of the VM's bound GPUs while running (concurrency
+     * capped by bound GPU count). Single source of truth for VM.canAcceptTask,
+     * the per-vCPU lane scheduler (LaneSchedule), and the energy-aware heuristic.
+     */
+    public boolean isGpuWorkload() {
+        return this == FURMARK || this == IMAGE_GEN_GPU || this == LLM_GPU;
+    }
 }
