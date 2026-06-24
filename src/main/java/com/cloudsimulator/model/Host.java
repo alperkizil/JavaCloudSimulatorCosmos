@@ -68,6 +68,12 @@ public class Host {
 
     // Energy tracking
     private double totalEnergyConsumedJoules;
+    // Per-component energy, integrated each tick from the current per-component
+    // power draws so the post-simulation breakdown matches the measurement-based
+    // model (rather than legacy static max-power ratios). cpu+gpu+other == total.
+    private double cpuEnergyConsumedJoules;
+    private double gpuEnergyConsumedJoules;
+    private double otherEnergyConsumedJoules;
 
     /**
      * Constructor with custom specifications.
@@ -112,6 +118,9 @@ public class Host {
         this.allocatedStorageMB = 0;
         this.allocatedBandwidthMbps = 0;
         this.totalEnergyConsumedJoules = 0.0;
+        this.cpuEnergyConsumedJoules = 0.0;
+        this.gpuEnergyConsumedJoules = 0.0;
+        this.otherEnergyConsumedJoules = 0.0;
 
         // Install physical GPUs as identity objects, each bindable to one VM
         for (int i = 0; i < this.numberOfGpus; i++) {
@@ -530,6 +539,12 @@ public class Host {
      */
     public void updateEnergyConsumption() {
         totalEnergyConsumedJoules += currentTotalPowerDraw;
+        // Integrate per-component power (set this tick by updatePowerConsumption).
+        // In both power models cpu+gpu+other == currentTotalPowerDraw, so these
+        // accumulate to exactly totalEnergyConsumedJoules.
+        cpuEnergyConsumedJoules += currentCpuPowerDraw;
+        gpuEnergyConsumedJoules += currentGpuPowerDraw;
+        otherEnergyConsumedJoules += otherComponentsPowerDraw;
         // Track peak power
         if (currentTotalPowerDraw > peakTotalPowerDraw) {
             peakTotalPowerDraw = currentTotalPowerDraw;
@@ -541,6 +556,22 @@ public class Host {
      */
     public double getTotalEnergyConsumed() {
         return totalEnergyConsumedJoules;
+    }
+
+    /**
+     * Per-component energy in Joules, integrated each tick from the
+     * measurement-based per-tick power split. cpu+gpu+other == total.
+     */
+    public double getCpuEnergyConsumedJoules() {
+        return cpuEnergyConsumedJoules;
+    }
+
+    public double getGpuEnergyConsumedJoules() {
+        return gpuEnergyConsumedJoules;
+    }
+
+    public double getOtherEnergyConsumedJoules() {
+        return otherEnergyConsumedJoules;
     }
 
     /**
@@ -823,6 +854,9 @@ public class Host {
 
         // Reset energy tracking
         this.totalEnergyConsumedJoules = 0.0;
+        this.cpuEnergyConsumedJoules = 0.0;
+        this.gpuEnergyConsumedJoules = 0.0;
+        this.otherEnergyConsumedJoules = 0.0;
 
         // Reset utilization history
         this.utilizationHistory = new ArrayList<>();

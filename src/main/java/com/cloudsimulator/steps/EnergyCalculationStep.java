@@ -214,22 +214,13 @@ public class EnergyCalculationStep implements SimulationStep {
             hostPeakPowerWatts.put(host.getId(), hostPeakPower);
             peakTotalPowerWatts += hostPeakPower;
 
-            // Estimate component breakdown based on power model ratios
-            if (host.getPowerModel() != null && hostEnergy > 0) {
-                double totalMaxPower = host.getPowerModel().getMaxCpuPower() +
-                                      host.getPowerModel().getMaxGpuPower() +
-                                      host.getPowerModel().getOtherComponentsPower();
-
-                if (totalMaxPower > 0) {
-                    double cpuRatio = host.getPowerModel().getMaxCpuPower() / totalMaxPower;
-                    double gpuRatio = host.getPowerModel().getMaxGpuPower() / totalMaxPower;
-                    double otherRatio = host.getPowerModel().getOtherComponentsPower() / totalMaxPower;
-
-                    totalCpuEnergyJoules += hostEnergy * cpuRatio;
-                    totalGpuEnergyJoules += hostEnergy * gpuRatio;
-                    totalOtherComponentsEnergyJoules += hostEnergy * otherRatio;
-                }
-            }
+            // Component breakdown from the per-tick measurement-based split that
+            // the host integrated during simulation (currentCpu/Gpu/Other power
+            // accumulated each tick). These sum exactly to the host's total energy
+            // and reflect what actually ran, rather than static max-power ratios.
+            totalCpuEnergyJoules += host.getCpuEnergyConsumedJoules();
+            totalGpuEnergyJoules += host.getGpuEnergyConsumedJoules();
+            totalOtherComponentsEnergyJoules += host.getOtherEnergyConsumedJoules();
         }
 
         // Calculate average power
@@ -447,6 +438,10 @@ public class EnergyCalculationStep implements SimulationStep {
 
     public double getTotalGpuEnergyJoules() {
         return totalGpuEnergyJoules;
+    }
+
+    public double getTotalOtherComponentsEnergyJoules() {
+        return totalOtherComponentsEnergyJoules;
     }
 
     public double getAveragePowerWatts() {
