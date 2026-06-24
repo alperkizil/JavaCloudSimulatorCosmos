@@ -75,6 +75,15 @@ public class Host {
     private double gpuEnergyConsumedJoules;
     private double otherEnergyConsumedJoules;
 
+    // Per-tick history, recorded each updateState tick during simulation
+    // (index = simulation tick). Sums reconcile with the running totals:
+    // powerSeriesWatts sums to totalEnergyConsumedJoules, and Σ vmEnergyJoules
+    // equals cpuEnergyConsumedJoules + gpuEnergyConsumedJoules (incremental).
+    private final List<Double> powerSeriesWatts = new ArrayList<>();                 // host total power per tick
+    private final Map<Long, List<Double>> vmPowerSeriesWatts = new HashMap<>();      // VM id -> incremental watts per tick
+    private final Map<Long, Double> vmEnergyJoules = new HashMap<>();                // VM id -> cumulative incremental energy (J)
+    private final Map<Long, Double> currentTickVmIncrementalWatts = new HashMap<>(); // transient: this tick's per-VM incremental
+
     /**
      * Constructor with custom specifications.
      */
@@ -463,6 +472,7 @@ public class Host {
      * - Total power = idle + sum of all VM incremental powers
      */
     private void updatePowerConsumptionWorkloadAware() {
+        currentTickVmIncrementalWatts.clear();
         if (assignedVMs.isEmpty()) {
             // No VMs - host is at idle power
             this.currentTotalPowerDraw = measurementBasedPowerModel.getScaledIdlePower();
@@ -486,13 +496,14 @@ public class Host {
         // no busy lanes (idle) contributes no incremental power.
         for (VM vm : assignedVMs) {
             long effIps = vm.getEffectiveIpsPerVcpu();
+            double vmIncrementalPower = 0.0;
 
             for (VMUtilization.LaneUtilization lane : vm.getActiveLaneUtilizations()) {
                 // Incremental power for this lane's workload (with speed-based scaling)
                 double lanePower = measurementBasedPowerModel.calculateIncrementalPowerWithSpeedScaling(
                     lane.getWorkloadType(), lane.getCpuUtilization(), lane.getGpuUtilization(), effIps);
 
-                totalIncrementalPower += lanePower;
+                vmIncrementalPower += lanePower;
 
                 // Attribute this lane's power to CPU vs GPU by util-weighted split
                 // (typical utilization x component full-load power). The two parts
@@ -503,6 +514,13 @@ public class Host {
                     lane.getWorkloadType(), lanePower);
                 cpuIncrementalPower += split[0];
                 gpuIncrementalPower += split[1];
+            }
+
+            // This VM's incremental contribution this tick, captured for the
+            // per-VM per-tick history (idle VMs draw no incremental → recorded as 0).
+            totalIncrementalPower += vmIncrementalPower;
+            if (vmIncrementalPower > 0.0) {
+                currentTickVmIncrementalWatts.put(vm.getId(), vmIncrementalPower);
             }
         }
 
@@ -518,18 +536,35 @@ public class Host {
      * Should be called every simulation tick.
      */
     public void updateState() {
-        activeSeconds++;
+        activeSeconds++;   // open (powered-on) seconds while in a datacenter
 
-        if (assignedVMs.isEmpty() || assignedVMs.stream().noneMatch(vm -> vm.getVmState() == com.cloudsimulator.enums.VmState.RUNNING)) {
-            secondsIDLE++;
-            totalNumberOfSecondsIdle++;
-        } else {
+        // Compute this tick's power first; the per-VM incremental map and lane
+        // state it relies on then drive classification and the per-tick history.
+        updatePowerConsumption();
+
+        // Idle := powered on but no vCPU lane executing a task this tick (zero
+        // incremental work; only the baseline idle power is drawn). This replaces
+        // the old "any RUNNING VM" check, which never fired because VMs stay
+        // RUNNING for the whole simulation even after their queues drain.
+        if (hasBusyLaneThisTick()) {
             secondsExecuting++;
             totalNumberOfSecondsWorking++;
+        } else {
+            secondsIDLE++;
+            totalNumberOfSecondsIdle++;
         }
 
-        updatePowerConsumption();
         updateEnergyConsumption();
+    }
+
+    /** True if any VM on this host has at least one busy vCPU lane this tick. */
+    private boolean hasBusyLaneThisTick() {
+        for (VM vm : assignedVMs) {
+            if (!vm.getActiveLaneUtilizations().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -548,6 +583,15 @@ public class Host {
         // Track peak power
         if (currentTotalPowerDraw > peakTotalPowerDraw) {
             peakTotalPowerDraw = currentTotalPowerDraw;
+        }
+
+        // Per-tick history (1 s per tick, so watts == joules added this tick).
+        powerSeriesWatts.add(currentTotalPowerDraw);
+        for (VM vm : assignedVMs) {
+            long id = vm.getId();
+            double w = currentTickVmIncrementalWatts.getOrDefault(id, 0.0);  // 0 when this VM was idle
+            vmPowerSeriesWatts.computeIfAbsent(id, k -> new ArrayList<>()).add(w);
+            vmEnergyJoules.merge(id, w, Double::sum);
         }
     }
 
@@ -572,6 +616,59 @@ public class Host {
 
     public double getOtherEnergyConsumedJoules() {
         return otherEnergyConsumedJoules;
+    }
+
+    // --- Per-tick history & open/busy/idle accessors ---
+
+    /** Host total power draw (W) for each simulation tick (index = tick). */
+    public List<Double> getPowerSeriesWatts() {
+        return powerSeriesWatts;
+    }
+
+    /** Per-VM incremental power (W) per tick: VM id -> per-tick series. */
+    public Map<Long, List<Double>> getVmPowerSeriesWatts() {
+        return vmPowerSeriesWatts;
+    }
+
+    /** Per-tick incremental power series (W) for one VM ([] if none). */
+    public List<Double> getVmPowerSeriesWatts(long vmId) {
+        return vmPowerSeriesWatts.getOrDefault(vmId, java.util.Collections.emptyList());
+    }
+
+    /** Host total power (W) at a given tick (0 if out of range). */
+    public double getHostPowerAtTick(int tick) {
+        return (tick >= 0 && tick < powerSeriesWatts.size()) ? powerSeriesWatts.get(tick) : 0.0;
+    }
+
+    /** A VM's incremental power (W) at a given tick (0 if out of range/idle). */
+    public double getVmPowerAtTick(long vmId, int tick) {
+        List<Double> series = vmPowerSeriesWatts.get(vmId);
+        return (series != null && tick >= 0 && tick < series.size()) ? series.get(tick) : 0.0;
+    }
+
+    /** Per-VM cumulative incremental energy (J): VM id -> joules. */
+    public Map<Long, Double> getVmEnergyJoules() {
+        return vmEnergyJoules;
+    }
+
+    /** One VM's cumulative incremental energy (J). */
+    public double getVmEnergyJoules(long vmId) {
+        return vmEnergyJoules.getOrDefault(vmId, 0.0);
+    }
+
+    /** Seconds the host was powered on (open) while in a datacenter. */
+    public long getOpenSeconds() {
+        return activeSeconds;
+    }
+
+    /** Seconds the host had at least one busy vCPU lane (doing work). */
+    public long getBusySeconds() {
+        return secondsExecuting;
+    }
+
+    /** Seconds the host was open but idle (no busy vCPU lane). */
+    public long getIdleSeconds() {
+        return secondsIDLE;
     }
 
     /**
@@ -857,6 +954,12 @@ public class Host {
         this.cpuEnergyConsumedJoules = 0.0;
         this.gpuEnergyConsumedJoules = 0.0;
         this.otherEnergyConsumedJoules = 0.0;
+
+        // Reset per-tick history
+        this.powerSeriesWatts.clear();
+        this.vmPowerSeriesWatts.clear();
+        this.vmEnergyJoules.clear();
+        this.currentTickVmIncrementalWatts.clear();
 
         // Reset utilization history
         this.utilizationHistory = new ArrayList<>();
