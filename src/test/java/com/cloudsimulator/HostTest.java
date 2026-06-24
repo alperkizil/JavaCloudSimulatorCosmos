@@ -5,6 +5,7 @@ import com.cloudsimulator.enums.VmState;
 import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.PowerModel;
+import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 
 /**
@@ -845,12 +846,18 @@ public class HostTest {
         try {
             Host host = new Host(2_500_000_000L, 16, ComputeType.CPU_ONLY, 0);
             VM vm = new VM("user1", 2_000_000_000L, 4, 0, 8192, 102400, 1000, ComputeType.CPU_ONLY);
-            vm.setVmState(VmState.RUNNING);
+            host.assignVM(vm);
+            vm.start();
+            // A host counts as "executing" only when a vCPU lane is actually busy,
+            // so give the VM a task and run one second before sampling host state
+            // (a RUNNING VM with an empty queue is now correctly counted as idle).
+            Task task = new Task("t1", "user1", 10_000_000_000L, WorkloadType.SEVEN_ZIP);
+            vm.assignTask(task);
+            vm.executeOneSecond(0L);
 
             boolean passed = true;
             StringBuilder errors = new StringBuilder();
 
-            host.assignVM(vm);
             host.updateState();
 
             if (host.getActiveSeconds() != 1) {
