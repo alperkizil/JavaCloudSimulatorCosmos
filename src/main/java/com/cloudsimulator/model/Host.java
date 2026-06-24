@@ -83,6 +83,7 @@ public class Host {
     private final Map<Long, List<Double>> vmPowerSeriesWatts = new HashMap<>();      // VM id -> incremental watts per tick
     private final Map<Long, Double> vmEnergyJoules = new HashMap<>();                // VM id -> cumulative incremental energy (J)
     private final Map<Long, Double> currentTickVmIncrementalWatts = new HashMap<>(); // transient: this tick's per-VM incremental
+    private final List<Boolean> busySeries = new ArrayList<>();                      // per-tick busy flag (>=1 busy vCPU lane), consumed by datacenter aggregation
 
     /**
      * Constructor with custom specifications.
@@ -546,7 +547,9 @@ public class Host {
         // incremental work; only the baseline idle power is drawn). This replaces
         // the old "any RUNNING VM" check, which never fired because VMs stay
         // RUNNING for the whole simulation even after their queues drain.
-        if (hasBusyLaneThisTick()) {
+        boolean busy = hasBusyLaneThisTick();
+        busySeries.add(busy);   // per-tick busy flag, aggregated by the datacenter
+        if (busy) {
             secondsExecuting++;
             totalNumberOfSecondsWorking++;
         } else {
@@ -669,6 +672,16 @@ public class Host {
     /** Seconds the host was open but idle (no busy vCPU lane). */
     public long getIdleSeconds() {
         return secondsIDLE;
+    }
+
+    /** Per-tick busy flag (true = ≥1 busy vCPU lane that tick); index = tick. */
+    public List<Boolean> getBusySeries() {
+        return busySeries;
+    }
+
+    /** Whether the host had a busy vCPU lane at the given tick (false if out of range). */
+    public boolean isBusyAtTick(int tick) {
+        return tick >= 0 && tick < busySeries.size() && busySeries.get(tick);
     }
 
     /**
@@ -960,6 +973,7 @@ public class Host {
         this.vmPowerSeriesWatts.clear();
         this.vmEnergyJoules.clear();
         this.currentTickVmIncrementalWatts.clear();
+        this.busySeries.clear();
 
         // Reset utilization history
         this.utilizationHistory = new ArrayList<>();
