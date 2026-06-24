@@ -124,7 +124,7 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
 
             // Per-vCPU FIFO scheduler: each task runs on a lane from its start tick
             // (its lane's load when dispatched) for its tick cost.
-            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount());
+            LaneSchedule sched = LaneSchedule.schedule(taskOrder, tasks, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount());
             for (int pos = 0; pos < taskOrder.size(); pos++) {
                 Task task = tasks.get(taskOrder.get(pos));
                 long executionTicks = sched.getTaskTicks(pos);

@@ -51,6 +51,9 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
     private long globalMakespanTicks = 0;
     // Per-VM vCPU lane loads (ticks), mirroring the per-vCPU FIFO scheduler.
     private Map<VM, long[]> laneLoadsByVm = new IdentityHashMap<>();
+    // Per-VM GPU-slot loads (ticks): GPU-workload concurrency is capped by bound
+    // GPU count, so a GPU task waits for a free vCPU lane AND a free GPU slot.
+    private Map<VM, long[]> gpuLoadsByVm = new IdentityHashMap<>();
     private boolean contextInitialized = false;
 
     @Override
@@ -106,17 +109,27 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
         activeHostCount = Math.max(1, hostIds.size());
 
         laneLoadsByVm = new IdentityHashMap<>();
+        gpuLoadsByVm = new IdentityHashMap<>();
         globalMakespanTicks = 0;
         for (VM vm : vms) {
             long effIps = vm.getEffectiveIpsPerVcpu();
             long[] lanes = new long[Math.max(1, vm.getRequestedVcpuCount())];
+            long[] gpuLanes = new long[Math.max(0, vm.getBoundGpuCount())];
             if (effIps > 0) {
                 for (Task queued : vm.getAssignedTasks()) {
                     long ticks = (queued.getRemainingInstructions() + effIps - 1) / effIps;
-                    lanes[leastLoadedLane(lanes)] += ticks;
+                    int laneIdx = leastLoadedLane(lanes);
+                    long start = lanes[laneIdx];
+                    if (queued.getWorkloadType().isGpuWorkload() && gpuLanes.length > 0) {
+                        int gpuIdx = leastLoadedLane(gpuLanes);
+                        start = Math.max(start, gpuLanes[gpuIdx]);
+                        gpuLanes[gpuIdx] = start + ticks;
+                    }
+                    lanes[laneIdx] = start + ticks;
                 }
             }
             laneLoadsByVm.put(vm, lanes);
+            gpuLoadsByVm.put(vm, gpuLanes);
             long vmMax = maxLoad(lanes);
             if (vmMax > globalMakespanTicks) {
                 globalMakespanTicks = vmMax;
@@ -134,7 +147,17 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
         long execTicks = (task.getInstructionLength() + effIps - 1) / effIps;
         long[] lanes = laneLoadsByVm.computeIfAbsent(vm,
             v -> new long[Math.max(1, v.getRequestedVcpuCount())]);
-        lanes[leastLoadedLane(lanes)] += execTicks;
+        int laneIdx = leastLoadedLane(lanes);
+        long start = lanes[laneIdx];
+        // A GPU task occupies a GPU slot too; serialize across bound GPUs.
+        if (task.getWorkloadType().isGpuWorkload() && vm.getBoundGpuCount() > 0) {
+            long[] gpuLanes = gpuLoadsByVm.computeIfAbsent(vm,
+                v -> new long[v.getBoundGpuCount()]);
+            int gpuIdx = leastLoadedLane(gpuLanes);
+            start = Math.max(start, gpuLanes[gpuIdx]);
+            gpuLanes[gpuIdx] = start + execTicks;
+        }
+        lanes[laneIdx] = start + execTicks;
         long vmMax = maxLoad(lanes);
         if (vmMax > globalMakespanTicks) {
             globalMakespanTicks = vmMax;
@@ -165,7 +188,14 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
             double execEnergyJoules = incrPower * execTicks;
 
             long[] lanes = laneLoadsByVm.get(vm);
-            long laneFinish = (lanes == null ? 0L : lanes[leastLoadedLane(lanes)]) + execTicks;
+            long laneStart = (lanes == null ? 0L : lanes[leastLoadedLane(lanes)]);
+            // A GPU task also waits for a free GPU slot (concurrency capped by bound GPUs).
+            if (task.getWorkloadType().isGpuWorkload() && vm.getBoundGpuCount() > 0) {
+                long[] gpuLanes = gpuLoadsByVm.get(vm);
+                long gpuStart = (gpuLanes == null ? 0L : gpuLanes[leastLoadedLane(gpuLanes)]);
+                laneStart = Math.max(laneStart, gpuStart);
+            }
+            long laneFinish = laneStart + execTicks;
             long vmCurrentMax = (lanes == null ? 0L : maxLoad(lanes));
             long newFinish = Math.max(vmCurrentMax, laneFinish);
             long extension = Math.max(0L, newFinish - globalMakespanTicks);
