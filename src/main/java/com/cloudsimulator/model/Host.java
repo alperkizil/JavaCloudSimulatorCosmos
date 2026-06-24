@@ -439,6 +439,8 @@ public class Host {
      * Updates power consumption using the traditional utilization-based model.
      */
     private void updatePowerConsumptionUtilizationBased() {
+        currentTickVmIncrementalWatts.clear();   // avoid stale per-VM values from a prior (measurement-based) tick
+
         // Calculate current CPU and GPU utilization from all VMs
         double totalCpuUtil = 0.0;
         double totalGpuUtil = 0.0;
@@ -460,6 +462,26 @@ public class Host {
         this.currentGpuPowerDraw = powerModel.calculateGpuPower(avgGpuUtil);
         this.otherComponentsPowerDraw = powerModel.getOtherComponentsPower();
         this.currentTotalPowerDraw = currentCpuPowerDraw + currentGpuPowerDraw + otherComponentsPowerDraw;
+
+        // Populate the per-VM incremental map on this legacy path too: attribute the
+        // incremental (CPU+GPU) draw across VMs by their utilization weight, so the
+        // per-VM power series / energy are non-zero for busy VMs (Σ per-VM == host
+        // incremental, matching the measurement-based path; the idle baseline stays
+        // the host's, attributed to no VM).
+        double hostIncremental = currentCpuPowerDraw + currentGpuPowerDraw;
+        double totalUtilWeight = totalCpuUtil + totalGpuUtil;
+        if (hostIncremental > 0.0 && totalUtilWeight > 0.0) {
+            for (VM vm : assignedVMs) {
+                if (vm.getCurrentUtilization() == null) {
+                    continue;
+                }
+                double weight = vm.getCurrentUtilization().getCpuUtilization()
+                              + vm.getCurrentUtilization().getGpuUtilization();
+                if (weight > 0.0) {
+                    currentTickVmIncrementalWatts.put(vm.getId(), hostIncremental * (weight / totalUtilWeight));
+                }
+            }
+        }
     }
 
     /**
@@ -590,10 +612,17 @@ public class Host {
 
         // Per-tick history (1 s per tick, so watts == joules added this tick).
         powerSeriesWatts.add(currentTotalPowerDraw);
+        int tickIndex = powerSeriesWatts.size() - 1;   // index this tick occupies
         for (VM vm : assignedVMs) {
             long id = vm.getId();
             double w = currentTickVmIncrementalWatts.getOrDefault(id, 0.0);  // 0 when this VM was idle
-            vmPowerSeriesWatts.computeIfAbsent(id, k -> new ArrayList<>()).add(w);
+            List<Double> vmSeries = vmPowerSeriesWatts.computeIfAbsent(id, k -> new ArrayList<>());
+            // Pad with zeros for any ticks before this VM joined the host (late
+            // assignment / migration) so the series stays tick-indexed.
+            while (vmSeries.size() < tickIndex) {
+                vmSeries.add(0.0);
+            }
+            vmSeries.add(w);
             vmEnergyJoules.merge(id, w, Double::sum);
         }
     }
