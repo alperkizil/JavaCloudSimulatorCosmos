@@ -246,6 +246,116 @@ public class CloudDatacenter {
         return getTotalEnergyConsumed() / 3_600_000.0;
     }
 
+    // ==================== Per-tick tracking (aggregated from hosts) ====================
+    // The datacenter follows its power and host busy/idle state tick-by-tick by
+    // aggregating the per-tick series each Host records during the simulation.
+    // No per-tick state is stored here — everything derives from the hosts, so it
+    // always reflects the latest run and needs no separate reset.
+
+    /** Number of simulation ticks the datacenter ran (= longest host series = makespan). */
+    public int getTickCount() {
+        int max = 0;
+        for (Host h : hosts) {
+            max = Math.max(max, h.getPowerSeriesWatts().size());
+        }
+        return max;
+    }
+
+    /** Seconds the datacenter was powered on (open) — equals the tick count. */
+    public long getOpenSeconds() {
+        return getTickCount();
+    }
+
+    /** Datacenter total power draw (W) at tick t — the sum of host powers that tick. */
+    public double getDcPowerAtTick(int t) {
+        double sum = 0.0;
+        for (Host h : hosts) {
+            sum += h.getHostPowerAtTick(t);
+        }
+        return sum;
+    }
+
+    /** Datacenter total power (W) per tick (index = tick). Sums to getTotalEnergyConsumed(). */
+    public List<Double> getPowerSeriesWatts() {
+        int n = getTickCount();
+        List<Double> series = new ArrayList<>(n);
+        for (int t = 0; t < n; t++) {
+            series.add(getDcPowerAtTick(t));
+        }
+        return series;
+    }
+
+    /** One host's power contribution (W) at tick t (0 if no such host). */
+    public double getHostContributionAtTick(long hostId, int t) {
+        for (Host h : hosts) {
+            if (h.getId() == hostId) {
+                return h.getHostPowerAtTick(t);
+            }
+        }
+        return 0.0;
+    }
+
+    /** One host's per-tick power series (W); empty if no such host. */
+    public List<Double> getHostPowerSeries(long hostId) {
+        for (Host h : hosts) {
+            if (h.getId() == hostId) {
+                return h.getPowerSeriesWatts();
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    /** Number of hosts with a busy vCPU lane at tick t. */
+    public int getBusyHostCountAtTick(int t) {
+        int count = 0;
+        for (Host h : hosts) {
+            if (h.isBusyAtTick(t)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Number of hosts idle (no busy lane) at tick t. */
+    public int getIdleHostCountAtTick(int t) {
+        return hosts.size() - getBusyHostCountAtTick(t);
+    }
+
+    /** Idle hosts as a percentage of all hosts at tick t (idleHosts / totalHosts × 100). */
+    public double getIdleHostPercentageAtTick(int t) {
+        return hosts.isEmpty() ? 0.0 : 100.0 * getIdleHostCountAtTick(t) / hosts.size();
+    }
+
+    /** Per-tick busy-host counts (index = tick). */
+    public List<Integer> getBusyHostCountSeries() {
+        int n = getTickCount();
+        List<Integer> series = new ArrayList<>(n);
+        for (int t = 0; t < n; t++) {
+            series.add(getBusyHostCountAtTick(t));
+        }
+        return series;
+    }
+
+    /** Per-tick idle-host counts (index = tick). */
+    public List<Integer> getIdleHostCountSeries() {
+        int n = getTickCount();
+        List<Integer> series = new ArrayList<>(n);
+        for (int t = 0; t < n; t++) {
+            series.add(getIdleHostCountAtTick(t));
+        }
+        return series;
+    }
+
+    /** Per-tick idle-host percentage (index = tick). */
+    public List<Double> getIdleHostPercentageSeries() {
+        int n = getTickCount();
+        List<Double> series = new ArrayList<>(n);
+        for (int t = 0; t < n; t++) {
+            series.add(getIdleHostPercentageAtTick(t));
+        }
+        return series;
+    }
+
     @Override
     public String toString() {
         return "CloudDatacenter{" +
