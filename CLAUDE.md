@@ -13,6 +13,19 @@ find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*"
 javac -cp "lib/*" -d target/classes path/to/YourFile.java
 ```
 
+### Archived Experiment Entry Points (`oldExperiments/`)
+
+The runnable entry-point classes (everything with a `public static void main`,
+e.g. the batch mains, `FinalExperiment/` runners, `parameterTest/` drivers, and
+demos) live under `oldExperiments/` rather than `src/main/java`. Their package
+declarations are unchanged, so fully-qualified class names (and existing run
+commands) still work — you just need this folder on the compile path:
+
+```bash
+# Compile the core framework plus the archived experiments
+find src/main/java oldExperiments -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
+```
+
 ### MOEA Framework and Dependencies
 
 All external JARs (including MOEA Framework) are in the `lib/` folder. To compile code that uses MOEA (e.g. `*/moea/*`, `FinalExperiment/`), include them on the classpath:
