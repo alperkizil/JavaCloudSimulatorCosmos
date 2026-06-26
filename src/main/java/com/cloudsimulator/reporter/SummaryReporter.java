@@ -61,6 +61,8 @@ public class SummaryReporter extends AbstractCSVReporter {
             "pue",
             "avg_power_watts",
             "peak_power_watts",
+            "sum_of_host_peaks_watts",
+            "load_factor",
             "carbon_region",
             "carbon_footprint_kg",
             "electricity_cost_dollars",
@@ -125,6 +127,8 @@ public class SummaryReporter extends AbstractCSVReporter {
             formatDouble(energy.pue, 2),
             formatDouble(energy.averagePowerWatts, 2),
             formatDouble(energy.peakPowerWatts, 2),
+            formatDouble(energy.sumOfHostPeaksWatts, 2),
+            formatDouble(energy.loadFactor, 4),
             energy.carbonRegion,
             formatDouble(energy.carbonFootprintKg, 6),
             formatDouble(energy.estimatedCostDollars, 4),
@@ -159,7 +163,7 @@ public class SummaryReporter extends AbstractCSVReporter {
             dcCount, hostCount, 0, vmCount, userCount, 0, 0,  // infrastructure
             taskCount, 0, 0, 0, "0.0000", 0,                   // tasks
             0, "0.000000", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00", "0.0000",  // performance
-            "0.000000", "0.000000", "0.00", "0.00", "0.00", "", "0.000000", "0.0000", "0.00",  // energy
+            "0.000000", "0.000000", "0.00", "0.00", "0.00", "0.00", "0.0000", "", "0.000000", "0.0000", "0.00",  // energy
             0, 0, 0, "0.00"    // SLA
         );
 

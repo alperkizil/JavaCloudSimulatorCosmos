@@ -97,8 +97,10 @@ public class EnergyCalculationStep implements SimulationStep {
     private Map<Long, Double> hostPeakPowerWatts;
 
     // Power metrics
-    private double peakTotalPowerWatts;
+    private double peakTotalPowerWatts;        // coincident (true) fleet peak: max over ticks of summed host power
+    private double sumOfHostPeaksWatts;        // Σ of each host's individual peak; a non-coincident upper bound on the real peak
     private double averagePowerWatts;
+    private double loadFactor;                 // averagePowerWatts / coincident peak (0..1); higher = steadier draw
 
     // Derived metrics
     private double carbonFootprintKg;
@@ -179,7 +181,9 @@ public class EnergyCalculationStep implements SimulationStep {
         totalGpuEnergyJoules = 0;
         totalOtherComponentsEnergyJoules = 0;
         peakTotalPowerWatts = 0;
+        sumOfHostPeaksWatts = 0;
         averagePowerWatts = 0;
+        loadFactor = 0;
         carbonFootprintKg = 0;
         estimatedCostDollars = 0;
         energyPerTaskJoules = 0;
@@ -202,17 +206,18 @@ public class EnergyCalculationStep implements SimulationStep {
         totalCpuEnergyJoules = 0;
         totalGpuEnergyJoules = 0;
         totalOtherComponentsEnergyJoules = 0;
-        peakTotalPowerWatts = 0;
+        sumOfHostPeaksWatts = 0;
 
         for (Host host : hosts) {
             double hostEnergy = host.getTotalEnergyConsumed();
             hostEnergyJoules.put(host.getId(), hostEnergy);
             totalITEnergyJoules += hostEnergy;
 
-            // Track peak power (maximum observed during simulation, not current)
+            // Each host's own maximum draw (over the run). Summing these gives a
+            // non-coincident upper bound, since host peaks need not be simultaneous.
             double hostPeakPower = host.getPeakTotalPowerDraw();
             hostPeakPowerWatts.put(host.getId(), hostPeakPower);
-            peakTotalPowerWatts += hostPeakPower;
+            sumOfHostPeaksWatts += hostPeakPower;
 
             // Component breakdown from the per-tick measurement-based split that
             // the host integrated during simulation (currentCpu/Gpu/Other power
@@ -223,10 +228,41 @@ public class EnergyCalculationStep implements SimulationStep {
             totalOtherComponentsEnergyJoules += host.getOtherEnergyConsumedJoules();
         }
 
+        // True (coincident) fleet peak: the largest total the fleet ever drew at a
+        // single tick, from the per-host per-tick power series. Always <= the sum of
+        // individual host peaks, which need not occur at the same tick.
+        peakTotalPowerWatts = computeCoincidentPeakPower(hosts);
+
         // Calculate average power
         if (simulationDurationSeconds > 0) {
             averagePowerWatts = totalITEnergyJoules / simulationDurationSeconds;
         }
+    }
+
+    /**
+     * Computes the coincident (simultaneous) peak power of the host fleet: the
+     * maximum, over all simulation ticks, of the sum of every host's power draw at
+     * that tick. Reads the per-tick power series each host recorded during the
+     * simulation; returns 0 if no per-tick history exists. Hosts with shorter
+     * series contribute 0 for ticks beyond their length (getHostPowerAtTick).
+     */
+    private double computeCoincidentPeakPower(List<Host> hosts) {
+        int maxTicks = 0;
+        for (Host host : hosts) {
+            maxTicks = Math.max(maxTicks, host.getPowerSeriesWatts().size());
+        }
+
+        double peak = 0.0;
+        for (int tick = 0; tick < maxTicks; tick++) {
+            double fleetPowerAtTick = 0.0;
+            for (Host host : hosts) {
+                fleetPowerAtTick += host.getHostPowerAtTick(tick);
+            }
+            if (fleetPowerAtTick > peak) {
+                peak = fleetPowerAtTick;
+            }
+        }
+        return peak;
     }
 
     /**
@@ -237,10 +273,13 @@ public class EnergyCalculationStep implements SimulationStep {
             double dcEnergy = dc.getTotalEnergyConsumed();
             datacenterEnergyJoules.put(dc.getName(), dcEnergy);
 
-            // Calculate peak power for datacenter (sum of host peaks)
-            double dcPeakPower = dc.getHosts().stream()
-                .mapToDouble(Host::getPeakTotalPowerDraw)
-                .sum();
+            // Coincident peak for this datacenter: max over ticks of the summed host
+            // power within the DC (CloudDatacenter aggregates the per-tick series).
+            // Replaces the old sum-of-host-peaks, which overestimated the real peak.
+            double dcPeakPower = dc.getPowerSeriesWatts().stream()
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0.0);
             datacenterPeakPowerWatts.put(dc.getName(), dcPeakPower);
         }
     }
@@ -271,6 +310,12 @@ public class EnergyCalculationStep implements SimulationStep {
                     (avgPower * simulationDurationSeconds);
             }
         }
+
+        // Load factor: average power relative to the coincident peak (0..1).
+        // 1.0 = perfectly flat draw; lower = peakier. Guarded against zero peak.
+        if (peakTotalPowerWatts > 0) {
+            loadFactor = averagePowerWatts / peakTotalPowerWatts;
+        }
     }
 
     /**
@@ -284,7 +329,11 @@ public class EnergyCalculationStep implements SimulationStep {
         logInfo(String.format("  Total Facility Energy (PUE=%.2f): %.2f kWh",
             pue, getTotalFacilityEnergyKWh()));
         logInfo(String.format("  Average Power Draw: %.2f W", averagePowerWatts));
-        logInfo(String.format("  Peak Power Draw: %.2f W", peakTotalPowerWatts));
+        logInfo(String.format("  Peak Power Draw (coincident): %.2f W", peakTotalPowerWatts));
+        logInfo(String.format("  Sum of Host Peaks (upper bound): %.2f W", sumOfHostPeaksWatts));
+        if (loadFactor > 0) {
+            logInfo(String.format("  Load Factor (avg/peak): %.3f", loadFactor));
+        }
         logInfo(String.format("  Carbon Footprint (%s): %.4f kg CO2",
             selectedRegion.name(), carbonFootprintKg));
         logInfo(String.format("  Estimated Cost ($%.4f/kWh): $%.4f",
@@ -324,6 +373,8 @@ public class EnergyCalculationStep implements SimulationStep {
         // Power
         context.recordMetric("energy.averagePowerWatts", averagePowerWatts);
         context.recordMetric("energy.peakPowerWatts", peakTotalPowerWatts);
+        context.recordMetric("energy.sumOfHostPeaksWatts", sumOfHostPeaksWatts);
+        context.recordMetric("energy.loadFactor", loadFactor);
 
         // Configuration
         context.recordMetric("energy.pue", pue);
@@ -448,8 +499,29 @@ public class EnergyCalculationStep implements SimulationStep {
         return averagePowerWatts;
     }
 
+    /**
+     * Gets the coincident (simultaneous) peak power of the host fleet in Watts —
+     * the maximum total power drawn across all hosts at any single simulation tick.
+     */
     public double getPeakTotalPowerWatts() {
         return peakTotalPowerWatts;
+    }
+
+    /**
+     * Gets the sum of each host's individual peak power (Watts). Because host peaks
+     * need not occur at the same tick, this is a non-coincident upper bound on the
+     * real peak — always &gt;= {@link #getPeakTotalPowerWatts()}.
+     */
+    public double getSumOfHostPeaksWatts() {
+        return sumOfHostPeaksWatts;
+    }
+
+    /**
+     * Gets the load factor: average power divided by the coincident peak (0..1).
+     * Closer to 1.0 means a steadier draw; lower means peakier. 0 if no peak.
+     */
+    public double getLoadFactor() {
+        return loadFactor;
     }
 
     public double getCarbonFootprintKg() {
