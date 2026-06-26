@@ -329,7 +329,7 @@ HostPlacementStep step = new HostPlacementStep();
 
 // Custom strategy
 HostPlacementStep step = new HostPlacementStep(
-    new PowerAwareConsolidatingHostPlacementStrategy()
+    new PowerAwareLoadBalancingHostPlacementStrategy()
 );
 ```
 
@@ -563,11 +563,9 @@ Example: my_experiment_20241209_143025_a1b2c3/
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `FirstFitHostPlacementStrategy` | Places in first datacenter with capacity | Fast, simple default |
-| `PowerBasedBestFitHostPlacementStrategy` | Minimizes remaining power budget | Power optimization |
-| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots | Capacity utilization |
-| `PowerAwareConsolidatingHostPlacementStrategy` | Consolidates into fewer datacenters | Green computing |
-| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances load across datacenters | Fault tolerance |
+| `FirstFitHostPlacementStrategy` | Places in first datacenter with capacity | Fast, simple baseline |
+| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots (tightest fit) | Capacity consolidation |
+| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances power load across datacenters | Spread / fault tolerance |
 
 ### VM Placement Strategies
 

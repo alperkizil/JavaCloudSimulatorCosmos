@@ -28,9 +28,7 @@ public class HostPlacementConstrainedTest {
 
         // Run tests
         testFirstFitConstrained();
-        testPowerBasedBestFitConstrained();
         testSlotBasedBestFitConstrained();
-        testPowerAwareConsolidatingConstrained();
         testPowerAwareLoadBalancingConstrained();
 
         System.out.println("\n=== All Constrained Tests Completed ===");
@@ -117,24 +115,8 @@ public class HostPlacementConstrainedTest {
         System.out.println();
     }
 
-    private static void testPowerBasedBestFitConstrained() {
-        System.out.println("Test 2: Power-Based Best Fit Strategy (Constrained)");
-        System.out.println("-".repeat(55));
-
-        SimulationContext context = createConstrainedContext();
-        HostPlacementStep step = new HostPlacementStep(new PowerBasedBestFitHostPlacementStrategy());
-        step.execute(context);
-
-        printDistribution(context, step);
-
-        // Power-Based Best Fit should prefer DC-Small first (tightest fit)
-        System.out.println("  Expected behavior: Prefer datacenters with tightest power fit");
-        System.out.println("  Result: " + (step.getHostsPlaced() == 5 ? "PASSED" : "FAILED"));
-        System.out.println();
-    }
-
     private static void testSlotBasedBestFitConstrained() {
-        System.out.println("Test 3: Slot-Based Best Fit Strategy (Constrained)");
+        System.out.println("Test 2: Slot-Based Best Fit Strategy (Constrained)");
         System.out.println("-".repeat(55));
 
         // For slot-based test, use different slot capacities
@@ -181,28 +163,8 @@ public class HostPlacementConstrainedTest {
         System.out.println();
     }
 
-    private static void testPowerAwareConsolidatingConstrained() {
-        System.out.println("Test 4: Power-Aware Consolidating Strategy (Constrained)");
-        System.out.println("-".repeat(55));
-
-        SimulationContext context = createConstrainedContext();
-        HostPlacementStep step = new HostPlacementStep(new PowerAwareConsolidatingHostPlacementStrategy());
-        step.execute(context);
-
-        printDistribution(context, step);
-
-        // Consolidating should try to pack hosts into fewest DCs possible
-        long activeDatacenters = context.getDatacenters().stream()
-            .filter(dc -> dc.getHosts().size() > 0)
-            .count();
-        System.out.println("  Active datacenters: " + activeDatacenters);
-        System.out.println("  Expected behavior: Minimize number of active datacenters");
-        System.out.println("  Result: " + (step.getHostsPlaced() == 5 ? "PASSED" : "FAILED"));
-        System.out.println();
-    }
-
     private static void testPowerAwareLoadBalancingConstrained() {
-        System.out.println("Test 5: Power-Aware Load Balancing Strategy (Constrained)");
+        System.out.println("Test 3: Power-Aware Load Balancing Strategy (Constrained)");
         System.out.println("-".repeat(55));
 
         SimulationContext context = createConstrainedContext();

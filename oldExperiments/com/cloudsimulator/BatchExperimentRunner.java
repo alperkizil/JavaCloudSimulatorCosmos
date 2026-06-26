@@ -578,7 +578,7 @@ public class BatchExperimentRunner {
         runner.setReportOutputDir(reportDir);
 
         // You can customize strategies here:
-        // runner.setHostPlacementStrategy(new PowerAwareConsolidatingHostPlacementStrategy());
+        // runner.setHostPlacementStrategy(new PowerAwareLoadBalancingHostPlacementStrategy());
         // runner.setVmPlacementStrategy(new PowerAwareVMPlacementStrategy());
         // runner.setTaskAssignmentStrategy(new WorkloadAwareTaskAssignmentStrategy());
 
