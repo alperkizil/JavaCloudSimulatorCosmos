@@ -15,9 +15,9 @@ javac -cp "lib/*" -d target/classes path/to/YourFile.java
 
 ### Archived Experiment Entry Points (`oldExperiments/`)
 
-The runnable entry-point classes (everything with a `public static void main`,
-e.g. the batch mains, `FinalExperiment/` runners, `parameterTest/` drivers, and
-demos) live under `oldExperiments/` rather than `src/main/java`. Their package
+Many runnable entry-point classes (classes with a `public static void main`,
+e.g. the batch mains, `parameterTest/` drivers, and the `PerfMet` demo) live
+under `oldExperiments/` rather than `src/main/java`. Their package
 declarations are unchanged, so fully-qualified class names (and existing run
 commands) still work — you just need this folder on the compile path:
 
