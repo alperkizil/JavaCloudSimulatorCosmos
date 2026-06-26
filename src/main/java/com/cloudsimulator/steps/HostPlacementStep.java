@@ -18,11 +18,9 @@ import java.util.Optional;
  * the selected placement strategy.
  *
  * Supported Strategies:
- * - FirstFitHostPlacementStrategy: Places hosts in the first available datacenter
- * - PowerBasedBestFitHostPlacementStrategy: Minimizes remaining power budget
- * - SlotBasedBestFitHostPlacementStrategy: Minimizes remaining host slots
- * - PowerAwareConsolidatingHostPlacementStrategy: Consolidates hosts into fewer datacenters
- * - PowerAwareLoadBalancingHostPlacementStrategy: Balances power load across datacenters
+ * - FirstFitHostPlacementStrategy: Places hosts in the first available datacenter (baseline)
+ * - SlotBasedBestFitHostPlacementStrategy: Minimizes remaining host slots (tightest fit)
+ * - PowerAwareLoadBalancingHostPlacementStrategy: Balances power load across datacenters (spread)
  *
  * Usage:
  * <pre>
@@ -30,7 +28,7 @@ import java.util.Optional;
  * HostPlacementStep step = new HostPlacementStep();
  *
  * // Using custom strategy
- * HostPlacementStep step = new HostPlacementStep(new PowerAwareConsolidatingHostPlacementStrategy());
+ * HostPlacementStep step = new HostPlacementStep(new PowerAwareLoadBalancingHostPlacementStrategy());
  * </pre>
  */
 public class HostPlacementStep implements SimulationStep {

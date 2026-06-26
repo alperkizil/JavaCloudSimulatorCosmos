@@ -303,8 +303,8 @@ public class SampleScenarioRunner {
         runner.setReportOutputDir(reportDir);
 
         // You can customize strategies here:
-        // runner.setHostPlacementStrategy(new PowerAwareConsolidatingHostPlacementStrategy());
-        // runner.setVmPlacementStrategy(new PowerAwareVMPlacementStrategy());
+        // runner.setHostPlacementStrategy(new PowerAwareLoadBalancingHostPlacementStrategy());
+        // runner.setVmPlacementStrategy(new BestFitVMPlacementStrategy());
         // runner.setTaskAssignmentStrategy(new WorkloadAwareTaskAssignmentStrategy());
 
         runner.run();

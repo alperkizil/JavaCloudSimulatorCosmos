@@ -329,7 +329,7 @@ HostPlacementStep step = new HostPlacementStep();
 
 // Custom strategy
 HostPlacementStep step = new HostPlacementStep(
-    new PowerAwareConsolidatingHostPlacementStrategy()
+    new PowerAwareLoadBalancingHostPlacementStrategy()
 );
 ```
 
@@ -365,7 +365,7 @@ Assigns VMs to hosts respecting user preferences and resource constraints.
 VMPlacementStep step = new VMPlacementStep();
 
 // Custom strategy
-VMPlacementStep step = new VMPlacementStep(new PowerAwareVMPlacementStrategy());
+VMPlacementStep step = new VMPlacementStep(new BestFitVMPlacementStrategy());
 ```
 
 **Constraints Enforced:**
@@ -563,26 +563,17 @@ Example: my_experiment_20241209_143025_a1b2c3/
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `FirstFitHostPlacementStrategy` | Places in first datacenter with capacity | Fast, simple default |
-| `PowerBasedBestFitHostPlacementStrategy` | Minimizes remaining power budget | Power optimization |
-| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots | Capacity utilization |
-| `PowerAwareConsolidatingHostPlacementStrategy` | Consolidates into fewer datacenters | Green computing |
-| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances load across datacenters | Fault tolerance |
+| `FirstFitHostPlacementStrategy` | Places in first datacenter with capacity | Fast, simple baseline |
+| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots (tightest fit) | Capacity consolidation |
+| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances power load across datacenters | Spread / fault tolerance |
 
 ### VM Placement Strategies
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `FirstFitVMPlacementStrategy` | Places on first host with capacity | Fast, simple default |
-| `BestFitVMPlacementStrategy` | Minimizes remaining capacity | Resource utilization |
-| `LoadBalancingVMPlacementStrategy` | Distributes to least utilized hosts | Even distribution |
-| `PowerAwareVMPlacementStrategy` | Consolidates to minimize active hosts | Energy savings |
-
-**PowerAwareVMPlacementStrategy Algorithm:**
-1. Categorize hosts as "active" (has VMs) or "inactive" (no VMs)
-2. For each VM: try active hosts first (prefer highest utilization)
-3. If no active host fits: select smallest inactive host
-4. Rationale: hosts with 0 VMs can be powered off
+| `FirstFitVMPlacementStrategy` | Places on first host with capacity | Fast, simple baseline |
+| `BestFitVMPlacementStrategy` | Minimizes remaining capacity (tightest fit) | Resource consolidation |
+| `LoadBalancingVMPlacementStrategy` | Distributes to least utilized hosts | Spread / even distribution |
 
 ### Task Assignment Strategies
 

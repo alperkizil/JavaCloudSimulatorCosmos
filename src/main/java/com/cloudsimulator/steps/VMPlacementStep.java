@@ -31,10 +31,9 @@ import java.util.stream.Collectors;
  * 3. Resource Capacity: Host must have sufficient vCPUs, GPUs, RAM, storage, and bandwidth
  *
  * Supported Strategies:
- * - FirstFitVMPlacementStrategy: Places VMs on the first host with capacity
- * - BestFitVMPlacementStrategy: Minimizes remaining capacity (tightest fit)
- * - LoadBalancingVMPlacementStrategy: Distributes VMs to least utilized hosts
- * - PowerAwareVMPlacementStrategy: Consolidates VMs to minimize active hosts
+ * - FirstFitVMPlacementStrategy: Places VMs on the first host with capacity (baseline)
+ * - BestFitVMPlacementStrategy: Minimizes remaining capacity (tightest fit / pack)
+ * - LoadBalancingVMPlacementStrategy: Distributes VMs to least utilized hosts (spread)
  *
  * Usage:
  * <pre>
@@ -42,7 +41,7 @@ import java.util.stream.Collectors;
  * VMPlacementStep step = new VMPlacementStep();
  *
  * // Using custom strategy
- * VMPlacementStep step = new VMPlacementStep(new PowerAwareVMPlacementStrategy());
+ * VMPlacementStep step = new VMPlacementStep(new BestFitVMPlacementStrategy());
  * </pre>
  */
 public class VMPlacementStep implements SimulationStep {
