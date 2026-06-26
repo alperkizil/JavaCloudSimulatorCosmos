@@ -235,6 +235,8 @@ public class MetricsCollectionStep implements SimulationStep {
         Object pue = context.getMetric("energy.pue");
         Object avgPower = context.getMetric("energy.averagePowerWatts");
         Object peakPower = context.getMetric("energy.peakPowerWatts");
+        Object sumOfHostPeaks = context.getMetric("energy.sumOfHostPeaksWatts");
+        Object loadFactor = context.getMetric("energy.loadFactor");
         Object carbonRegion = context.getMetric("energy.carbonRegion");
         Object carbonIntensity = context.getMetric("energy.carbonIntensityKgPerKWh");
         Object carbonFootprint = context.getMetric("energy.carbonFootprintKg");
@@ -248,6 +250,8 @@ public class MetricsCollectionStep implements SimulationStep {
         if (pue != null) energy.pue = ((Number) pue).doubleValue();
         if (avgPower != null) energy.averagePowerWatts = ((Number) avgPower).doubleValue();
         if (peakPower != null) energy.peakPowerWatts = ((Number) peakPower).doubleValue();
+        if (sumOfHostPeaks != null) energy.sumOfHostPeaksWatts = ((Number) sumOfHostPeaks).doubleValue();
+        if (loadFactor != null) energy.loadFactor = ((Number) loadFactor).doubleValue();
         if (carbonRegion != null) energy.carbonRegion = carbonRegion.toString();
         if (carbonIntensity != null) energy.carbonIntensityKgPerKWh = ((Number) carbonIntensity).doubleValue();
         if (carbonFootprint != null) energy.carbonFootprintKg = ((Number) carbonFootprint).doubleValue();

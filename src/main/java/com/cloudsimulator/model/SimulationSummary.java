@@ -199,7 +199,9 @@ public class SimulationSummary {
 
         public double pue;
         public double averagePowerWatts;
-        public double peakPowerWatts;
+        public double peakPowerWatts;          // coincident (true) fleet peak: max summed host power at any tick
+        public double sumOfHostPeaksWatts;     // Σ of per-host peaks; non-coincident upper bound (>= peakPowerWatts)
+        public double loadFactor;              // averagePowerWatts / peakPowerWatts (0..1); higher = steadier draw
 
         public String carbonRegion;
         public double carbonIntensityKgPerKWh;
@@ -215,9 +217,11 @@ public class SimulationSummary {
             return String.format(
                 "{\"totalITEnergyKWh\":%.6f,\"totalFacilityEnergyKWh\":%.6f," +
                 "\"pue\":%.2f,\"averagePowerWatts\":%.2f,\"peakPowerWatts\":%.2f," +
+                "\"sumOfHostPeaksWatts\":%.2f,\"loadFactor\":%.4f," +
                 "\"carbonRegion\":\"%s\",\"carbonFootprintKg\":%.6f," +
                 "\"estimatedCostDollars\":%.4f,\"energyPerTaskJoules\":%.2f}",
                 totalITEnergyKWh, totalFacilityEnergyKWh, pue, averagePowerWatts, peakPowerWatts,
+                sumOfHostPeaksWatts, loadFactor,
                 carbonRegion != null ? carbonRegion : "UNKNOWN", carbonFootprintKg,
                 estimatedCostDollars, energyPerTaskJoules
             );
