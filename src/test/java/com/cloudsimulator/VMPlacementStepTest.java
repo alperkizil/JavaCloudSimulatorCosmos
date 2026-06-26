@@ -28,7 +28,6 @@ public class VMPlacementStepTest {
         testFirstFitStrategy();
         testBestFitStrategy();
         testLoadBalancingStrategy();
-        testPowerAwareStrategy();
         testEdgeCases();
         testComputeTypeCompatibility();
 
@@ -193,86 +192,58 @@ public class VMPlacementStepTest {
         System.out.println();
     }
 
-    private static void testPowerAwareStrategy() {
-        System.out.println("Test 4: Power Aware Strategy (Consolidation)");
-        System.out.println("-".repeat(60));
-
-        SimulationContext context = createLimitedResourceContext();
-        VMPlacementStep step = new VMPlacementStep(new PowerAwareVMPlacementStrategy());
-
-        step.execute(context);
-
-        System.out.println("  Strategy: " + step.getStrategy().getStrategyName());
-        System.out.println("  VMs placed: " + step.getVmsPlaced());
-        System.out.println("  VMs failed: " + step.getVmsFailed());
-        System.out.println("  Active hosts: " + step.getActiveHostCount());
-
-        printHostDistribution(context, step);
-
-        // Power Aware consolidates VMs into fewer hosts
-        // Expected: Minimize active hosts by packing densely
-        boolean passed = step.getVmsPlaced() == 6 && step.getVmsFailed() == 0;
-
-        // Check for consolidation (should try to use fewer hosts)
-        int activeHosts = step.getActiveHostCount();
-        System.out.println("  Consolidation check (fewer active hosts is better)");
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
-        System.out.println();
-    }
-
     private static void testEdgeCases() {
-        System.out.println("Test 5: Edge Cases");
+        System.out.println("Test 4: Edge Cases");
         System.out.println("-".repeat(60));
 
-        // Test 5a: Empty VMs list
-        System.out.println("  Test 5a: Empty VMs list");
+        // Test 4a: Empty VMs list
+        System.out.println("  Test 4a: Empty VMs list");
         SimulationContext emptyContext = new SimulationContext();
         VMPlacementStep step = new VMPlacementStep();
         step.execute(emptyContext);
-        boolean test5a = step.getVmsPlaced() == 0 && step.getVmsFailed() == 0;
-        System.out.println("    Result: " + (test5a ? "PASSED" : "FAILED"));
+        boolean test4a = step.getVmsPlaced() == 0 && step.getVmsFailed() == 0;
+        System.out.println("    Result: " + (test4a ? "PASSED" : "FAILED"));
 
-        // Test 5b: Default strategy (FirstFit)
-        System.out.println("  Test 5b: Default strategy is FirstFit");
+        // Test 4b: Default strategy (FirstFit)
+        System.out.println("  Test 4b: Default strategy is FirstFit");
         VMPlacementStep defaultStep = new VMPlacementStep();
-        boolean test5b = defaultStep.getStrategy() instanceof FirstFitVMPlacementStrategy;
+        boolean test4b = defaultStep.getStrategy() instanceof FirstFitVMPlacementStrategy;
         System.out.println("    Strategy: " + defaultStep.getStrategy().getStrategyName());
-        System.out.println("    Result: " + (test5b ? "PASSED" : "FAILED"));
+        System.out.println("    Result: " + (test4b ? "PASSED" : "FAILED"));
 
-        // Test 5c: Strategy descriptions
-        System.out.println("  Test 5c: Strategy descriptions available");
+        // Test 4c: Strategy descriptions
+        System.out.println("  Test 4c: Strategy descriptions available");
         VMPlacementStrategy[] strategies = {
             new FirstFitVMPlacementStrategy(),
             new BestFitVMPlacementStrategy(),
-            new LoadBalancingVMPlacementStrategy(),
-            new PowerAwareVMPlacementStrategy()
+            new LoadBalancingVMPlacementStrategy()
         };
-        boolean test5c = true;
+        boolean test4c = true;
         for (VMPlacementStrategy s : strategies) {
             if (s.getDescription() == null || s.getDescription().isEmpty()) {
-                test5c = false;
+                test4c = false;
             }
             System.out.println("    " + s.getStrategyName() + ": " +
                     (s.getDescription().length() > 50 ? s.getDescription().substring(0, 50) + "..." : s.getDescription()));
         }
-        System.out.println("    Result: " + (test5c ? "PASSED" : "FAILED"));
+        System.out.println("    Result: " + (test4c ? "PASSED" : "FAILED"));
 
-        // Test 5d: Metrics recorded
-        System.out.println("  Test 5d: Metrics recorded correctly");
+        // Test 4d: Metrics recorded
+        System.out.println("  Test 4d: Metrics recorded correctly");
         SimulationContext context = createLimitedResourceContext();
         VMPlacementStep metricStep = new VMPlacementStep(new FirstFitVMPlacementStrategy());
         metricStep.execute(context);
-        boolean test5d = context.getMetric("vmPlacement.vmsPlaced") != null &&
+        boolean test4d = context.getMetric("vmPlacement.vmsPlaced") != null &&
                         context.getMetric("vmPlacement.vmsFailed") != null &&
                         context.getMetric("vmPlacement.strategy") != null;
         System.out.println("    vmPlacement.vmsPlaced: " + context.getMetric("vmPlacement.vmsPlaced"));
         System.out.println("    vmPlacement.vmsFailed: " + context.getMetric("vmPlacement.vmsFailed"));
         System.out.println("    vmPlacement.strategy: " + context.getMetric("vmPlacement.strategy"));
         System.out.println("    vmPlacement.activeHosts: " + context.getMetric("vmPlacement.activeHosts"));
-        System.out.println("    Result: " + (test5d ? "PASSED" : "FAILED"));
+        System.out.println("    Result: " + (test4d ? "PASSED" : "FAILED"));
 
-        // Test 5e: VM without valid owner
-        System.out.println("  Test 5e: VM without valid owner (should skip and warn)");
+        // Test 4e: VM without valid owner
+        System.out.println("  Test 4e: VM without valid owner (should skip and warn)");
         SimulationContext orphanContext = new SimulationContext();
         CloudDatacenter dc = new CloudDatacenter("DC-Test", 10, 100000.0);
         Host host = createHost(8, 0, 32768, ComputeType.CPU_ONLY);
@@ -286,17 +257,17 @@ public class VMPlacementStepTest {
 
         VMPlacementStep orphanStep = new VMPlacementStep();
         orphanStep.execute(orphanContext);
-        boolean test5e = orphanStep.getVmsFailed() == 1;
+        boolean test4e = orphanStep.getVmsFailed() == 1;
         System.out.println("    VMs failed: " + orphanStep.getVmsFailed());
         System.out.println("    Failure reason: " +
             (orphanStep.getFailedVMReasons().isEmpty() ? "none" : orphanStep.getFailedVMReasons().get(0)));
-        System.out.println("    Result: " + (test5e ? "PASSED" : "FAILED"));
+        System.out.println("    Result: " + (test4e ? "PASSED" : "FAILED"));
 
         System.out.println();
     }
 
     private static void testComputeTypeCompatibility() {
-        System.out.println("Test 6: Compute Type Compatibility");
+        System.out.println("Test 5: Compute Type Compatibility");
         System.out.println("-".repeat(60));
 
         // Create context with specific compute type constraints
@@ -383,21 +354,19 @@ public class VMPlacementStepTest {
      * - 4 small VMs: 2 cores, 1 GPU, 4GB RAM each (can all fit on 1 host)
      *
      * Expected Results:
-     * - PowerAware: 1 active host (consolidates all VMs into one)
-     * - LoadBalancing: 4 active hosts (spreads VMs across all)
      * - FirstFit: 1 active host (fills first host)
-     * - BestFit: 1 active host (similar to FirstFit for small VMs)
+     * - BestFit: 1 active host (packs tightly into one host)
+     * - LoadBalancing: 4 active hosts (spreads VMs across all)
      */
     private static void testStrategyDifferentiation() {
-        System.out.println("Test 7: Strategy Differentiation (Key Test)");
+        System.out.println("Test 6: Strategy Differentiation (Key Test)");
         System.out.println("-".repeat(60));
         System.out.println("  Setup: 4 identical hosts, 4 small VMs that can fit on 1 host");
-        System.out.println("  Goal: Show different strategies produce different active host counts\n");
+        System.out.println("  Goal: Show pack vs spread strategies produce different active host counts\n");
 
         int firstFitHosts = runDifferentiationScenario(new FirstFitVMPlacementStrategy());
         int bestFitHosts = runDifferentiationScenario(new BestFitVMPlacementStrategy());
         int loadBalancingHosts = runDifferentiationScenario(new LoadBalancingVMPlacementStrategy());
-        int powerAwareHosts = runDifferentiationScenario(new PowerAwareVMPlacementStrategy());
 
         System.out.println("\n  Summary of Active Hosts:");
         System.out.println("  +-----------------------+---------------+");
@@ -406,20 +375,19 @@ public class VMPlacementStepTest {
         System.out.printf("  | First Fit             |       %d       |%n", firstFitHosts);
         System.out.printf("  | Best Fit              |       %d       |%n", bestFitHosts);
         System.out.printf("  | Load Balancing        |       %d       |%n", loadBalancingHosts);
-        System.out.printf("  | Power Aware           |       %d       |%n", powerAwareHosts);
         System.out.println("  +-----------------------+---------------+");
 
-        // Verify differentiation
-        boolean loadBalancingDifferent = loadBalancingHosts > powerAwareHosts;
-        boolean powerAwareConsolidates = powerAwareHosts == 1;
+        // Verify differentiation: spread (LoadBalancing) should use more hosts than pack (BestFit)
+        boolean loadBalancingSpreads = loadBalancingHosts > bestFitHosts;
+        boolean bestFitConsolidates = bestFitHosts == 1;
 
         System.out.println("\n  Differentiation Checks:");
-        System.out.println("    Load Balancing uses more hosts than Power Aware: " +
-            (loadBalancingDifferent ? "PASSED" : "FAILED"));
-        System.out.println("    Power Aware consolidates to minimum hosts: " +
-            (powerAwareConsolidates ? "PASSED" : "FAILED"));
+        System.out.println("    Load Balancing uses more hosts than Best Fit: " +
+            (loadBalancingSpreads ? "PASSED" : "FAILED"));
+        System.out.println("    Best Fit consolidates to minimum hosts: " +
+            (bestFitConsolidates ? "PASSED" : "FAILED"));
 
-        boolean passed = loadBalancingDifferent && powerAwareConsolidates;
+        boolean passed = loadBalancingSpreads && bestFitConsolidates;
         System.out.println("\n  Overall Result: " + (passed ? "PASSED" : "FAILED"));
         System.out.println();
     }
