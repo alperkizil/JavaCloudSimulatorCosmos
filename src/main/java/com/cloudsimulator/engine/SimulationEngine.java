@@ -3,6 +3,7 @@ package com.cloudsimulator.engine;
 import com.cloudsimulator.config.ConfigParser;
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.config.FileConfigParser;
+import com.cloudsimulator.model.SimulationSummary;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
@@ -30,6 +31,7 @@ public class SimulationEngine {
     private SimulationLogger logger;
     private ConfigParser configParser;
     private long randomSeed;
+    private final List<SimulationListener> listeners = new ArrayList<>();
 
     public SimulationEngine() {
         this.context = new SimulationContext();
@@ -37,6 +39,29 @@ public class SimulationEngine {
         this.logger = new SimulationLogger();
         this.configParser = new FileConfigParser();
         this.randomSeed = System.currentTimeMillis(); // Default seed
+    }
+
+    /**
+     * Registers a listener that is notified at the end of {@link #run()} and
+     * {@link #runMultiObjective()}. Adding the same listener twice registers it
+     * twice (callbacks fire once per registration).
+     *
+     * @param listener the listener to add (ignored if {@code null})
+     */
+    public void addListener(SimulationListener listener) {
+        if (listener != null) {
+            this.listeners.add(listener);
+        }
+    }
+
+    /**
+     * Removes a previously registered listener.
+     *
+     * @param listener the listener to remove
+     * @return {@code true} if a listener was removed
+     */
+    public boolean removeListener(SimulationListener listener) {
+        return this.listeners.remove(listener);
     }
 
     /**
@@ -138,6 +163,14 @@ public class SimulationEngine {
         logger.info("========================================");
         logger.info("Simulation finished in " + duration + " ms");
         logger.info("========================================");
+
+        // Notify listeners of run completion (success path only; the try block
+        // above rethrows on failure). The summary is null when no
+        // MetricsCollectionStep populated it; listeners must tolerate that.
+        SimulationSummary summary = context.getSimulationSummary();
+        for (SimulationListener listener : listeners) {
+            listener.onRunComplete(context, summary);
+        }
     }
 
     /**
@@ -375,6 +408,12 @@ public class SimulationEngine {
             logger.info("========================================");
 
             lastMultiObjectiveResult = moResult;
+
+            // Notify listeners of multi-objective completion before returning.
+            for (SimulationListener listener : listeners) {
+                listener.onMultiObjectiveComplete(moResult);
+            }
+
             return moResult;
 
         } catch (Exception e) {
