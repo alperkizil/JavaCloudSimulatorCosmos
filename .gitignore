@@ -36,3 +36,6 @@ __pycache__/
 
 # Generated simulation reports
 reports/
+
+# Generated newExperiments output
+results/
