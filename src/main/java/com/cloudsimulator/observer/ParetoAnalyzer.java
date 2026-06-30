@@ -4,7 +4,9 @@ import com.cloudsimulator.multiobjectivePerformance.PerfMet.PerformanceMetrics;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -425,6 +427,22 @@ public final class ParetoAnalyzer {
      * sort by x. Mirrors the runners' {@code computeUniversalPareto}.
      */
     public static List<double[]> computeUniversalPareto(List<AlgorithmRunResult> runs) {
+        return nonDominatedUnion(runs);
+    }
+
+    /**
+     * Builds one algorithm's aggregate Pareto front: pools that algorithm's
+     * points across all of its seeds/runs, keeps the non-dominated ones,
+     * de-duplicates at 1e-9, sorts by x. Same union logic as
+     * {@link #computeUniversalPareto} but scoped to a single algorithm's runs
+     * (e.g. NSGA-II over seeds 100&ndash;109).
+     */
+    public static List<double[]> computeAlgorithmFront(List<AlgorithmRunResult> labelRuns) {
+        return nonDominatedUnion(labelRuns);
+    }
+
+    /** Shared "pool &rarr; non-dominated &rarr; dedup(1e-9) &rarr; sort by x" over a set of runs. */
+    private static List<double[]> nonDominatedUnion(List<AlgorithmRunResult> runs) {
         List<double[]> all = new ArrayList<>();
         for (AlgorithmRunResult run : runs) {
             for (double[] sol : run.getFront()) {
@@ -433,7 +451,7 @@ public final class ParetoAnalyzer {
                 }
             }
         }
-        List<double[]> universal = new ArrayList<>();
+        List<double[]> union = new ArrayList<>();
         for (double[] candidate : all) {
             boolean isDominated = false;
             for (double[] other : all) {
@@ -444,19 +462,19 @@ public final class ParetoAnalyzer {
             }
             if (!isDominated) {
                 boolean duplicate = false;
-                for (double[] existing : universal) {
+                for (double[] existing : union) {
                     if (matchesWithinEps(existing, candidate)) {
                         duplicate = true;
                         break;
                     }
                 }
                 if (!duplicate) {
-                    universal.add(candidate);
+                    union.add(candidate);
                 }
             }
         }
-        universal.sort((a, b) -> Double.compare(a[0], b[0]));
-        return universal;
+        union.sort((a, b) -> Double.compare(a[0], b[0]));
+        return union;
     }
 
     /**
@@ -522,10 +540,14 @@ public final class ParetoAnalyzer {
     public static final class ScenarioAnalysis {
         public final List<double[]> universalFront;
         public final double universalHV;
+        /** Algorithm label &rarr; that algorithm's aggregate (union-over-seeds) front. */
+        public final Map<String, List<double[]>> algorithmFronts;
 
-        ScenarioAnalysis(List<double[]> universalFront, double universalHV) {
+        ScenarioAnalysis(List<double[]> universalFront, double universalHV,
+                         Map<String, List<double[]>> algorithmFronts) {
             this.universalFront = universalFront;
             this.universalHV = universalHV;
+            this.algorithmFronts = algorithmFronts;
         }
     }
 
@@ -539,6 +561,16 @@ public final class ParetoAnalyzer {
      */
     public static ScenarioAnalysis analyzeScenario(List<AlgorithmRunResult> scenarioRuns) {
         List<double[]> universal = computeUniversalPareto(scenarioRuns);
+
+        // Per-algorithm aggregate fronts (union over each algorithm's own seeds).
+        Map<String, List<AlgorithmRunResult>> runsByLabel = new LinkedHashMap<>();
+        for (AlgorithmRunResult run : scenarioRuns) {
+            runsByLabel.computeIfAbsent(run.getLabel(), k -> new ArrayList<>()).add(run);
+        }
+        Map<String, List<double[]>> algorithmFronts = new LinkedHashMap<>();
+        for (Map.Entry<String, List<AlgorithmRunResult>> e : runsByLabel.entrySet()) {
+            algorithmFronts.put(e.getKey(), computeAlgorithmFront(e.getValue()));
+        }
 
         // Union bounds over every non-failure point plus the universal front
         // (the universal points are a subset of run points, so this matches
@@ -556,7 +588,7 @@ public final class ParetoAnalyzer {
         double universalHV = universalHV(universal);
         if (allPoints.isEmpty()) {
             // Nothing to analyse; leave indicator defaults in place.
-            return new ScenarioAnalysis(universal, universalHV);
+            return new ScenarioAnalysis(universal, universalHV, algorithmFronts);
         }
         double[] bounds = unionBounds(allPoints);
 
@@ -579,6 +611,6 @@ public final class ParetoAnalyzer {
             run.setParetoContributionCount(paretoContributionCount(front, universal));
         }
 
-        return new ScenarioAnalysis(universal, universalHV);
+        return new ScenarioAnalysis(universal, universalHV, algorithmFronts);
     }
 }

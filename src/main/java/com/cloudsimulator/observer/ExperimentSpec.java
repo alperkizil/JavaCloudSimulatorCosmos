@@ -2,8 +2,11 @@ package com.cloudsimulator.observer;
 
 import com.cloudsimulator.model.SimulationSummary;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.ToDoubleFunction;
 
 /**
@@ -52,21 +55,36 @@ public final class ExperimentSpec {
     /** Default PowerCeiling cap thresholds in Watts: 220 kW, 190 kW, 120 kW. */
     public static final double[] DEFAULT_CAP_THRESHOLDS_WATTS = {220_000, 190_000, 120_000};
 
+    /** Timestamp format used in the resolved experiment id (e.g. {@code 30_06_2026_14_05_09}). */
+    private static final DateTimeFormatter ID_TIMESTAMP = DateTimeFormatter.ofPattern("dd_MM_yyyy_HH_mm_ss");
+
+    private final String name;                                          // nullable (unnamed experiment)
     private final ObjectiveSpec objectiveX;
     private final ObjectiveSpec objectiveY;
     private final ToDoubleFunction<SimulationSummary> auxPeakExtractor; // nullable
     private final double[] capThresholdsWatts;                          // nullable
 
     public ExperimentSpec(ObjectiveSpec objectiveX, ObjectiveSpec objectiveY) {
-        this(objectiveX, objectiveY, null, null);
+        this(null, objectiveX, objectiveY, null, null);
     }
 
     public ExperimentSpec(ObjectiveSpec objectiveX, ObjectiveSpec objectiveY,
                           ToDoubleFunction<SimulationSummary> auxPeakExtractor,
                           double[] capThresholdsWatts) {
+        this(null, objectiveX, objectiveY, auxPeakExtractor, capThresholdsWatts);
+    }
+
+    public ExperimentSpec(String name, ObjectiveSpec objectiveX, ObjectiveSpec objectiveY) {
+        this(name, objectiveX, objectiveY, null, null);
+    }
+
+    public ExperimentSpec(String name, ObjectiveSpec objectiveX, ObjectiveSpec objectiveY,
+                          ToDoubleFunction<SimulationSummary> auxPeakExtractor,
+                          double[] capThresholdsWatts) {
         if (objectiveX == null || objectiveY == null) {
             throw new IllegalArgumentException("both objectives must be specified");
         }
+        this.name = name;
         this.objectiveX = objectiveX;
         this.objectiveY = objectiveY;
         this.auxPeakExtractor = auxPeakExtractor;
@@ -76,19 +94,31 @@ public final class ExperimentSpec {
     // ---- Factory methods for the three locked studies ----------------------
 
     public static ExperimentSpec scenarioComparison() {
-        return new ExperimentSpec(
+        return scenarioComparison(null);
+    }
+
+    public static ExperimentSpec scenarioComparison(String name) {
+        return new ExperimentSpec(name,
             new ObjectiveSpec("Makespan", MAKESPAN),
             new ObjectiveSpec("Energy", ENERGY));
     }
 
     public static ExperimentSpec waitingTime() {
-        return new ExperimentSpec(
+        return waitingTime(null);
+    }
+
+    public static ExperimentSpec waitingTime(String name) {
+        return new ExperimentSpec(name,
             new ObjectiveSpec("WaitingTime", WAITING_TIME),
             new ObjectiveSpec("Energy", ENERGY));
     }
 
     public static ExperimentSpec powerCeiling() {
-        return new ExperimentSpec(
+        return powerCeiling(null);
+    }
+
+    public static ExperimentSpec powerCeiling(String name) {
+        return new ExperimentSpec(name,
             new ObjectiveSpec("WaitingTime", WAITING_TIME),
             new ObjectiveSpec("Energy", ENERGY),
             PEAK_POWER_WATTS,
@@ -125,5 +155,56 @@ public final class ExperimentSpec {
     /** @return cap thresholds (Watts), or {@code null} if none are configured. */
     public double[] getCapThresholdsWatts() {
         return capThresholdsWatts == null ? null : capThresholdsWatts.clone();
+    }
+
+    // ---- Naming / identity --------------------------------------------------
+
+    /** @return the experiment name, or {@code null} if unnamed. */
+    public String getName() {
+        return name;
+    }
+
+    /** @return {@code true} if a non-blank name was supplied. */
+    public boolean hasName() {
+        return name != null && !name.trim().isEmpty();
+    }
+
+    /** Returns a copy of this spec with the given experiment name (objectives unchanged). */
+    public ExperimentSpec withName(String newName) {
+        return new ExperimentSpec(newName, objectiveX, objectiveY, auxPeakExtractor, capThresholdsWatts);
+    }
+
+    /**
+     * Pure, deterministic id builder: {@code "<base>_<timestamp>"}, where
+     * {@code base} is the (trimmed) experiment name when present, otherwise
+     * {@code fallbackId}. Useful for tests and when the caller owns the
+     * timestamp / generated id.
+     *
+     * @param timestamp  the formatted timestamp component
+     * @param fallbackId id to use when this experiment has no name
+     */
+    public String buildExperimentId(String timestamp, String fallbackId) {
+        String base = hasName() ? name.trim() : fallbackId;
+        return base + "_" + timestamp;
+    }
+
+    /**
+     * Resolves the experiment id at the given time: {@code "<name>_<timestamp>"}
+     * if named, otherwise {@code "<generatedId>_<timestamp>"}. Resolve <em>once</em>
+     * per run and reuse the result (each unnamed call generates a fresh id).
+     */
+    public String resolveExperimentId(LocalDateTime when) {
+        String timestamp = when.format(ID_TIMESTAMP);
+        return buildExperimentId(timestamp, hasName() ? null : generateId());
+    }
+
+    /** Resolves the experiment id at the current time. See {@link #resolveExperimentId(LocalDateTime)}. */
+    public String resolveExperimentId() {
+        return resolveExperimentId(LocalDateTime.now());
+    }
+
+    /** Generates a short unique id for unnamed experiments, e.g. {@code exp-1a2b3c4d}. */
+    private static String generateId() {
+        return "exp-" + UUID.randomUUID().toString().substring(0, 8);
     }
 }

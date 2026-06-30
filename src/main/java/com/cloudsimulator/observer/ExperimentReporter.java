@@ -48,23 +48,58 @@ public final class ExperimentReporter {
         public final Map<String, List<AlgorithmRunResult>> runsByLabel;
         public final List<double[]> universalFront;
         public final double universalHV;
+        /** Algorithm label &rarr; that algorithm's aggregate (union-over-seeds) front. */
+        public final Map<String, List<double[]>> algorithmFronts;
 
         public ScenarioReport(int scenarioNumber, String scenarioName, List<String> objectiveNames,
                               Map<String, List<AlgorithmRunResult>> runsByLabel,
-                              List<double[]> universalFront, double universalHV) {
+                              List<double[]> universalFront, double universalHV,
+                              Map<String, List<double[]>> algorithmFronts) {
             this.scenarioNumber = scenarioNumber;
             this.scenarioName = scenarioName;
             this.objectiveNames = objectiveNames;
             this.runsByLabel = runsByLabel;
             this.universalFront = universalFront;
             this.universalHV = universalHV;
+            this.algorithmFronts = algorithmFronts;
         }
+    }
+
+    /** Default results root folder (relative to the working/root directory). */
+    public static final String DEFAULT_RESULTS_ROOT = "results";
+
+    /**
+     * Writes all artifacts into a fresh per-experiment folder under the default
+     * {@value #DEFAULT_RESULTS_ROOT} root: {@code results/<experimentId>/}, where
+     * the id is resolved from the spec ({@code name_timestamp}, or
+     * {@code generatedId_timestamp} when unnamed).
+     *
+     * @return the experiment folder that was created
+     * @throws IOException if the directory cannot be created
+     */
+    public Path writeExperiment(ExperimentSpec spec, List<ScenarioReport> scenarios) throws IOException {
+        return writeExperiment(DEFAULT_RESULTS_ROOT, spec.resolveExperimentId(), scenarios);
+    }
+
+    /**
+     * Writes all artifacts into {@code <resultsRoot>/<experimentId>/}. Use this
+     * overload to control the root folder or to pass a pre-resolved id (resolve
+     * the id once and reuse it, since each unnamed resolution generates a new id).
+     *
+     * @return the experiment folder that was created
+     * @throws IOException if the directory cannot be created
+     */
+    public Path writeExperiment(String resultsRoot, String experimentId,
+                                List<ScenarioReport> scenarios) throws IOException {
+        Path dir = Paths.get(resultsRoot, experimentId);
+        writeAll(dir.toString(), scenarios);
+        return dir;
     }
 
     /**
      * Writes all artifacts for a campaign into {@code outputDir}: per-scenario
-     * pareto-graph and performance-metrics CSVs, the experiment summary, and
-     * {@code plot_options.json}.
+     * pareto-graph, performance-metrics and algorithm-fronts CSVs, the experiment
+     * summary, and {@code plot_options.json}.
      *
      * @throws IOException if the output directory cannot be created
      */
@@ -74,6 +109,7 @@ public final class ExperimentReporter {
         for (ScenarioReport scenario : scenarios) {
             writeParetoGraphData(dir, scenario);
             writePerformanceMetrics(dir, scenario);
+            writeAlgorithmParetoFronts(dir, scenario);
         }
         writeExperimentSummary(dir, scenarios);
         writePlotOptions(dir, scenarios.size());
@@ -143,6 +179,32 @@ public final class ExperimentReporter {
             int univSize = s.universalFront.size();
             w.printf("Universal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0%n",
                 s.universalHV, univSize, univSize, univSize);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // scenario_N_algorithm_pareto_fronts.csv (additive; not part of the legacy schema)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes each algorithm's aggregate (union-over-seeds) non-dominated front.
+     * This is a NEW file, not part of the byte-compatible legacy schema, so it
+     * leaves the existing CSVs untouched. Rows are grouped by algorithm and
+     * sorted by the first objective (as produced by
+     * {@link ParetoAnalyzer#computeAlgorithmFront}).
+     */
+    void writeAlgorithmParetoFronts(Path dir, ScenarioReport s) throws IOException {
+        String file = "scenario_" + s.scenarioNumber + "_algorithm_pareto_fronts.csv";
+        try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
+            w.println("Algorithm," + s.objectiveNames.get(0) + "," + s.objectiveNames.get(1));
+            if (s.algorithmFronts != null) {
+                for (Map.Entry<String, List<double[]>> entry : s.algorithmFronts.entrySet()) {
+                    String label = entry.getKey();
+                    for (double[] point : entry.getValue()) {
+                        w.printf("%s,%.6f,%.9f%n", label, point[0], point[1]);
+                    }
+                }
+            }
         }
     }
 

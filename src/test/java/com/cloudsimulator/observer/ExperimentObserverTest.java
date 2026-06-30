@@ -13,6 +13,9 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.steps.TaskAssignmentStep;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -41,6 +44,10 @@ public class ExperimentObserverTest {
         testObserverCaptureFromMOResult();
         testEngineHookMultiObjective();
         testEngineHookSingleRun();
+        testAlgorithmAggregateFront();
+        testReporterWritesAlgorithmFronts();
+        testExperimentNaming();
+        testWriteExperimentFolder();
 
         System.out.println();
         if (failures == 0) {
@@ -197,6 +204,188 @@ public class ExperimentObserverTest {
         assertEqualsInt("run() front size", 1, run.getFront().size());
         assertClose("run() waiting", 7.0, run.getFront().get(0)[0]);
         assertClose("run() energy", 0.9, run.getFront().get(0)[1]);
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Per-algorithm aggregate front (union over an algorithm's seeds)
+    // -------------------------------------------------------------------------
+
+    private static void testAlgorithmAggregateFront() {
+        System.out.println("[4] Per-algorithm aggregate Pareto front");
+
+        // NSGA-II over two seeds; pooled points include dominated ones (5,5),(3,3).
+        AlgorithmRunResult nsga100 = makeRun("NSGA-II", 100L,
+            new double[][] {{2, 2}, {4, 1}, {5, 5}});
+        AlgorithmRunResult nsga101 = makeRun("NSGA-II", 101L,
+            new double[][] {{1, 4}, {3, 3}});
+        AlgorithmRunResult spea = makeRun("SPEA-II", 100L,
+            new double[][] {{0, 9}, {9, 0}});
+
+        // NSGA-II aggregate front = non-dominated of all its points = (1,4),(2,2),(4,1).
+        List<double[]> nsgaFront = ParetoAnalyzer.computeAlgorithmFront(Arrays.asList(nsga100, nsga101));
+        assertFrontEquals("NSGA-II aggregate front",
+            new double[][] {{1, 4}, {2, 2}, {4, 1}}, nsgaFront);
+
+        // analyzeScenario should expose per-algorithm fronts for every label.
+        List<AlgorithmRunResult> scenario = Arrays.asList(nsga100, nsga101, spea);
+        ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenario);
+        assertTrue("algorithmFronts has NSGA-II", analysis.algorithmFronts.containsKey("NSGA-II"));
+        assertTrue("algorithmFronts has SPEA-II", analysis.algorithmFronts.containsKey("SPEA-II"));
+        assertFrontEquals("analysis NSGA-II front",
+            new double[][] {{1, 4}, {2, 2}, {4, 1}}, analysis.algorithmFronts.get("NSGA-II"));
+        assertFrontEquals("analysis SPEA-II front",
+            new double[][] {{0, 9}, {9, 0}}, analysis.algorithmFronts.get("SPEA-II"));
+        // Universal front spans all algorithms.
+        assertFrontEquals("universal front",
+            new double[][] {{0, 9}, {1, 4}, {2, 2}, {4, 1}, {9, 0}}, analysis.universalFront);
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Reporter writes the additive per-algorithm CSV
+    // -------------------------------------------------------------------------
+
+    private static void testReporterWritesAlgorithmFronts() {
+        System.out.println("[5] ExperimentReporter writes scenario_N_algorithm_pareto_fronts.csv");
+
+        AlgorithmRunResult nsga = makeRun("NSGA-II", 100L, new double[][] {{1, 4}, {2, 2}, {4, 1}});
+        AlgorithmRunResult spea = makeRun("SPEA-II", 100L, new double[][] {{0, 9}, {9, 0}});
+        List<AlgorithmRunResult> scenario = Arrays.asList(nsga, spea);
+        ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenario);
+
+        Map<String, List<AlgorithmRunResult>> byLabel = new LinkedHashMap<>();
+        for (AlgorithmRunResult r : scenario) {
+            byLabel.computeIfAbsent(r.getLabel(), k -> new ArrayList<>()).add(r);
+        }
+        ExperimentReporter.ScenarioReport report = new ExperimentReporter.ScenarioReport(
+            1, "Balanced", Arrays.asList("Makespan", "Energy"),
+            byLabel, analysis.universalFront, analysis.universalHV, analysis.algorithmFronts);
+
+        try {
+            Path tmp = Files.createTempDirectory("obs-report-test");
+            new ExperimentReporter().writeAll(tmp.toString(), Arrays.asList(report));
+            Path csv = tmp.resolve("scenario_1_algorithm_pareto_fronts.csv");
+            assertTrue("algorithm fronts CSV exists", Files.exists(csv));
+
+            List<String> lines = Files.readAllLines(csv);
+            assertEquals("header", "Algorithm,Makespan,Energy", lines.get(0));
+            // NSGA-II: 3 rows, SPEA-II: 2 rows => 5 data rows.
+            assertEqualsInt("data row count", 5, lines.size() - 1);
+            assertEquals("first data row", "NSGA-II,1.000000,4.000000000", lines.get(1));
+            assertEquals("first SPEA-II row", "SPEA-II,0.000000,9.000000000", lines.get(4));
+        } catch (Exception e) {
+            System.out.println("  FAIL: reporter threw " + e);
+            failures++;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Experiment naming + id resolution
+    // -------------------------------------------------------------------------
+
+    private static void testExperimentNaming() {
+        System.out.println("[6] Experiment naming + id resolution");
+
+        LocalDateTime when = LocalDateTime.of(2026, 1, 2, 13, 5, 9);
+        String ts = "02_01_2026_13_05_09"; // dd_MM_yyyy_HH_mm_ss
+
+        // Named experiment -> "<name>_<timestamp>".
+        ExperimentSpec named = ExperimentSpec.waitingTime("paper-run");
+        assertEquals("named getName", "paper-run", named.getName());
+        assertTrue("named hasName", named.hasName());
+        assertEquals("named buildExperimentId", "paper-run_" + ts,
+            named.buildExperimentId(ts, "exp-IGNORED"));
+        assertEquals("named resolveExperimentId", "paper-run_" + ts,
+            named.resolveExperimentId(when));
+
+        // Unnamed experiment -> "<generatedId>_<timestamp>".
+        ExperimentSpec unnamed = ExperimentSpec.waitingTime();
+        assertTrue("unnamed has no name", !unnamed.hasName() && unnamed.getName() == null);
+        assertEquals("unnamed buildExperimentId", "exp-abcd1234_" + ts,
+            unnamed.buildExperimentId(ts, "exp-abcd1234"));
+        String resolved = unnamed.resolveExperimentId(when);
+        assertTrue("unnamed resolveExperimentId pattern",
+            resolved.startsWith("exp-") && resolved.endsWith("_" + ts));
+
+        // withName preserves objectives.
+        ExperimentSpec renamed = ExperimentSpec.waitingTime().withName("x");
+        assertEquals("withName getName", "x", renamed.getName());
+        assertEquals("withName objectives", "[WaitingTime, Energy]", renamed.getObjectiveNames().toString());
+
+        // Blank name is treated as unnamed.
+        ExperimentSpec blank = ExperimentSpec.scenarioComparison("   ");
+        assertTrue("blank treated as unnamed", !blank.hasName());
+        assertTrue("blank falls back to generated id",
+            blank.resolveExperimentId(when).startsWith("exp-"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. writeExperiment creates <root>/<experimentId>/ and writes results there
+    // -------------------------------------------------------------------------
+
+    private static void testWriteExperimentFolder() {
+        System.out.println("[7] ExperimentReporter.writeExperiment creates <root>/<id>/ folder");
+
+        AlgorithmRunResult nsga = makeRun("NSGA-II", 100L, new double[][] {{1, 4}, {2, 2}, {4, 1}});
+        List<AlgorithmRunResult> scenario = Arrays.asList(nsga);
+        ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenario);
+        Map<String, List<AlgorithmRunResult>> byLabel = new LinkedHashMap<>();
+        byLabel.put("NSGA-II", scenario);
+        ExperimentReporter.ScenarioReport report = new ExperimentReporter.ScenarioReport(
+            1, "Balanced", Arrays.asList("Makespan", "Energy"),
+            byLabel, analysis.universalFront, analysis.universalHV, analysis.algorithmFronts);
+
+        try {
+            Path tmpRoot = Files.createTempDirectory("obs-results");
+            String expId = "paper-run_02_01_2026_13_05_09"; // explicit id => deterministic
+            Path expDir = new ExperimentReporter()
+                .writeExperiment(tmpRoot.toString(), expId, Arrays.asList(report));
+
+            assertTrue("experiment folder created", Files.isDirectory(expDir));
+            assertEquals("folder named by experiment id", expId, expDir.getFileName().toString());
+            assertTrue("folder nested under results root", expDir.getParent().equals(tmpRoot));
+            assertTrue("graph CSV in folder",
+                Files.exists(expDir.resolve("scenario_1_pareto_graph_data.csv")));
+            assertTrue("algorithm-fronts CSV in folder",
+                Files.exists(expDir.resolve("scenario_1_algorithm_pareto_fronts.csv")));
+            assertTrue("performance-metrics CSV in folder",
+                Files.exists(expDir.resolve("scenario_1_performance_metrics.csv")));
+            assertTrue("experiment summary in folder",
+                Files.exists(expDir.resolve("experiment_summary.csv")));
+            assertTrue("plot options in folder",
+                Files.exists(expDir.resolve("plot_options.json")));
+        } catch (Exception e) {
+            System.out.println("  FAIL: writeExperiment threw " + e);
+            failures++;
+        }
+    }
+
+    private static AlgorithmRunResult makeRun(String label, long seed, double[][] points) {
+        List<double[]> front = new ArrayList<>();
+        for (double[] p : points) {
+            front.add(p);
+        }
+        return new AlgorithmRunResult(label, 1, "Balanced", seed,
+            Arrays.asList("Makespan", "Energy"), front, null, 100L);
+    }
+
+    private static void assertFrontEquals(String name, double[][] expected, List<double[]> actual) {
+        if (actual.size() != expected.length) {
+            System.out.println("  FAIL: " + name + " size expected=" + expected.length
+                + " actual=" + actual.size());
+            failures++;
+            return;
+        }
+        for (int i = 0; i < expected.length; i++) {
+            if (Math.abs(expected[i][0] - actual.get(i)[0]) > TOL
+                || Math.abs(expected[i][1] - actual.get(i)[1]) > TOL) {
+                System.out.println("  FAIL: " + name + "[" + i + "] expected=("
+                    + expected[i][0] + "," + expected[i][1] + ") actual=("
+                    + actual.get(i)[0] + "," + actual.get(i)[1] + ")");
+                failures++;
+                return;
+            }
+        }
+        System.out.println("  ok:   " + name + " (" + actual.size() + " points)");
     }
 
     // -------------------------------------------------------------------------
