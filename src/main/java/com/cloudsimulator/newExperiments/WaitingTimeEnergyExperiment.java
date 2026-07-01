@@ -13,10 +13,11 @@ import com.cloudsimulator.observer.ExperimentSpec;
 public final class WaitingTimeEnergyExperiment {
 
     public static void main(String[] args) {
-        // 1. Algorithms — names + order (controls CSV/plot order). Edit freely.
+        // 1. Algorithms — the 7 front-producing metaheuristics (same set across all
+        //    three studies). Greedy heuristics are excluded (WorkloadAware/EnergyAware
+        //    seed the metaheuristics only); the weighted single-objective GA/SA are
+        //    excluded too (they emit a single point, not a Pareto set).
         String[] algorithms = {
-            "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
-            "GA_WaitingTime", "GA_Energy", "SA_WaitingTime", "SA_Energy",
             "GA_WaitingTime_Dominance", "GA_Energy_Dominance",
             "SA_WaitingTime_Dominance", "SA_Energy_Dominance",
             "NSGA-II", "SPEA-II", "AMOSA"

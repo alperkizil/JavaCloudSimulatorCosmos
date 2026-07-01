@@ -5,6 +5,7 @@ import com.cloudsimulator.observer.AlgorithmRunResult;
 import com.cloudsimulator.observer.ExperimentSpec;
 import com.cloudsimulator.observer.PowerCapFeasibility;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -35,36 +36,46 @@ public class CampaignReproducibilityTest {
         long seed = infra.baseSeed;
 
         for (String label : labels) {
+            final String base = label;
             ExperimentConfiguration cfgA = infra.toExperimentConfiguration(1, seed);
             ExperimentConfiguration cfgB = infra.toExperimentConfiguration(1, seed);
-            List<double[]> frontA = runner.runOne(registry, label, cfgA, 1, "Balanced", seed).getFront();
-            List<double[]> frontB = runner.runOne(registry, label, cfgB, 1, "Balanced", seed).getFront();
+            List<double[]> frontA = runner.runOne(base, (ctx, sd) -> registry.create(base, ctx, sd),
+                cfgA, 1, "Balanced", seed).getFront();
+            List<double[]> frontB = runner.runOne(base, (ctx, sd) -> registry.create(base, ctx, sd),
+                cfgB, 1, "Balanced", seed).getFront();
 
             assertNonEmptyFinite(label, frontA);
             assertIdentical(label, frontA, frontB);
         }
 
-        // ---- PowerCeiling: fronts reproducible + coincident peaks captured ----
+        // ---- PowerCeiling: uncapped metaheuristics, coincident peaks + dynamic caps ----
         System.out.println();
-        System.out.println("--- PowerCeiling (aux coincident peak) ---");
+        System.out.println("--- PowerCeiling (aux coincident peak + dynamic caps) ---");
         ExperimentSpec pcSpec = ExperimentSpec.powerCeiling("repro-test-pc");
         AlgorithmRegistry pcRegistry = new AlgorithmRegistry(params, primary);
         CampaignRunner pcRunner = new CampaignRunner(pcSpec, primary, infra, params, new String[] {"NSGA-II"});
-        double[] caps = pcSpec.getCapThresholdsWatts();
 
-        String[] pcLabels = {
-            "NSGA-II_PC_190kW", "GA_WaitingTime_Dominance_PC_120kW", "WorkloadAware_Admission_PC_190kW"
-        };
+        // Base metaheuristics run uncapped; peak capture is driven by the spec's aux
+        // extractor, not by any _PC_ label.
+        String[] pcLabels = {"NSGA-II", "GA_WaitingTime_Dominance", "SPEA-II"};
+        List<AlgorithmRunResult> pcRuns = new ArrayList<>();
         for (String label : pcLabels) {
+            final String base = label;
             ExperimentConfiguration cfgA = infra.toExperimentConfiguration(1, seed);
             ExperimentConfiguration cfgB = infra.toExperimentConfiguration(1, seed);
-            AlgorithmRunResult rA = pcRunner.runOne(pcRegistry, label, cfgA, 1, "Balanced", seed);
-            AlgorithmRunResult rB = pcRunner.runOne(pcRegistry, label, cfgB, 1, "Balanced", seed);
+            AlgorithmRunResult rA = pcRunner.runOne(base, (ctx, sd) -> pcRegistry.create(base, ctx, sd),
+                cfgA, 1, "Balanced", seed);
+            AlgorithmRunResult rB = pcRunner.runOne(base, (ctx, sd) -> pcRegistry.create(base, ctx, sd),
+                cfgB, 1, "Balanced", seed);
+            pcRuns.add(rA);
 
             assertNonEmptyFinite(label, rA.getFront());
             assertIdentical(label, rA.getFront(), rB.getFront());
+            // Caps derived dynamically from the pooled peaks — exercises the calibrator.
+            double[] caps = PowerCapCalibrator.deriveCaps(pcRuns, PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS);
             assertAuxPeaks(label, rA, rB, caps);
         }
+        assertCalibratorPercentiles();
 
         System.out.println();
         if (failures == 0) {
@@ -167,5 +178,28 @@ public class CampaignReproducibilityTest {
     private static void fail(String label, String msg) {
         System.out.println("  FAIL: " + label + " " + msg);
         failures++;
+    }
+
+    /**
+     * PowerCapCalibrator sanity: on peaks {0,10,...,100}, the {90,75,50,25}
+     * feasibility targets must map exactly to caps {90,75,50,25} (in W here).
+     */
+    private static void assertCalibratorPercentiles() {
+        List<Double> peaks = new ArrayList<>();
+        for (int v = 0; v <= 100; v += 10) peaks.add((double) v);
+        double[] caps = PowerCapCalibrator.deriveCapsFromPeaks(
+            peaks, PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS);
+        double[] expected = {90, 75, 50, 25};
+        boolean ok = caps.length == expected.length;
+        for (int i = 0; ok && i < expected.length; i++) {
+            if (Math.abs(caps[i] - expected[i]) > 1e-9) ok = false;
+        }
+        if (ok) {
+            System.out.println("  ok:   PowerCapCalibrator percentiles {90,75,50,25} -> "
+                + java.util.Arrays.toString(caps));
+        } else {
+            fail("PowerCapCalibrator", "percentiles wrong: got " + java.util.Arrays.toString(caps)
+                + " expected " + java.util.Arrays.toString(expected));
+        }
     }
 }

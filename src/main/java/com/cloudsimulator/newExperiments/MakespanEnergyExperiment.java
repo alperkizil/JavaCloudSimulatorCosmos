@@ -11,10 +11,11 @@ import com.cloudsimulator.observer.ExperimentSpec;
 public final class MakespanEnergyExperiment {
 
     public static void main(String[] args) {
-        // 1. Algorithms — Makespan-flavoured labels.
+        // 1. Algorithms — the 7 front-producing metaheuristics (same set across all
+        //    three studies), Makespan-flavoured. Greedy heuristics excluded
+        //    (WorkloadAware/EnergyAware seed the metaheuristics only); the weighted
+        //    single-objective GA/SA excluded too (single point, not a Pareto set).
         String[] algorithms = {
-            "FirstAvailable", "ShortestQueue", "WorkloadAware", "EnergyAware", "RoundRobin",
-            "GA_Makespan", "GA_Energy", "SA_Makespan", "SA_Energy",
             "GA_Makespan_Dominance", "GA_Energy_Dominance",
             "SA_Makespan_Dominance", "SA_Energy_Dominance",
             "NSGA-II", "SPEA-II", "AMOSA"
