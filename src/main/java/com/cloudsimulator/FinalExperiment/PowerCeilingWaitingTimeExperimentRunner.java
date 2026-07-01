@@ -123,8 +123,10 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         "WorkloadAware_Admission_PC_190kW",  "WorkloadAware_Admission_PC_120kW"
     };
 
-    private static final int POPULATION_SIZE = 200;
-    private static final int ITERATION_COUNT = 40000;
+    // Backward-compatible parity hooks: defaults equal the production values, so
+    // normal runs are unaffected; the reduced-scale byte-diff gate overrides them.
+    private static final int POPULATION_SIZE = Integer.getInteger("parity.pop", 200);
+    private static final int ITERATION_COUNT = Integer.getInteger("parity.iters", 40000);
     private static final double CROSSOVER_RATE = 0.95;
     private static final double MUTATION_RATE = 0.05;
     private static final double GA_ELITE_PERCENTAGE = 0.20;
@@ -143,7 +145,7 @@ public class PowerCeilingWaitingTimeExperimentRunner {
     private static final boolean SA_SCALED_PERTURBATION = true;
     private static final int SA_MAX_PERTURBATION_MUTATIONS = 4;
     private static final long BASE_SEED = 200L;
-    private static final int NUM_RUNS = 10;
+    private static final int NUM_RUNS = Integer.getInteger("parity.runs", 10);
     private static final boolean VERBOSE_LOGGING = true;
     private static final double TIEBREAKER_WEIGHT = 0.001;
 
@@ -290,7 +292,8 @@ public class PowerCeilingWaitingTimeExperimentRunner {
 
         List<ScenarioResult> allResults = new ArrayList<>();
 
-        for (int s = 0; s < 3; s++) {
+        int scenarioLimit = Math.min(3, Integer.getInteger("parity.scenarios", 3));
+        for (int s = 0; s < scenarioLimit; s++) {
             int scenarioNum = s + 1;
             String scenarioName = SCENARIO_NAMES[s];
             System.out.println();
@@ -304,7 +307,7 @@ public class PowerCeilingWaitingTimeExperimentRunner {
             ScenarioResult scenarioResult = new ScenarioResult(scenarioNum, scenarioName);
 
             // Run each algorithm across all seeds, storing per-seed results
-            for (String label : ALGORITHM_LABELS) {
+            for (String label : activeLabels()) {
                 System.out.println();
                 System.out.println("------------------------------------------------------------");
                 System.out.println("  Running: " + label + " (Scenario " + scenarioNum +
@@ -375,8 +378,10 @@ public class PowerCeilingWaitingTimeExperimentRunner {
         PowerCeilingReporter.writeReports(REPORTS_DIR, allResults, POWER_CAP_LEVELS_WATTS);
         generatePlotOptionsJSON();
 
-        // Try to run Python plotter
-        executePythonPlotter();
+        // Try to run Python plotter (skippable for the parity gate)
+        if (!Boolean.getBoolean("parity.skipPython")) {
+            executePythonPlotter();
+        }
 
         System.out.println();
         System.out.println("============================================================");
@@ -498,6 +503,26 @@ public class PowerCeilingWaitingTimeExperimentRunner {
     // =========================================================================
     // STRATEGY CREATION
     // =========================================================================
+
+    /**
+     * The canonical {@link #ALGORITHM_LABELS}, optionally filtered by the
+     * comma-separated {@code -Dparity.algos} property (order preserved). Returns the
+     * full set when the property is absent, so production runs are unaffected.
+     */
+    private static String[] activeLabels() {
+        String csv = System.getProperty("parity.algos");
+        if (csv == null || csv.isBlank()) {
+            return ALGORITHM_LABELS;
+        }
+        java.util.Set<String> want = new java.util.LinkedHashSet<>(java.util.Arrays.asList(csv.split(",")));
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String l : ALGORITHM_LABELS) {
+            if (want.contains(l)) {
+                out.add(l);
+            }
+        }
+        return out.toArray(new String[0]);
+    }
 
     private static TaskAssignmentStrategy createStrategy(String label, SimulationContext context, long seed) {
         List<Host> hosts = context.getHosts();
