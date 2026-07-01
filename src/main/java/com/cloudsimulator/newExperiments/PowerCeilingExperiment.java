@@ -7,44 +7,33 @@ import com.cloudsimulator.observer.ExperimentSpec;
  * of {@code PowerCeilingWaitingTimeExperimentRunner}, on the
  * observer/analyzer/reporter back-end.
  *
- * <p>The [WaitingTime, Energy] fronts are produced by the same path as the
- * WaitingTime study, so they byte-match the legacy PowerCeiling runner. On top of
- * that, each solution's <em>coincident</em> Step-8 peak power is captured and a
- * {@code PowerCapFeasibility} report is emitted against {220, 190, 120} kW
+ * <p>Two-phase, driven by {@link CampaignRunner} (triggered by the spec's aux peak):
+ * <b>Phase 1</b> runs the 7 base metaheuristics <em>uncapped</em>, captures each
+ * solution's <em>coincident</em> Step-8 peak, and derives the power-cap tiers from
+ * that distribution ({@link PowerCapCalibrator}: peak percentiles for the
+ * ~90/75/50/25% feasibility targets, pooled globally across scenarios).
+ * <b>Phase 2</b> re-runs each base arm as a constrained {@code _PC<tier>} variant
+ * under each derived cap. The combined report (uncapped baselines + constrained
+ * arms) plus the {@code PowerCapFeasibility} CSVs
  * ({@code feasibility_summary.csv} / {@code pareto_3d_feasible.csv} /
- * {@code pareto_3d_all.csv}).</p>
- *
- * <p>The capped optimizers ({@code *_PC_*}) keep their intrinsic search-time power
- * constraint; only the reported peak/feasibility uses the coincident value — so a
- * solution the optimizer believed feasible may read as over-cap once judged on the
- * real coincident peak (an honest finding).</p>
+ * {@code pareto_3d_all.csv}) are written against the derived caps.</p>
  *
  * <p>Everything you'd tweak lives right here: the algorithm list, the
- * hyperparameters, and the infrastructure. Defaults are identical to the legacy
- * runner.</p>
+ * hyperparameters, and the infrastructure.</p>
  */
 public final class PowerCeilingExperiment {
 
     public static void main(String[] args) {
-        // 1. Algorithms — names + order (controls CSV/plot order). Matches the legacy
-        //    PowerCeiling default set exactly: 7 base + 16 constrained (_PC_) variants.
+        // 1. Algorithms — the 7 base metaheuristics. They run uncapped in Phase 1
+        //    (to derive the caps), then the runner re-runs each as a constrained
+        //    _PC<tier> variant under every derived cap in Phase 2. No fixed cap
+        //    values are baked in — they come from the observed peak distribution.
         String[] algorithms = {
             // Dominance-archive variants of GA/SA
             "GA_WaitingTime_Dominance", "GA_Energy_Dominance",
             "SA_WaitingTime_Dominance", "SA_Energy_Dominance",
             // Multi-objective metaheuristics
-            "NSGA-II", "SPEA-II", "AMOSA",
-            // Constrained-domination MOEA arms at the calibrated cap tiers
-            "NSGA-II_PC_190kW", "NSGA-II_PC_120kW",
-            "SPEA-II_PC_190kW", "SPEA-II_PC_120kW",
-            "AMOSA_PC_190kW",   "AMOSA_PC_120kW",
-            // Constrained-domination archive variants — native GA/SA
-            "GA_WaitingTime_Dominance_PC_190kW", "GA_WaitingTime_Dominance_PC_120kW",
-            "GA_Energy_Dominance_PC_190kW",      "GA_Energy_Dominance_PC_120kW",
-            "SA_WaitingTime_Dominance_PC_190kW", "SA_WaitingTime_Dominance_PC_120kW",
-            "SA_Energy_Dominance_PC_190kW",      "SA_Energy_Dominance_PC_120kW",
-            // Runtime admission-control decorator (wraps WorkloadAware)
-            "WorkloadAware_Admission_PC_190kW",  "WorkloadAware_Admission_PC_120kW"
+            "NSGA-II", "SPEA-II", "AMOSA"
         };
 
         // 2. Algorithm hyperparameters — identical to the legacy runner; edit to deviate.

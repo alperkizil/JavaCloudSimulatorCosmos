@@ -71,30 +71,91 @@ public final class CampaignRunner {
         return run(spec.resolveExperimentId());
     }
 
-    /** Runs the campaign, writing into {@code results/<experimentId>/} (fixed id). */
+    /** Builds a strategy for a run, given the placed context and the run's seed. */
+    @FunctionalInterface
+    interface StrategyFactory {
+        TaskAssignmentStrategy create(SimulationContext context, long seed);
+    }
+
+    /**
+     * Runs the campaign, writing into {@code results/<experimentId>/} (fixed id).
+     *
+     * <p>For studies with an auxiliary peak (PowerCeiling) this is a two-phase run:
+     * <b>Phase 1</b> runs the base arms uncapped and derives the cap tiers globally
+     * from the observed coincident-peak distribution; <b>Phase 2</b> re-runs each base
+     * arm as a constrained {@code _PC<tier>} variant under each derived cap. The final
+     * report combines the uncapped baselines with all constrained arms. Studies
+     * without an aux peak run Phase 1 only.</p>
+     */
     public Path run(String experimentId) {
         AlgorithmRegistry registry = new AlgorithmRegistry(params, primary);
+        boolean twoPhase = spec.hasAuxPeak();
+        int scenarioCount = infra.scenarioCount();
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
 
-        List<ExperimentReporter.ScenarioReport> reports = new ArrayList<>();
-        for (int s = 0; s < infra.scenarioCount(); s++) {
+        // ---- Phase 1: uncapped pass (all scenarios); pool peaks for cap derivation ----
+        List<List<AlgorithmRunResult>> perScenarioRuns = new ArrayList<>();
+        List<AlgorithmRunResult> allUncapped = new ArrayList<>();
+        for (int s = 0; s < scenarioCount; s++) {
             int scenarioNum = s + 1;
             String scenarioName = infra.scenarioNames[s];
             ConsoleReporter.printScenarioHeader(scenarioNum, scenarioName, infra);
 
             List<AlgorithmRunResult> scenarioRuns = new ArrayList<>();
             for (String label : labels) {
+                final String base = label;
                 for (int run = 0; run < infra.numRuns; run++) {
                     long seed = infra.baseSeed + run;
                     ExperimentConfiguration config = infra.toExperimentConfiguration(scenarioNum, seed);
-                    scenarioRuns.add(runOne(registry, label, config, scenarioNum, scenarioName, seed));
+                    AlgorithmRunResult r = runOne(base, (ctx, sd) -> registry.create(base, ctx, sd),
+                        config, scenarioNum, scenarioName, seed);
+                    if (r != null) scenarioRuns.add(r);
                 }
             }
+            perScenarioRuns.add(scenarioRuns);
+            allUncapped.addAll(scenarioRuns);
+        }
 
+        // ---- Phase 2 (PowerCeiling): derive caps, re-run constrained under each ----
+        double[] caps = null;
+        double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
+        if (twoPhase) {
+            caps = PowerCapCalibrator.deriveCaps(allUncapped, targets);
+            logDerivedCaps(caps, targets);
+            System.out.printf(java.util.Locale.US,
+                "Phase 2: constrained re-run of %d arms under %d derived caps.%n",
+                labels.size(), caps.length);
+            for (int s = 0; s < scenarioCount; s++) {
+                int scenarioNum = s + 1;
+                String scenarioName = infra.scenarioNames[s];
+                List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
+                for (int c = 0; c < caps.length; c++) {
+                    final double capWatts = caps[c];
+                    String tier = String.format(java.util.Locale.US, "%.0f", targets[c]);
+                    for (String label : labels) {
+                        final String base = label;
+                        String pcLabel = base + "_PC" + tier;
+                        for (int run = 0; run < infra.numRuns; run++) {
+                            long seed = infra.baseSeed + run;
+                            ExperimentConfiguration config = infra.toExperimentConfiguration(scenarioNum, seed);
+                            AlgorithmRunResult r = runOne(pcLabel,
+                                (ctx, sd) -> registry.createPowerCeiling(base, ctx, sd, capWatts),
+                                config, scenarioNum, scenarioName, seed);
+                            if (r != null) scenarioRuns.add(r);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Analyze + report (per scenario: uncapped baselines + constrained arms) ----
+        List<ExperimentReporter.ScenarioReport> reports = new ArrayList<>();
+        for (int s = 0; s < scenarioCount; s++) {
+            List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
             ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenarioRuns);
             ExperimentReporter.ScenarioReport report = new ExperimentReporter.ScenarioReport(
-                scenarioNum, scenarioName, spec.getObjectiveNames(), groupByLabel(scenarioRuns),
+                s + 1, infra.scenarioNames[s], spec.getObjectiveNames(), groupByLabel(scenarioRuns),
                 analysis.universalFront, analysis.universalHV, analysis.algorithmFronts);
             reports.add(report);
             ConsoleReporter.printScenarioSummary(report);
@@ -103,11 +164,9 @@ public final class CampaignRunner {
         try {
             Path dir = new ExperimentReporter()
                 .writeExperiment(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId, reports);
-            // PowerCeiling: additionally emit the coincident-peak feasibility CSVs
-            // (feasibility_summary / pareto_3d_feasible / pareto_3d_all) into the same folder.
-            if (spec.hasAuxPeak()) {
-                PowerCeilingFeasibilityReporter.writeReports(
-                    dir.toString(), reports, spec.getCapThresholdsWatts());
+            if (twoPhase) {
+                // Feasibility of every arm (uncapped + constrained) against the derived caps.
+                PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
             }
             ConsoleReporter.printDone(dir);
             return dir;
@@ -116,11 +175,25 @@ public final class CampaignRunner {
         }
     }
 
+    /** Prints the dynamically derived power-cap tiers (global, pooled across scenarios). */
+    private void logDerivedCaps(double[] caps, double[] targets) {
+        StringBuilder sb = new StringBuilder(
+            "Derived power-cap tiers (global, from uncapped coincident peaks):");
+        for (int i = 0; i < caps.length; i++) {
+            sb.append(String.format(java.util.Locale.US, "%n    ~%.0f%% feasible -> %.3f kW",
+                targets[i], caps[i] / 1000.0));
+        }
+        System.out.println(sb);
+    }
+
     /**
      * Runs one (algorithm, seed) on one scenario through Steps 1-8 and returns the
-     * captured front. Mirrors {@code runAlgorithm} exactly.
+     * captured front. Mirrors {@code runAlgorithm} exactly. The {@code factory} builds
+     * the strategy from the placed context (so it can compute warm-start seeds); the
+     * {@code label} is only the display/CSV name. Returns {@code null} if the factory
+     * yields no strategy (e.g. a label with no power-ceiling variant).
      */
-    AlgorithmRunResult runOne(AlgorithmRegistry registry, String label,
+    AlgorithmRunResult runOne(String label, StrategyFactory factory,
                               ExperimentConfiguration baseConfig,
                               int scenarioNum, String scenarioName, long seed) {
         long startTime = System.currentTimeMillis();
@@ -139,7 +212,10 @@ public final class CampaignRunner {
         new VMPlacementStep(new BestFitVMPlacementStrategy()).execute(context);
 
         // Strategy is built AFTER placement so it can compute heuristic warm-start seeds.
-        TaskAssignmentStrategy strategy = registry.create(label, context, seed);
+        TaskAssignmentStrategy strategy = factory.create(context, seed);
+        if (strategy == null) {
+            return null;
+        }
 
         // Step 5: task assignment (runs the optimizer for metaheuristics).
         new TaskAssignmentStep(strategy).execute(context);

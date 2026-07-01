@@ -11,7 +11,6 @@ import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStra
 import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.RoundRobinTaskAssignmentStrategy;
-import com.cloudsimulator.PlacementStrategy.task.PowerCeilingAdmissionTaskAssignmentStrategy;
 
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.GAConfiguration;
@@ -60,19 +59,18 @@ public final class AlgorithmRegistry {
         this.primary = primary;
     }
 
-    /** The set of labels this registry understands, in canonical order. */
+    /**
+     * The default experiment arm set — the <b>7 front-producing metaheuristics</b>
+     * (GA/SA dominance-archive ×4 + NSGA-II/SPEA-II/AMOSA), identical across all
+     * three studies. Excluded as arms: the greedy heuristics (used only to seed the
+     * metaheuristics' initial populations, so scoring them would double-count) and
+     * the weighted single-objective GA/SA variants (they emit a single point, not a
+     * Pareto set). The {@code create(...)} dispatch still supports every label if
+     * requested explicitly.
+     */
     public List<String> defaultLabels() {
         String P = primary.csvName();
         List<String> labels = new ArrayList<>();
-        labels.add("FirstAvailable");
-        labels.add("ShortestQueue");
-        labels.add("WorkloadAware");
-        labels.add("EnergyAware");
-        labels.add("RoundRobin");
-        labels.add("GA_" + P);
-        labels.add("GA_Energy");
-        labels.add("SA_" + P);
-        labels.add("SA_Energy");
         labels.add("GA_" + P + "_Dominance");
         labels.add("GA_Energy_Dominance");
         labels.add("SA_" + P + "_Dominance");
@@ -84,11 +82,13 @@ public final class AlgorithmRegistry {
     }
 
     /**
-     * The canonical PowerCeiling label set (23 labels), in the exact order used by
-     * the legacy {@code PowerCeilingWaitingTimeExperimentRunner}: 7 base
-     * (GA/SA dominance + NSGA-II/SPEA-II/AMOSA) followed by the 16 constrained
-     * ({@code _PC_190kW}/{@code _PC_120kW}) variants. Primary is fixed to WaitingTime
-     * for the PowerCeiling study.
+     * The PowerCeiling arm set — the <b>7 base metaheuristics</b> (GA/SA dominance
+     * ×4 + NSGA-II/SPEA-II/AMOSA), run <b>uncapped</b>. Power-cap feasibility is
+     * assessed after the fact from each solution's coincident Step-8 peak, with the
+     * cap thresholds derived dynamically from the observed peak distribution (see
+     * {@link PowerCapCalibrator}) — so no fixed {@code _PC_*} search-time caps are
+     * baked in. The constrained {@code _PC_} builders remain available via
+     * {@code create(...)} for future use but are not part of the default arm set.
      */
     public List<String> defaultPowerCeilingLabels() {
         String P = primary.csvName();
@@ -102,25 +102,6 @@ public final class AlgorithmRegistry {
         labels.add("NSGA-II");
         labels.add("SPEA-II");
         labels.add("AMOSA");
-        // Constrained-domination (Deb) MOEA arms at the calibrated cap tiers
-        labels.add("NSGA-II_PC_190kW");
-        labels.add("NSGA-II_PC_120kW");
-        labels.add("SPEA-II_PC_190kW");
-        labels.add("SPEA-II_PC_120kW");
-        labels.add("AMOSA_PC_190kW");
-        labels.add("AMOSA_PC_120kW");
-        // Constrained-domination archive variants — native GA/SA
-        labels.add("GA_" + P + "_Dominance_PC_190kW");
-        labels.add("GA_" + P + "_Dominance_PC_120kW");
-        labels.add("GA_Energy_Dominance_PC_190kW");
-        labels.add("GA_Energy_Dominance_PC_120kW");
-        labels.add("SA_" + P + "_Dominance_PC_190kW");
-        labels.add("SA_" + P + "_Dominance_PC_120kW");
-        labels.add("SA_Energy_Dominance_PC_190kW");
-        labels.add("SA_Energy_Dominance_PC_120kW");
-        // Runtime admission-control decorator (wraps WorkloadAware)
-        labels.add("WorkloadAware_Admission_PC_190kW");
-        labels.add("WorkloadAware_Admission_PC_120kW");
         return labels;
     }
 
@@ -194,52 +175,67 @@ public final class AlgorithmRegistry {
         }
 
         // ---- Power-ceiling (constrained) variants: label suffix "_PC_<cap>kW" ----
-        // The cap is parsed from the suffix (e.g. "_PC_190kW" -> 190000.0 W). Each
-        // capped optimizer keeps its intrinsic search-time power constraint; only the
-        // reported peak/feasibility (captured elsewhere) switches to the coincident peak.
+        // The cap is parsed from the suffix (e.g. "_PC_190kW" -> 190000.0 W) and the
+        // build is delegated to createPowerCeiling. (Phase 2 calls that method directly
+        // with dynamically-derived caps that don't fit a kW label.)
         if (label.contains("_PC_")) {
             double cap = parsePowerCapWatts(label);
             String core = label.substring(0, label.lastIndexOf("_PC_"));
-            if (core.equals("NSGA-II")) {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, cap);
-            }
-            if (core.equals("SPEA-II")) {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createSPEA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, cap);
-            }
-            if (core.equals("AMOSA")) {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createAMOSAPowerCeilingStrategy(hosts, seed, waSeed, eaSeed, cap);
-            }
-            if (core.equals("GA_" + P + "_Dominance")) {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                return createGADominancePowerCeilingStrategy(
-                    primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, cap);
-            }
-            if (core.equals("GA_Energy_Dominance")) {
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createGADominancePowerCeilingStrategy(
-                    createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, cap);
-            }
-            if (core.equals("SA_" + P + "_Dominance")) {
-                int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-                return createSADominancePowerCeilingStrategy(
-                    primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, cap);
-            }
-            if (core.equals("SA_Energy_Dominance")) {
-                int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-                return createSADominancePowerCeilingStrategy(
-                    createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, cap);
-            }
-            if (core.equals("WorkloadAware_Admission")) {
-                return createAdmissionStrategy(new WorkloadAwareTaskAssignmentStrategy(), hosts, cap);
+            TaskAssignmentStrategy pc = createPowerCeiling(core, context, seed, cap);
+            if (pc != null) {
+                return pc;
             }
         }
         throw new IllegalArgumentException("Unknown algorithm: " + label);
+    }
+
+    /**
+     * Builds the constrained (power-ceiling) variant of a base metaheuristic
+     * {@code core} label at an explicit {@code capWatts}. This is the path Phase 2
+     * uses to enforce the dynamically-derived caps (whose values don't fit a
+     * {@code "_PC_<n>kW"} label). Returns {@code null} if {@code core} has no
+     * power-ceiling variant. Warm-start seeds match the uncapped base builders.
+     */
+    public TaskAssignmentStrategy createPowerCeiling(String core, SimulationContext context,
+                                                     long seed, double capWatts) {
+        List<Host> hosts = context.getHosts();
+        String P = primary.csvName();
+        if (core.equals("NSGA-II")) {
+            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+        }
+        if (core.equals("SPEA-II")) {
+            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            return createSPEA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+        }
+        if (core.equals("AMOSA")) {
+            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            return createAMOSAPowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+        }
+        if (core.equals("GA_" + P + "_Dominance")) {
+            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            return createGADominancePowerCeilingStrategy(
+                primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, capWatts);
+        }
+        if (core.equals("GA_Energy_Dominance")) {
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            return createGADominancePowerCeilingStrategy(
+                createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, capWatts);
+        }
+        if (core.equals("SA_" + P + "_Dominance")) {
+            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            return createSADominancePowerCeilingStrategy(
+                primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, capWatts);
+        }
+        if (core.equals("SA_Energy_Dominance")) {
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            return createSADominancePowerCeilingStrategy(
+                createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, capWatts);
+        }
+        return null;
     }
 
     // ---- Heuristic warm-start seed (lifted verbatim) ----
@@ -540,12 +536,6 @@ public final class AlgorithmRegistry {
                                                                         double powerCapWatts) {
         SAConfiguration config = buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed);
         return new SimulatedAnnealingWithDominancePowerCeilingStrategy(config, powerCapWatts, hosts);
-    }
-
-    private TaskAssignmentStrategy createAdmissionStrategy(TaskAssignmentStrategy inner,
-                                                          List<Host> hosts,
-                                                          double powerCapWatts) {
-        return new PowerCeilingAdmissionTaskAssignmentStrategy(inner, powerCapWatts, hosts);
     }
 
     /** Parses the cap (Watts) from a label suffix like {@code "_PC_190kW"} -> {@code 190000.0}. */
