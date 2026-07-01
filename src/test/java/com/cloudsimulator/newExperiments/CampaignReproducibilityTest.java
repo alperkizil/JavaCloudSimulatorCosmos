@@ -3,8 +3,10 @@ package com.cloudsimulator.newExperiments;
 import com.cloudsimulator.config.ExperimentConfiguration;
 import com.cloudsimulator.observer.AlgorithmRunResult;
 import com.cloudsimulator.observer.ExperimentSpec;
+import com.cloudsimulator.observer.PowerCapFeasibility;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reduced-scale smoke + reproducibility check for the new campaign pipeline:
@@ -40,6 +42,28 @@ public class CampaignReproducibilityTest {
 
             assertNonEmptyFinite(label, frontA);
             assertIdentical(label, frontA, frontB);
+        }
+
+        // ---- PowerCeiling: fronts reproducible + coincident peaks captured ----
+        System.out.println();
+        System.out.println("--- PowerCeiling (aux coincident peak) ---");
+        ExperimentSpec pcSpec = ExperimentSpec.powerCeiling("repro-test-pc");
+        AlgorithmRegistry pcRegistry = new AlgorithmRegistry(params, primary);
+        CampaignRunner pcRunner = new CampaignRunner(pcSpec, primary, infra, params, new String[] {"NSGA-II"});
+        double[] caps = pcSpec.getCapThresholdsWatts();
+
+        String[] pcLabels = {
+            "NSGA-II_PC_190kW", "GA_WaitingTime_Dominance_PC_120kW", "WorkloadAware_Admission_PC_190kW"
+        };
+        for (String label : pcLabels) {
+            ExperimentConfiguration cfgA = infra.toExperimentConfiguration(1, seed);
+            ExperimentConfiguration cfgB = infra.toExperimentConfiguration(1, seed);
+            AlgorithmRunResult rA = pcRunner.runOne(pcRegistry, label, cfgA, 1, "Balanced", seed);
+            AlgorithmRunResult rB = pcRunner.runOne(pcRegistry, label, cfgB, 1, "Balanced", seed);
+
+            assertNonEmptyFinite(label, rA.getFront());
+            assertIdentical(label, rA.getFront(), rB.getFront());
+            assertAuxPeaks(label, rA, rB, caps);
         }
 
         System.out.println();
@@ -103,5 +127,45 @@ public class CampaignReproducibilityTest {
             }
         }
         System.out.println("  ok:   " + label + " reproducible (" + a.size() + "-point front)");
+    }
+
+    /**
+     * PowerCeiling checks: coincident peaks are captured (non-null), aligned with the
+     * front, finite, reproducible across identical-seed runs, and the feasibility
+     * fraction {@code (#peaks <= cap)/(#peaks)} matches {@link PowerCapFeasibility}.
+     */
+    private static void assertAuxPeaks(String label, AlgorithmRunResult a, AlgorithmRunResult b, double[] caps) {
+        List<Double> pa = a.getAuxPeakPowerWatts();
+        List<Double> pb = b.getAuxPeakPowerWatts();
+        if (pa == null) { fail(label, "aux peaks null (expected coincident peaks)"); return; }
+        if (pa.size() != a.getFront().size()) {
+            fail(label, "peaks size " + pa.size() + " != front size " + a.getFront().size());
+            return;
+        }
+        for (double v : pa) {
+            if (!Double.isFinite(v) || v < 0) { fail(label, "non-finite/negative peak " + v); return; }
+        }
+        if (pb == null || pa.size() != pb.size()) { fail(label, "peaks non-reproducible (size)"); return; }
+        for (int i = 0; i < pa.size(); i++) {
+            if ((double) pa.get(i) != (double) pb.get(i)) { fail(label, "peaks non-reproducible at " + i); return; }
+        }
+        Map<String, Map<Double, Double>> rates = PowerCapFeasibility.feasibilityRates(List.of(a), caps);
+        Map<Double, Double> r = rates.get(label);
+        for (double cap : caps) {
+            long feasible = pa.stream().filter(x -> x <= cap).count();
+            double expected = (double) feasible / pa.size();
+            double got = r.get(cap);
+            if (Math.abs(expected - got) > 1e-12) {
+                fail(label, "feasibility mismatch at cap " + cap + ": " + got + " vs " + expected);
+                return;
+            }
+        }
+        System.out.println("  ok:   " + label + " peaks captured (" + pa.size()
+            + "), reproducible, feasibility consistent");
+    }
+
+    private static void fail(String label, String msg) {
+        System.out.println("  FAIL: " + label + " " + msg);
+        failures++;
     }
 }

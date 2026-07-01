@@ -103,6 +103,12 @@ public final class CampaignRunner {
         try {
             Path dir = new ExperimentReporter()
                 .writeExperiment(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId, reports);
+            // PowerCeiling: additionally emit the coincident-peak feasibility CSVs
+            // (feasibility_summary / pareto_3d_feasible / pareto_3d_all) into the same folder.
+            if (spec.hasAuxPeak()) {
+                PowerCeilingFeasibilityReporter.writeReports(
+                    dir.toString(), reports, spec.getCapThresholdsWatts());
+            }
             ConsoleReporter.printDone(dir);
             return dir;
         } catch (IOException e) {
@@ -148,25 +154,45 @@ public final class CampaignRunner {
         double selectedPrimary = primary.extract(taskExec);
         double selectedEnergy = energyCalc.getTotalITEnergyKWh();
 
+        // Aux coincident peak (PowerCeiling only): the Step-8 coincident fleet peak for
+        // the SELECTED solution, captured before any re-simulation. Equals
+        // summary.getEnergy().peakPowerWatts. null for studies without an aux peak.
+        boolean aux = spec.hasAuxPeak();
+        double selectedPeak = aux ? energyCalc.getPeakTotalPowerWatts() : 0.0;
+        List<Double> peaks = aux ? new ArrayList<>() : null;
+
         List<double[]> front;
         if (strategy instanceof MultiObjectiveTaskSchedulingStrategy) {
-            front = simulateAllParetoSolutions(strategy, context);
+            front = simulateAllParetoSolutions(strategy, context, peaks);
             if (front.isEmpty()) {
                 front = new ArrayList<>();
                 front.add(new double[] {selectedPrimary, selectedEnergy});
+                if (aux) {
+                    peaks.clear();
+                    peaks.add(selectedPeak);
+                }
             }
         } else {
             front = new ArrayList<>();
             front.add(new double[] {selectedPrimary, selectedEnergy});
+            if (aux) {
+                peaks.add(selectedPeak);
+            }
         }
 
         long runtimeMs = System.currentTimeMillis() - startTime;
         return new AlgorithmRunResult(label, scenarioNum, scenarioName, seed,
-            spec.getObjectiveNames(), front, null, runtimeMs);
+            spec.getObjectiveNames(), front, peaks, runtimeMs);
     }
 
-    /** Re-simulates every Pareto-front solution through Steps 6-8 (mirrors the runner). */
-    private List<double[]> simulateAllParetoSolutions(TaskAssignmentStrategy strategy, SimulationContext context) {
+    /**
+     * Re-simulates every Pareto-front solution through Steps 6-8 (mirrors the runner).
+     * When {@code peaksOut} is non-null, appends each solution's coincident Step-8 peak
+     * ({@code energyCalc.getPeakTotalPowerWatts()}) in lock-step with the returned front
+     * (used only by the PowerCeiling study). When null, behaviour is identical to before.
+     */
+    private List<double[]> simulateAllParetoSolutions(TaskAssignmentStrategy strategy, SimulationContext context,
+                                                      List<Double> peaksOut) {
         MultiObjectiveTaskSchedulingStrategy moStrategy = (MultiObjectiveTaskSchedulingStrategy) strategy;
         ParetoFront front = moStrategy.getLastParetoFront();
         if (front == null || front.isEmpty()) {
@@ -200,6 +226,9 @@ public final class CampaignRunner {
             energyCalc.execute(context);
 
             simulatedResults.add(new double[] {primary.extract(taskExec), energyCalc.getTotalITEnergyKWh()});
+            if (peaksOut != null) {
+                peaksOut.add(energyCalc.getPeakTotalPowerWatts());
+            }
         }
 
         return simulatedResults;

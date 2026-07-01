@@ -121,23 +121,59 @@ public final class ExperimentReporter {
 
     void writeParetoGraphData(Path dir, ScenarioReport s) throws IOException {
         String file = "scenario_" + s.scenarioNumber + "_pareto_graph_data.csv";
+        // Studies carrying an auxiliary coincident peak (PowerCeiling) add a
+        // PeakPowerWatts column between the objectives and IsUniversalPareto,
+        // matching the legacy PowerCeiling runner's schema. Studies without an aux
+        // peak (WaitingTime / ScenarioComparison) keep the byte-identical old schema.
+        boolean withPeak = scenarioHasAuxPeak(s);
         try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
-            w.println("Algorithm,Seed," + s.objectiveNames.get(0) + ","
-                + s.objectiveNames.get(1) + ",IsUniversalPareto");
+            if (withPeak) {
+                w.println("Algorithm,Seed," + s.objectiveNames.get(0) + ","
+                    + s.objectiveNames.get(1) + ",PeakPowerWatts,IsUniversalPareto");
+            } else {
+                w.println("Algorithm,Seed," + s.objectiveNames.get(0) + ","
+                    + s.objectiveNames.get(1) + ",IsUniversalPareto");
+            }
 
             for (Map.Entry<String, List<AlgorithmRunResult>> entry : s.runsByLabel.entrySet()) {
                 for (AlgorithmRunResult ar : entry.getValue()) {
-                    for (double[] sol : ar.getFront()) {
+                    List<double[]> front = ar.getFront();
+                    List<Double> peaks = ar.getAuxPeakPowerWatts();
+                    for (int i = 0; i < front.size(); i++) {
+                        double[] sol = front.get(i);
                         boolean isUniv = ParetoAnalyzer.isInUniversalPareto(sol, s.universalFront);
-                        w.printf("%s,%d,%.6f,%.9f,%b%n", ar.getLabel(), ar.getSeed(),
-                            sol[0], sol[1], isUniv);
+                        if (withPeak) {
+                            double peak = (peaks != null && i < peaks.size()) ? peaks.get(i) : 0.0;
+                            w.printf("%s,%d,%.6f,%.9f,%.3f,%b%n", ar.getLabel(), ar.getSeed(),
+                                sol[0], sol[1], peak, isUniv);
+                        } else {
+                            w.printf("%s,%d,%.6f,%.9f,%b%n", ar.getLabel(), ar.getSeed(),
+                                sol[0], sol[1], isUniv);
+                        }
                     }
                 }
             }
             for (double[] sol : s.universalFront) {
-                w.printf("Universal_Pareto,0,%.6f,%.9f,true%n", sol[0], sol[1]);
+                if (withPeak) {
+                    // Peak is undefined for the pooled universal front (matches legacy: empty field).
+                    w.printf("Universal_Pareto,0,%.6f,%.9f,,true%n", sol[0], sol[1]);
+                } else {
+                    w.printf("Universal_Pareto,0,%.6f,%.9f,true%n", sol[0], sol[1]);
+                }
             }
         }
+    }
+
+    /** True if any run in this scenario carries an auxiliary coincident peak (PowerCeiling). */
+    private static boolean scenarioHasAuxPeak(ScenarioReport s) {
+        for (List<AlgorithmRunResult> runs : s.runsByLabel.values()) {
+            for (AlgorithmRunResult ar : runs) {
+                if (ar.getAuxPeakPowerWatts() != null) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // -------------------------------------------------------------------------

@@ -35,18 +35,32 @@ public final class ParityRun {
         infra.scenarioNames = trim(infra.scenarioNames, scenarioLimit);
         infra.scenarioTaskCounts = trim(infra.scenarioTaskCounts, scenarioLimit);
 
-        String[] labels = resolveLabels(primary);
+        // Study selector: defaults from the primary objective, but "powerceiling"
+        // can be requested explicitly (it also uses WAITING_TIME primary).
+        String specName = System.getProperty("parity.spec",
+            primary == PrimaryObjective.MAKESPAN ? "scenariocomparison" : "waitingtime");
+        boolean powerCeiling = specName.equalsIgnoreCase("powerceiling");
 
-        ExperimentSpec spec = (primary == PrimaryObjective.MAKESPAN)
-            ? ExperimentSpec.scenarioComparison("parity")
-            : ExperimentSpec.waitingTime("parity");
+        String[] labels = resolveLabels(primary, powerCeiling);
+
+        ExperimentSpec spec;
+        if (powerCeiling) {
+            spec = ExperimentSpec.powerCeiling("parity");
+        } else if (specName.equalsIgnoreCase("scenariocomparison")) {
+            spec = ExperimentSpec.scenarioComparison("parity");
+        } else {
+            spec = ExperimentSpec.waitingTime("parity");
+        }
 
         new CampaignRunner(spec, primary, infra, params, labels).run(outId);
     }
 
     /** Subset of the registry's canonical labels selected by {@code -Dparity.algos}. */
-    private static String[] resolveLabels(PrimaryObjective primary) {
-        List<String> canonical = new AlgorithmRegistry(AlgorithmParameters.defaults(), primary).defaultLabels();
+    private static String[] resolveLabels(PrimaryObjective primary, boolean powerCeiling) {
+        AlgorithmRegistry registry = new AlgorithmRegistry(AlgorithmParameters.defaults(), primary);
+        List<String> canonical = powerCeiling
+            ? registry.defaultPowerCeilingLabels()
+            : registry.defaultLabels();
         String csv = System.getProperty("parity.algos");
         if (csv == null || csv.isBlank()) {
             return canonical.toArray(new String[0]);
