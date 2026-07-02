@@ -71,6 +71,9 @@ public class SimulatedAnnealingAlgorithm {
     // Non-dominated archive (multi-objective view for a single-objective search)
     private NonDominatedArchive archive;
 
+    // Per-run reference scales for weighted-sum fitness (see ObjectiveScaleNormalizer)
+    private final ObjectiveScaleNormalizer scaleNormalizer = new ObjectiveScaleNormalizer();
+
     /**
      * Creates a new Simulated Annealing algorithm.
      *
@@ -509,9 +512,13 @@ public class SimulatedAnnealingAlgorithm {
         // Calculate average positive delta
         double avgDeltaE;
         if (positiveDeltaEs.isEmpty()) {
-            // No worse solutions found, use a default
+            // No worse solutions found, use a default. The 100.0 floor assumes
+            // raw-unit fitness (seconds scale); with normalized scales fitness
+            // is O(1), so 10% of it is already the right magnitude.
             avgDeltaE = Math.abs(initialFitness) * 0.1;
-            if (avgDeltaE < 1.0) avgDeltaE = 100.0; // Fallback
+            if (!config.isNormalizeObjectiveScales() && avgDeltaE < 1.0) {
+                avgDeltaE = 100.0; // Fallback (legacy raw-scale)
+            }
         } else {
             avgDeltaE = positiveDeltaEs.stream()
                 .mapToDouble(Double::doubleValue)
@@ -551,15 +558,27 @@ public class SimulatedAnnealingAlgorithm {
             return value;
         }
 
-        // Weighted sum multi-objective
-        double weightedSum = 0.0;
+        // Weighted sum multi-objective. Raw values are always stored on the
+        // solution (the archive and reporting read them); only the scalar
+        // fitness is optionally computed on scale-normalized values so the
+        // configured weights control relative influence across units.
         Map<SchedulingObjective, Double> weights = config.getObjectiveWeights();
 
+        double[] rawValues = new double[objectives.size()];
+        for (int i = 0; i < objectives.size(); i++) {
+            rawValues[i] = objectives.get(i).evaluate(solution, tasks, vms);
+            solution.setObjectiveValue(i, rawValues[i]);
+        }
+
+        boolean normalize = config.isNormalizeObjectiveScales();
+        if (normalize && !scaleNormalizer.isInitialized()) {
+            scaleNormalizer.initializeFrom(rawValues);
+        }
+
+        double weightedSum = 0.0;
         for (int i = 0; i < objectives.size(); i++) {
             SchedulingObjective objective = objectives.get(i);
-            double value = objective.evaluate(solution, tasks, vms);
-            solution.setObjectiveValue(i, value);
-
+            double value = normalize ? scaleNormalizer.normalize(i, rawValues[i]) : rawValues[i];
             double weight = weights.getOrDefault(objective, 1.0);
 
             // Handle minimization vs maximization

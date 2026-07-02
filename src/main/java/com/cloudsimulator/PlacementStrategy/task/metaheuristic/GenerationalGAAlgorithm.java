@@ -70,6 +70,9 @@ public class GenerationalGAAlgorithm {
     // Non-dominated archive (multi-objective view for a single-objective search)
     private NonDominatedArchive archive;
 
+    // Per-run reference scales for weighted-sum fitness (see ObjectiveScaleNormalizer)
+    private final ObjectiveScaleNormalizer scaleNormalizer = new ObjectiveScaleNormalizer();
+
     /**
      * Creates a new Generational GA algorithm.
      *
@@ -377,15 +380,27 @@ public class GenerationalGAAlgorithm {
             return value;
         }
 
-        // Weighted sum multi-objective
-        double weightedSum = 0.0;
+        // Weighted sum multi-objective. Raw values are always stored on the
+        // solution (the archive and reporting read them); only the scalar
+        // fitness is optionally computed on scale-normalized values so the
+        // configured weights control relative influence across units.
         Map<SchedulingObjective, Double> weights = config.getObjectiveWeights();
 
+        double[] rawValues = new double[objectives.size()];
+        for (int i = 0; i < objectives.size(); i++) {
+            rawValues[i] = objectives.get(i).evaluate(solution, tasks, vms);
+            solution.setObjectiveValue(i, rawValues[i]);
+        }
+
+        boolean normalize = config.isNormalizeObjectiveScales();
+        if (normalize && !scaleNormalizer.isInitialized()) {
+            scaleNormalizer.initializeFrom(rawValues);
+        }
+
+        double weightedSum = 0.0;
         for (int i = 0; i < objectives.size(); i++) {
             SchedulingObjective objective = objectives.get(i);
-            double value = objective.evaluate(solution, tasks, vms);
-            solution.setObjectiveValue(i, value);
-
+            double value = normalize ? scaleNormalizer.normalize(i, rawValues[i]) : rawValues[i];
             double weight = weights.getOrDefault(objective, 1.0);
 
             // Handle minimization vs maximization

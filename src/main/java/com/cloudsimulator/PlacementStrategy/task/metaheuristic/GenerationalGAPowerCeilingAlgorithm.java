@@ -46,6 +46,9 @@ public class GenerationalGAPowerCeilingAlgorithm {
     private double[] fitnessValues;
 
     private ConstrainedNonDominatedArchive archive;
+
+    // Per-run reference scales for weighted-sum fitness (see ObjectiveScaleNormalizer)
+    private final ObjectiveScaleNormalizer scaleNormalizer = new ObjectiveScaleNormalizer();
     private final PowerCeilingEnergyObjective meter;
 
     public GenerationalGAPowerCeilingAlgorithm(GAConfiguration config, List<Task> tasks, List<VM> vms,
@@ -276,14 +279,26 @@ public class GenerationalGAPowerCeilingAlgorithm {
             return value;
         }
 
-        double weightedSum = 0.0;
+        // Raw values are always stored on the solution (the archive reads
+        // them); only the scalar fitness is optionally computed on
+        // scale-normalized values (see ObjectiveScaleNormalizer).
         Map<SchedulingObjective, Double> weights = config.getObjectiveWeights();
 
+        double[] rawValues = new double[objectives.size()];
+        for (int i = 0; i < objectives.size(); i++) {
+            rawValues[i] = objectives.get(i).evaluate(solution, tasks, vms);
+            solution.setObjectiveValue(i, rawValues[i]);
+        }
+
+        boolean normalize = config.isNormalizeObjectiveScales();
+        if (normalize && !scaleNormalizer.isInitialized()) {
+            scaleNormalizer.initializeFrom(rawValues);
+        }
+
+        double weightedSum = 0.0;
         for (int i = 0; i < objectives.size(); i++) {
             SchedulingObjective objective = objectives.get(i);
-            double value = objective.evaluate(solution, tasks, vms);
-            solution.setObjectiveValue(i, value);
-
+            double value = normalize ? scaleNormalizer.normalize(i, rawValues[i]) : rawValues[i];
             double weight = weights.getOrDefault(objective, 1.0);
 
             if (objective.isMinimization()) {

@@ -292,6 +292,7 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
+            .normalizeObjectiveScales(true)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
@@ -337,6 +338,7 @@ public final class AlgorithmRegistry {
 
         builder.addWeightedObjective(primaryObjective, 1.0)
                .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
+               .normalizeObjectiveScales(true)
                .verboseLogging(p.verboseLogging);
 
         if (heuristicSeed != null) {
@@ -364,6 +366,7 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
+            .normalizeObjectiveScales(true)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
@@ -521,6 +524,7 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
+            .normalizeObjectiveScales(true)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {

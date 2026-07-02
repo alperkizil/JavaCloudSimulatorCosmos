@@ -76,6 +76,7 @@ public class SAConfiguration {
     // Objectives with weights (for weighted sum)
     private final List<SchedulingObjective> objectives;
     private final Map<SchedulingObjective, Double> objectiveWeights;
+    private final boolean normalizeObjectiveScales;
 
     // Termination
     private final TerminationCondition terminationCondition;
@@ -119,6 +120,7 @@ public class SAConfiguration {
         this.neighborType = builder.neighborType;
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
+        this.normalizeObjectiveScales = builder.normalizeObjectiveScales;
         this.terminationCondition = builder.terminationCondition;
         this.reheatEnabled = builder.reheatEnabled;
         this.reheatFactor = builder.reheatFactor;
@@ -225,6 +227,18 @@ public class SAConfiguration {
      */
     public boolean isWeightedSum() {
         return objectives.size() > 1;
+    }
+
+    /**
+     * Whether weighted-sum fitness divides each raw objective value by a
+     * per-run reference scale (captured from the first evaluated solution)
+     * before the weights are applied. Keeps the configured weight ratio
+     * meaningful across objectives with different units (seconds vs kWh), so
+     * a small tiebreaker weight stays a tiebreaker regardless of scale.
+     * Raw objective values on solutions and the archive are unaffected.
+     */
+    public boolean isNormalizeObjectiveScales() {
+        return normalizeObjectiveScales;
     }
 
     public TerminationCondition getTerminationCondition() {
@@ -390,6 +404,7 @@ public class SAConfiguration {
         // Objectives
         private List<SchedulingObjective> objectives = new ArrayList<>();
         private Map<SchedulingObjective, Double> objectiveWeights = new LinkedHashMap<>();
+        private boolean normalizeObjectiveScales = false;
 
         // Termination default (temperature-based)
         private TerminationCondition terminationCondition = null; // Will be set in build()
@@ -555,6 +570,23 @@ public class SAConfiguration {
             }
             this.objectives.add(objective);
             this.objectiveWeights.put(objective, weight);
+            return this;
+        }
+
+        /**
+         * Enables per-run objective scale normalization for weighted-sum
+         * fitness: each raw objective value is divided by a reference scale
+         * captured from the first evaluated solution before the weights are
+         * applied. Without this, an objective measured in large units (e.g.
+         * makespan seconds) dwarfs one in small units (e.g. energy kWh)
+         * regardless of the configured weights. Off by default to preserve
+         * legacy behaviour.
+         *
+         * @param normalize true to normalize objective scales
+         * @return this builder
+         */
+        public Builder normalizeObjectiveScales(boolean normalize) {
+            this.normalizeObjectiveScales = normalize;
             return this;
         }
 
