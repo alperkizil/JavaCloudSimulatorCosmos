@@ -7,20 +7,23 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairO
 
 import org.moeaframework.core.Solution;
 import org.moeaframework.core.Variation;
-import org.moeaframework.core.variable.RealVariable;
 
 /**
  * Adapts our crossover, mutation, and repair operators to MOEA Framework's Variation interface.
  *
  * This allows using our existing genetic operators with MOEA Framework's algorithms
- * while maintaining the repair step to ensure constraint satisfaction.
+ * while maintaining the repair step to ensure constraint satisfaction. Using the
+ * SAME domain operators as the native GA/SA arms (instead of MOEA's generic
+ * real-coded SBX+PM on rounded VM indices) removes the operator-family confound
+ * from the algorithm comparison: differences between arms then reflect the
+ * metaheuristics' selection/archiving logic, not their operators.
  *
  * The variation process:
- * 1. Decode parent solutions to SchedulingSolutions
+ * 1. Decode parent solutions to SchedulingSolutions (assignment + dispatch order)
  * 2. Apply crossover to produce offspring
- * 3. Apply mutation to offspring
+ * 3. Apply mutation to offspring (REASSIGN and/or SWAP_ORDER, per operator type)
  * 4. Apply repair to ensure valid assignments
- * 5. Encode back to MOEA Solutions
+ * 5. Encode back to MOEA Solutions (order genes carried via the permutation)
  */
 public class TaskSchedulingVariation implements Variation {
 
@@ -98,42 +101,31 @@ public class TaskSchedulingVariation implements Variation {
             repairOperator.repair(child);
         }
 
-        // Encode back to MOEA solutions
-        return new Solution[]{encode(offspring[0]), encode(offspring[1])};
+        // Encode back to MOEA solutions, preserving the parents' constraint
+        // count so constrained problems can still call setConstraint()
+        int numConstraints = parents[0].getNumberOfConstraints();
+        return new Solution[]{
+            encode(offspring[0], numConstraints),
+            encode(offspring[1], numConstraints)
+        };
     }
 
     /**
-     * Decodes a MOEA Solution to our SchedulingSolution.
+     * Decodes a MOEA Solution (assignment genes + dispatch permutation) to our
+     * SchedulingSolution. Shared encoding lives on TaskSchedulingProblem.
      */
     private SchedulingSolution decode(Solution solution) {
-        SchedulingSolution schedulingSolution = new SchedulingSolution(numTasks, numVMs, numObjectives);
-        int[] assignment = new int[numTasks];
-
-        for (int i = 0; i < numTasks; i++) {
-            RealVariable var = (RealVariable) solution.getVariable(i);
-            int vmIndex = (int) Math.round(var.getValue());
-            vmIndex = Math.max(0, Math.min(numVMs - 1, vmIndex));
-            assignment[i] = vmIndex;
-        }
-
-        schedulingSolution.setTaskAssignment(assignment);
-        schedulingSolution.rebuildTaskOrdering();
-        return schedulingSolution;
+        return TaskSchedulingProblem.decodeSolution(solution, numTasks, numVMs, numObjectives);
     }
 
     /**
-     * Encodes a SchedulingSolution to a MOEA Solution.
+     * Encodes a SchedulingSolution (including its per-VM ordering) to a MOEA
+     * Solution. Shared encoding lives on TaskSchedulingProblem.
      */
-    private Solution encode(SchedulingSolution schedulingSolution) {
-        Solution solution = new Solution(numTasks, numObjectives);
-        int[] assignment = schedulingSolution.getTaskAssignment();
-
-        for (int i = 0; i < numTasks; i++) {
-            RealVariable var = new RealVariable(0, numVMs - 1);
-            var.setValue(assignment[i]);
-            solution.setVariable(i, var);
-        }
-
+    private Solution encode(SchedulingSolution schedulingSolution, int numConstraints) {
+        Solution solution = TaskSchedulingProblem.newShell(
+            numTasks, numVMs, numObjectives, numConstraints);
+        TaskSchedulingProblem.encodeInto(solution, schedulingSolution);
         return solution;
     }
 }

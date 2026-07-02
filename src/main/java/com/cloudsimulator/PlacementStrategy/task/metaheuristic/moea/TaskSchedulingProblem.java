@@ -7,6 +7,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolutio
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 
 import org.moeaframework.core.Solution;
+import org.moeaframework.core.variable.Permutation;
 import org.moeaframework.core.variable.RealVariable;
 import org.moeaframework.problem.AbstractProblem;
 
@@ -15,13 +16,24 @@ import java.util.List;
 /**
  * Adapts the cloud task scheduling problem to MOEA Framework's Problem interface.
  *
- * Encoding:
- * - Each decision variable represents a task's VM assignment
- * - Variable i ∈ [0, numVMs-1] indicates which VM task i is assigned to
- * - Real values are rounded to integers during evaluation
+ * Encoding (numTasks + 1 variables):
+ * - Variables [0, numTasks): task i's VM assignment as a RealVariable in
+ *   [0, numVMs-1], rounded to the nearest integer VM index on decode.
+ * - Variable numTasks: a {@link Permutation} over the tasks acting as the
+ *   global dispatch priority. A VM's intra-queue execution order is the
+ *   permutation filtered down to the tasks assigned to that VM.
  *
- * This adapter allows using MOEA Framework's algorithms (NSGA-II, NSGA-III, MOEA/D, etc.)
- * with our existing objective functions and repair operator.
+ * The permutation makes intra-VM execution order part of the genotype: the
+ * scheduling objectives (Makespan/WaitingTime/Energy via LaneSchedule) are
+ * order-sensitive under the per-vCPU FIFO scheduler, and without order genes
+ * every MOEA individual would be evaluated against the same canonical
+ * ascending-index order — a strictly smaller search space than the native
+ * GA/SA arms explore. See {@link TaskSchedulingVariation} for the
+ * domain-operator variation that evolves both parts of the genotype.
+ *
+ * The static {@code decodeSolution}/{@code encodeInto}/{@code newShell}
+ * helpers are the single source of truth for this encoding; the variation and
+ * mutation adapters delegate to them rather than duplicating the mapping.
  */
 public class TaskSchedulingProblem extends AbstractProblem {
 
@@ -41,7 +53,8 @@ public class TaskSchedulingProblem extends AbstractProblem {
     public TaskSchedulingProblem(List<Task> tasks, List<VM> vms,
                                   List<SchedulingObjective> objectives,
                                   RepairOperator repairOperator) {
-        super(tasks.size(), objectives.size(), 0); // numVars, numObjectives, numConstraints
+        // numTasks assignment variables + 1 dispatch-order permutation
+        super(tasks.size() + 1, objectives.size(), 0);
         this.tasks = tasks;
         this.vms = vms;
         this.objectives = objectives;
@@ -55,22 +68,7 @@ public class TaskSchedulingProblem extends AbstractProblem {
 
     @Override
     public Solution newSolution() {
-        Solution solution = new Solution(numberOfVariables, numberOfObjectives);
-
-        // Each variable represents a task's VM assignment
-        // Range: [0, numVMs - 1] as real values (will be rounded during evaluation)
-        for (int i = 0; i < numberOfVariables; i++) {
-            // Use valid VM range for this task if available, otherwise use full range
-            List<Integer> validVms = repairOperator.getValidVmsForTask(i);
-            if (validVms != null && !validVms.isEmpty()) {
-                // Still use full range [0, numVMs-1], repair will fix invalid assignments
-                solution.setVariable(i, new RealVariable(0, vms.size() - 1));
-            } else {
-                solution.setVariable(i, new RealVariable(0, vms.size() - 1));
-            }
-        }
-
-        return solution;
+        return newShell(tasks.size(), vms.size(), numberOfObjectives, numberOfConstraints);
     }
 
     @Override
@@ -78,7 +76,8 @@ public class TaskSchedulingProblem extends AbstractProblem {
         // Decode MOEA solution to our SchedulingSolution
         SchedulingSolution schedulingSolution = decode(solution);
 
-        // Apply repair to ensure valid assignments
+        // Apply repair to ensure valid assignments (rebuilds ordering only if
+        // something was actually repaired)
         repairOperator.repair(schedulingSolution);
 
         // Evaluate each objective
@@ -87,11 +86,9 @@ public class TaskSchedulingProblem extends AbstractProblem {
             solution.setObjective(i, value);
         }
 
-        // Store the repaired assignment back in the solution for later retrieval
-        int[] assignment = schedulingSolution.getTaskAssignment();
-        for (int i = 0; i < assignment.length; i++) {
-            ((RealVariable) solution.getVariable(i)).setValue(assignment[i]);
-        }
+        // Store the repaired assignment and ordering back in the solution so
+        // the genotype stays in sync with the evaluated phenotype
+        encodeInto(solution, schedulingSolution);
     }
 
     /**
@@ -101,41 +98,100 @@ public class TaskSchedulingProblem extends AbstractProblem {
      * @return Decoded SchedulingSolution
      */
     public SchedulingSolution decode(Solution solution) {
-        SchedulingSolution schedulingSolution = new SchedulingSolution(
-            tasks.size(), vms.size(), objectives.size()
-        );
-
-        int[] assignment = new int[tasks.size()];
-        for (int i = 0; i < tasks.size(); i++) {
-            RealVariable var = (RealVariable) solution.getVariable(i);
-            // Round to nearest integer VM index
-            int vmIndex = (int) Math.round(var.getValue());
-            // Clamp to valid range
-            vmIndex = Math.max(0, Math.min(vms.size() - 1, vmIndex));
-            assignment[i] = vmIndex;
-        }
-
-        schedulingSolution.setTaskAssignment(assignment);
-        schedulingSolution.rebuildTaskOrdering();
-
-        return schedulingSolution;
+        return decodeSolution(solution, tasks.size(), vms.size(), objectives.size());
     }
 
     /**
-     * Encodes a SchedulingSolution to a MOEA Framework Solution.
+     * Encodes a SchedulingSolution to a new MOEA Framework Solution.
      *
      * @param schedulingSolution Our scheduling solution
      * @return MOEA Framework solution
      */
     public Solution encode(SchedulingSolution schedulingSolution) {
         Solution solution = newSolution();
-        int[] assignment = schedulingSolution.getTaskAssignment();
+        encodeInto(solution, schedulingSolution);
+        return solution;
+    }
 
-        for (int i = 0; i < assignment.length; i++) {
+    // ==================== Shared encoding helpers ====================
+
+    /**
+     * Creates an empty MOEA Solution with this problem's variable layout:
+     * numTasks assignment RealVariables plus the dispatch-order Permutation.
+     */
+    static Solution newShell(int numTasks, int numVMs, int numObjectives, int numConstraints) {
+        Solution solution = new Solution(numTasks + 1, numObjectives, numConstraints);
+        for (int i = 0; i < numTasks; i++) {
+            solution.setVariable(i, new RealVariable(0, numVMs - 1));
+        }
+        solution.setVariable(numTasks, new Permutation(numTasks));
+        return solution;
+    }
+
+    /**
+     * Decodes assignment genes + dispatch permutation into a SchedulingSolution
+     * whose per-VM task order is the permutation filtered by assignment.
+     */
+    static SchedulingSolution decodeSolution(Solution solution, int numTasks, int numVMs,
+                                             int numObjectives) {
+        SchedulingSolution schedulingSolution = new SchedulingSolution(numTasks, numVMs, numObjectives);
+
+        int[] assignment = new int[numTasks];
+        for (int i = 0; i < numTasks; i++) {
+            RealVariable var = (RealVariable) solution.getVariable(i);
+            // Round to nearest integer VM index and clamp to valid range
+            int vmIndex = (int) Math.round(var.getValue());
+            vmIndex = Math.max(0, Math.min(numVMs - 1, vmIndex));
+            assignment[i] = vmIndex;
+        }
+        schedulingSolution.setTaskAssignment(assignment);
+
+        // Per-VM execution order = dispatch permutation filtered by assignment
+        Permutation dispatchOrder = (Permutation) solution.getVariable(numTasks);
+        List<List<Integer>> vmTaskOrder = schedulingSolution.getVmTaskOrder();
+        for (int pos = 0; pos < numTasks; pos++) {
+            int taskIdx = dispatchOrder.get(pos);
+            vmTaskOrder.get(assignment[taskIdx]).add(taskIdx);
+        }
+
+        return schedulingSolution;
+    }
+
+    /**
+     * Writes a SchedulingSolution's assignment and per-VM ordering into an
+     * existing MOEA Solution's variables (the inverse of decodeSolution: the
+     * dispatch permutation is the concatenation of the per-VM orders, which
+     * round-trips to the identical per-VM orders).
+     */
+    static void encodeInto(Solution solution, SchedulingSolution schedulingSolution) {
+        int[] assignment = schedulingSolution.getTaskAssignment();
+        int numTasks = assignment.length;
+
+        for (int i = 0; i < numTasks; i++) {
             ((RealVariable) solution.getVariable(i)).setValue(assignment[i]);
         }
 
-        return solution;
+        int[] dispatch = new int[numTasks];
+        boolean[] placed = new boolean[numTasks];
+        int pos = 0;
+        for (List<Integer> order : schedulingSolution.getVmTaskOrder()) {
+            for (int taskIdx : order) {
+                if (taskIdx >= 0 && taskIdx < numTasks && !placed[taskIdx]) {
+                    dispatch[pos++] = taskIdx;
+                    placed[taskIdx] = true;
+                }
+            }
+        }
+        // Defensive completion: any task missing from the ordering lists (e.g.
+        // a caller that set assignments without rebuilding order) is appended
+        // in ascending index order so the variable is always a permutation.
+        for (int taskIdx = 0; taskIdx < numTasks; taskIdx++) {
+            if (!placed[taskIdx]) {
+                dispatch[pos++] = taskIdx;
+            }
+        }
+
+        ((Permutation) solution.getVariable(numTasks)).fromArray(dispatch);
     }
 
     public List<Task> getTasks() {

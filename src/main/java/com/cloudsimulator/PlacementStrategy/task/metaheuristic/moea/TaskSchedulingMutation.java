@@ -6,7 +6,6 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairO
 
 import org.moeaframework.core.Solution;
 import org.moeaframework.core.operator.Mutation;
-import org.moeaframework.core.variable.RealVariable;
 
 /**
  * Adapts the project's domain-specific MutationOperator to MOEA Framework's Mutation interface.
@@ -14,6 +13,8 @@ import org.moeaframework.core.variable.RealVariable;
  * This allows AMOSA to use constraint-aware mutations (reassign to valid VMs,
  * swap task ordering) instead of generic Polynomial Mutation, which is designed
  * for continuous optimization and unaware of task-VM compatibility constraints.
+ * With the permutation-carrying encoding, SWAP_ORDER moves survive the
+ * encode/decode round-trip, so order-mutating types (COMBINED) are effective.
  */
 public class TaskSchedulingMutation implements Mutation {
 
@@ -68,32 +69,15 @@ public class TaskSchedulingMutation implements Mutation {
     }
 
     private SchedulingSolution decode(Solution solution) {
-        SchedulingSolution schedulingSolution = new SchedulingSolution(numTasks, numVMs, solution.getNumberOfObjectives());
-        int[] assignment = new int[numTasks];
-
-        for (int i = 0; i < numTasks; i++) {
-            RealVariable var = (RealVariable) solution.getVariable(i);
-            int vmIndex = (int) Math.round(var.getValue());
-            vmIndex = Math.max(0, Math.min(numVMs - 1, vmIndex));
-            assignment[i] = vmIndex;
-        }
-
-        schedulingSolution.setTaskAssignment(assignment);
-        schedulingSolution.rebuildTaskOrdering();
-        return schedulingSolution;
+        return TaskSchedulingProblem.decodeSolution(
+            solution, numTasks, numVMs, solution.getNumberOfObjectives());
     }
 
     private Solution encode(SchedulingSolution schedulingSolution, int numObjectives,
                              int numConstraints) {
-        Solution solution = new Solution(numTasks, numObjectives, numConstraints);
-        int[] assignment = schedulingSolution.getTaskAssignment();
-
-        for (int i = 0; i < numTasks; i++) {
-            RealVariable var = new RealVariable(0, numVMs - 1);
-            var.setValue(assignment[i]);
-            solution.setVariable(i, var);
-        }
-
+        Solution solution = TaskSchedulingProblem.newShell(
+            numTasks, numVMs, numObjectives, numConstraints);
+        TaskSchedulingProblem.encodeInto(solution, schedulingSolution);
         return solution;
     }
 }

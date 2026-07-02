@@ -8,6 +8,8 @@ import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStr
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.TerminationCondition;
@@ -19,9 +21,6 @@ import org.moeaframework.core.Solution;
 import org.moeaframework.core.Variation;
 import org.moeaframework.core.initialization.InjectedInitialization;
 import org.moeaframework.core.initialization.RandomInitialization;
-import org.moeaframework.core.operator.CompoundVariation;
-import org.moeaframework.core.operator.real.PM;
-import org.moeaframework.core.operator.real.SBX;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -86,13 +85,21 @@ public class MOEA_SPEA2PowerCeilingTaskSchedulingStrategy implements MultiObject
                 + ", Mutation: " + config.getMutationRate());
         }
 
-        Variation variation = new CompoundVariation(
-            new SBX(config.getCrossoverRate(), 5.0),
-            new PM(config.getMutationRate(), 5.0)
+        // Domain-operator variation, matching the native GA arms: uniform
+        // crossover + COMBINED (REASSIGN/SWAP_ORDER) mutation + repair.
+        Variation variation = new TaskSchedulingVariation(
+            new CrossoverOperator(config.getNumObjectives(), PRNG.getRandom()),
+            new MutationOperator(vms.size(), repairOperator, PRNG.getRandom()),
+            repairOperator,
+            config.getCrossoverRate(),
+            config.getMutationRate(),
+            tasks.size(),
+            vms.size(),
+            config.getNumObjectives()
         );
 
         // MOEA's Executor doesn't expose the initialization hook, so we build
-        // SPEA2 directly (same pattern used for the seeded path in the base
+        // SPEA2 directly (same pattern used for the direct path in the base
         // strategy; we also need it here to attach the constrained Problem).
         List<int[]> seeds = config.getSeedAssignments();
         List<Solution> injected = new ArrayList<>();

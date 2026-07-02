@@ -102,10 +102,13 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             System.out.println("[MOEA-AMOSA-PC] T0: " + initialTemperature + ", alpha: " + alpha);
         }
 
-        // Domain-specific REASSIGN mutation (same choice as base strategy —
-        // every mutation must change objectives in AMOSA's trajectory search).
+        // Domain-specific COMBINED mutation (same choice as base strategy):
+        // REASSIGN or SWAP_ORDER per mutated task. Under the per-vCPU lane
+        // scheduler, intra-VM order affects the objectives, and the
+        // dispatch-permutation encoding carries order genes, so order
+        // mutations are effective moves for AMOSA's trajectory search.
         MutationOperator domainMutation = new MutationOperator(
-            MutationOperator.MutationType.REASSIGN, vms.size(), repairOperator, PRNG.getRandom());
+            MutationOperator.MutationType.COMBINED, vms.size(), repairOperator, PRNG.getRandom());
         TaskSchedulingMutation mutation = new TaskSchedulingMutation(
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());
