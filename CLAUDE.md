@@ -1,5 +1,12 @@
 # Claude Code Instructions for JavaCloudSimulatorCosmos
 
+## Session Handoff — READ FIRST
+
+**`HANDOFF.md` (repo root) is the up-to-date session handoff**: the research goal,
+the completed review-and-fix work (PRs #208/#209), the pending campaign re-runs, and
+the remaining paper/method items. Read it at the start of every session, after the
+README.
+
 ## Build Environment Notes
 
 ### Do NOT Use Maven
