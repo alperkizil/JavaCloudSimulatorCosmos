@@ -116,8 +116,10 @@ public class ParetoFront {
         double[][] ranges = new double[numObjectives][2];
 
         for (int i = 0; i < numObjectives; i++) {
-            ranges[i][0] = Double.MAX_VALUE;  // min
-            ranges[i][1] = Double.MIN_VALUE;  // max
+            ranges[i][0] = Double.MAX_VALUE;   // min
+            // NOT Double.MIN_VALUE: that is the smallest POSITIVE double, so
+            // it would be a wrong max sentinel for all-negative objectives.
+            ranges[i][1] = -Double.MAX_VALUE;  // max
 
             for (SchedulingSolution sol : solutions) {
                 double val = sol.getObjectiveValue(i);

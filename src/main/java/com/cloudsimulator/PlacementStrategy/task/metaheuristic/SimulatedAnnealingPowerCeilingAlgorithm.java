@@ -61,12 +61,16 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
 
         this.random = RandomGenerator.getInstance();
 
-        this.repairOperator = new RepairOperator(tasks, vms, new java.util.Random(random.getSeed()));
+        // Each operator gets its own derived seed: seeding both with the
+        // same value would make their streams identical (fully correlated).
+        long baseSeed = random.getSeed();
+        this.repairOperator = new RepairOperator(tasks, vms,
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 0)));
         this.neighborOperator = new MutationOperator(
             config.getNeighborType(),
             vms.size(),
             repairOperator,
-            new java.util.Random(random.getSeed())
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 1))
         );
 
         this.statistics = new SAStatistics(config.isVerboseLogging());

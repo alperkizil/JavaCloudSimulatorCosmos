@@ -93,18 +93,22 @@ public class GenerationalGAAlgorithm {
         // Use the simulator's random generator for reproducibility
         this.random = RandomGenerator.getInstance();
 
-        // Initialize operators
-        this.repairOperator = new RepairOperator(tasks, vms, new java.util.Random(random.getSeed()));
+        // Initialize operators. Each gets its own derived seed: seeding all
+        // three with the same value would make their streams identical
+        // (fully correlated), not independent.
+        long baseSeed = random.getSeed();
+        this.repairOperator = new RepairOperator(tasks, vms,
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 0)));
         this.selectionOperator = new TournamentSelection(config.getTournamentSize());
         this.crossoverOperator = new CrossoverOperator(
             config.getCrossoverType(),
             config.getNumObjectives(),
-            new java.util.Random(random.getSeed())
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 1))
         );
         this.mutationOperator = new MutationOperator(
             vms.size(),
             repairOperator,
-            new java.util.Random(random.getSeed())
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 2))
         );
 
         // Initialize statistics

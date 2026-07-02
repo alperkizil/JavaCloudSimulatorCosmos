@@ -47,6 +47,19 @@ public class RandomGenerator {
         return seed;
     }
 
+    /**
+     * Derives a deterministic, well-separated seed for an independent random
+     * stream. Several operator-local RNGs seeded with the SAME base seed
+     * produce identical (fully correlated) sequences — their "independent"
+     * random decisions are copies of each other. Offsetting the base seed by
+     * a large odd (golden-ratio) multiple of the stream index gives every
+     * stream a distinct, reproducible seed. streamIndex 0 already differs
+     * from the base seed, which the singleton itself uses.
+     */
+    public static long deriveStreamSeed(long baseSeed, int streamIndex) {
+        return baseSeed + 0x9E3779B97F4A7C15L * (streamIndex + 1);
+    }
+
     // Random number generation methods
 
     public int nextInt() {

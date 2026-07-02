@@ -66,17 +66,21 @@ public class GenerationalGAPowerCeilingAlgorithm {
 
         this.random = RandomGenerator.getInstance();
 
-        this.repairOperator = new RepairOperator(tasks, vms, new java.util.Random(random.getSeed()));
+        // Each operator gets its own derived seed: seeding all three with the
+        // same value would make their streams identical (fully correlated).
+        long baseSeed = random.getSeed();
+        this.repairOperator = new RepairOperator(tasks, vms,
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 0)));
         this.selectionOperator = new TournamentSelection(config.getTournamentSize());
         this.crossoverOperator = new CrossoverOperator(
             config.getCrossoverType(),
             config.getNumObjectives(),
-            new java.util.Random(random.getSeed())
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 1))
         );
         this.mutationOperator = new MutationOperator(
             vms.size(),
             repairOperator,
-            new java.util.Random(random.getSeed())
+            new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 2))
         );
 
         this.statistics = new GAStatistics(config.isVerboseLogging());
