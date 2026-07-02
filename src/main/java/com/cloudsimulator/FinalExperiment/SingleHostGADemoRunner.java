@@ -375,9 +375,9 @@ public class SingleHostGADemoRunner {
     private static void printPowerReference(Host host, List<VM> vms, EnergyObjective energyObj) {
         long ref = host.getMeasurementBasedPowerModel().getReferenceVmIps();
         System.out.println();
-        System.out.printf("  Power-scaling reference IPS = %.1fG (median host IPS/core); exponent = %.1f (quadratic).%n",
+        System.out.printf("  Power-scaling reference IPS = %.1fG (median host IPS/core); exponent = %.1f (super-linear, DVFS-like).%n",
             ref / 1e9, MeasurementBasedPowerModel.POWER_SCALING_EXPONENT);
-        System.out.println("  speedFactor(VM) = (effIPS/vCPU / referenceIPS) ^ 2   - faster lanes draw quadratically more power.");
+        System.out.println("  speedFactor(VM) = (effIPS/vCPU / referenceIPS) ^ 1.5 - faster lanes draw super-linearly more power.");
         MeasurementBasedPowerModel pm = host.getMeasurementBasedPowerModel();
         for (VM vm : vms) {
             double f = pm.calculateSpeedPowerFactor(vm.getEffectiveIpsPerVcpu());
