@@ -20,10 +20,13 @@ import java.util.Map;
  * values <b>identical</b> to {@code buildScenarioConfig()} in the legacy runners
  * (shared byte-for-byte across all three studies). Tweak any field in a Main.
  *
- * <p>{@link #toExperimentConfiguration(int, long)} reproduces the runner's
- * {@code buildScenarioConfig(scenario, seed)} exactly, and <b>guarantees every
- * host uses the measurement-based power model</b> (it throws otherwise unless you
- * explicitly opt out).</p>
+ * <p>{@link #toExperimentConfiguration(int, long)} follows the runner's
+ * {@code buildScenarioConfig(scenario, seed)}, and <b>guarantees every host
+ * uses the measurement-based power model</b> (it throws otherwise unless you
+ * explicitly opt out). One deliberate deviation from the legacy runners:
+ * {@code generateTasks} decouples the workload-type and instruction-length
+ * cycles (the legacy shared-index cycling created a type-size confound — see
+ * the method javadoc).</p>
  */
 public final class ExperimentConfig {
 
@@ -201,15 +204,43 @@ public final class ExperimentConfig {
         return config;
     }
 
+    /**
+     * Generates the task list, cycling through the workload types and
+     * instruction lengths with DECOUPLED phases.
+     *
+     * With the legacy shared index ({@code types[i % T]},
+     * {@code lengths[i % L]}), type-length pairs whose indices differ in
+     * residue mod gcd(T, L) never occur: with 6 CPU types and 10 lengths only
+     * same-parity pairs exist, so the huge 25G/40G lengths always land on a
+     * fixed subset of workload types — a type-size confound (workload type
+     * sets the power profile, length sets the duration). Advancing the length
+     * phase by one after every lcm(T, L) tasks visits every (type, length)
+     * pair exactly once per T*L tasks: deterministic, identical for every
+     * seed and algorithm arm, and uniformly balanced.
+     */
     private List<TaskConfig> generateTasks(int count, WorkloadType[] types, String prefix, int scenario) {
         List<TaskConfig> tasks = new ArrayList<>();
+        int block = lcm(types.length, instructionLengths.length);
         for (int i = 0; i < count; i++) {
             WorkloadType wt = types[i % types.length];
-            long instrLen = instructionLengths[i % instructionLengths.length];
+            long instrLen = instructionLengths[(i + i / block) % instructionLengths.length];
             String name = "S" + scenario + "_" + prefix + "_" + wt.name() + "_" + i;
             tasks.add(new TaskConfig(name, userName, instrLen, wt));
         }
         return tasks;
+    }
+
+    private static int lcm(int a, int b) {
+        return a / gcd(a, b) * b;
+    }
+
+    private static int gcd(int a, int b) {
+        while (b != 0) {
+            int t = a % b;
+            a = b;
+            b = t;
+        }
+        return a;
     }
 
     private void requireMeasurementModel(String powerModel) {

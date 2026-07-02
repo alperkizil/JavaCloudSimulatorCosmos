@@ -9,7 +9,6 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerC
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 
 import org.moeaframework.core.Solution;
-import org.moeaframework.core.variable.RealVariable;
 import org.moeaframework.problem.AbstractProblem;
 
 import java.util.List;
@@ -47,7 +46,9 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
                                          RepairOperator repairOperator,
                                          List<Host> hosts,
                                          double powerCapWatts) {
-        super(tasks.size(), objectives.size(), 1);
+        // numTasks assignment variables + 1 dispatch-order permutation
+        // (see TaskSchedulingProblem for the encoding)
+        super(tasks.size() + 1, objectives.size(), 1);
         this.tasks = tasks;
         this.vms = vms;
         this.objectives = objectives;
@@ -64,11 +65,8 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
 
     @Override
     public Solution newSolution() {
-        Solution solution = new Solution(numberOfVariables, numberOfObjectives, numberOfConstraints);
-        for (int i = 0; i < numberOfVariables; i++) {
-            solution.setVariable(i, new RealVariable(0, vms.size() - 1));
-        }
-        return solution;
+        return TaskSchedulingProblem.newShell(
+            tasks.size(), vms.size(), numberOfObjectives, numberOfConstraints);
     }
 
     @Override
@@ -88,35 +86,19 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
         double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
         solution.setConstraint(0, violation);
 
-        // Store the repaired assignment back so encode/decode stays consistent.
-        int[] assignment = schedulingSolution.getTaskAssignment();
-        for (int i = 0; i < assignment.length; i++) {
-            ((RealVariable) solution.getVariable(i)).setValue(assignment[i]);
-        }
+        // Store the repaired assignment and ordering back so the genotype
+        // stays in sync with the evaluated phenotype.
+        TaskSchedulingProblem.encodeInto(solution, schedulingSolution);
     }
 
     public SchedulingSolution decode(Solution solution) {
-        SchedulingSolution schedulingSolution = new SchedulingSolution(
-            tasks.size(), vms.size(), objectives.size()
-        );
-        int[] assignment = new int[tasks.size()];
-        for (int i = 0; i < tasks.size(); i++) {
-            RealVariable var = (RealVariable) solution.getVariable(i);
-            int vmIndex = (int) Math.round(var.getValue());
-            vmIndex = Math.max(0, Math.min(vms.size() - 1, vmIndex));
-            assignment[i] = vmIndex;
-        }
-        schedulingSolution.setTaskAssignment(assignment);
-        schedulingSolution.rebuildTaskOrdering();
-        return schedulingSolution;
+        return TaskSchedulingProblem.decodeSolution(
+            solution, tasks.size(), vms.size(), objectives.size());
     }
 
     public Solution encode(SchedulingSolution schedulingSolution) {
         Solution solution = newSolution();
-        int[] assignment = schedulingSolution.getTaskAssignment();
-        for (int i = 0; i < assignment.length; i++) {
-            ((RealVariable) solution.getVariable(i)).setValue(assignment[i]);
-        }
+        TaskSchedulingProblem.encodeInto(solution, schedulingSolution);
         return solution;
     }
 

@@ -73,6 +73,7 @@ public class GAConfiguration {
     // Objectives with weights (for weighted sum)
     private final List<SchedulingObjective> objectives;
     private final Map<SchedulingObjective, Double> objectiveWeights;
+    private final boolean normalizeObjectiveScales;
 
     // Termination
     private final TerminationCondition terminationCondition;
@@ -98,6 +99,7 @@ public class GAConfiguration {
         this.elitePercentage = builder.elitePercentage;
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
+        this.normalizeObjectiveScales = builder.normalizeObjectiveScales;
         this.terminationCondition = builder.terminationCondition;
         this.seedAssignments = new ArrayList<>(builder.seedAssignments);
         this.verboseLogging = builder.verboseLogging;
@@ -204,6 +206,18 @@ public class GAConfiguration {
         return objectives.size() > 1;
     }
 
+    /**
+     * Whether weighted-sum fitness divides each raw objective value by a
+     * per-run reference scale (captured from the first evaluated solution)
+     * before the weights are applied. Keeps the configured weight ratio
+     * meaningful across objectives with different units (seconds vs kWh), so
+     * a small tiebreaker weight stays a tiebreaker regardless of scale.
+     * Raw objective values on solutions and the archive are unaffected.
+     */
+    public boolean isNormalizeObjectiveScales() {
+        return normalizeObjectiveScales;
+    }
+
     public TerminationCondition getTerminationCondition() {
         return terminationCondition;
     }
@@ -298,6 +312,7 @@ public class GAConfiguration {
         private double elitePercentage = 0.1; // 10% default
         private List<SchedulingObjective> objectives = new ArrayList<>();
         private Map<SchedulingObjective, Double> objectiveWeights = new LinkedHashMap<>();
+        private boolean normalizeObjectiveScales = false;
         private TerminationCondition terminationCondition = new GenerationCountTermination(100);
         private List<int[]> seedAssignments = new ArrayList<>();
         private boolean verboseLogging = false;
@@ -428,6 +443,23 @@ public class GAConfiguration {
             }
             this.objectives.add(objective);
             this.objectiveWeights.put(objective, weight);
+            return this;
+        }
+
+        /**
+         * Enables per-run objective scale normalization for weighted-sum
+         * fitness: each raw objective value is divided by a reference scale
+         * captured from the first evaluated solution before the weights are
+         * applied. Without this, an objective measured in large units (e.g.
+         * makespan seconds) dwarfs one in small units (e.g. energy kWh)
+         * regardless of the configured weights. Off by default to preserve
+         * legacy behaviour.
+         *
+         * @param normalize true to normalize objective scales
+         * @return this builder
+         */
+        public Builder normalizeObjectiveScales(boolean normalize) {
+            this.normalizeObjectiveScales = normalize;
             return this;
         }
 

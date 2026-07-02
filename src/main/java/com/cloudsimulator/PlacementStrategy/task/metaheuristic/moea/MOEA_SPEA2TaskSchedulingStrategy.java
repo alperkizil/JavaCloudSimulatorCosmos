@@ -7,6 +7,8 @@ import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStr
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.GenerationCountTermination;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.TerminationCondition;
@@ -17,14 +19,13 @@ import org.moeaframework.Instrumenter;
 import org.moeaframework.algorithm.SPEA2;
 import org.moeaframework.analysis.collector.Observations;
 import org.moeaframework.analysis.plot.Plot;
+import org.moeaframework.core.Initialization;
 import org.moeaframework.core.NondominatedPopulation;
 import org.moeaframework.core.PRNG;
 import org.moeaframework.core.Solution;
 import org.moeaframework.core.Variation;
 import org.moeaframework.core.initialization.InjectedInitialization;
-import org.moeaframework.core.operator.CompoundVariation;
-import org.moeaframework.core.operator.real.PM;
-import org.moeaframework.core.operator.real.SBX;
+import org.moeaframework.core.initialization.RandomInitialization;
 
 import javax.swing.JFrame;
 import java.io.File;
@@ -184,7 +185,8 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
     }
 
     /**
-     * Runs MOEA Framework's SPEA2 using the Executor and returns the Pareto front.
+     * Runs MOEA Framework's SPEA2 (constructed directly, with the project's
+     * domain variation operators) and returns the Pareto front.
      *
      * @param tasks Tasks to schedule
      * @param vms   Available VMs
@@ -215,77 +217,28 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
         int maxEvaluations = calculateMaxEvaluations();
 
         if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Starting optimization with Executor");
+            System.out.println("[MOEA-SPEA2] Starting optimization");
             System.out.println("[MOEA-SPEA2] Algorithm: SPEA2, Evaluations: " + maxEvaluations);
             System.out.println("[MOEA-SPEA2] Population: " + config.getPopulationSize() +
                 ", Crossover: " + config.getCrossoverRate() +
                 ", Mutation: " + config.getMutationRate());
         }
 
-        // Seeded path: bypass the Executor so we can pass InjectedInitialization.
-        if (!config.getSeedAssignments().isEmpty()) {
-            return runSeeded(tasks, vms, problem, maxEvaluations);
-        }
-
-        // Build and configure the Executor using SPEA2 algorithm
-        Executor executor = new Executor()
-            .withProblem(problem)
-            .withAlgorithm("SPEA2")
-            .withMaxEvaluations(maxEvaluations)
-            .withProperty("populationSize", config.getPopulationSize())
-            .withProperty("sbx.rate", config.getCrossoverRate())
-            .withProperty("sbx.distributionIndex", 5.0)
-            .withProperty("pm.rate", config.getMutationRate())
-            .withProperty("pm.distributionIndex", 5.0);
-
-        // Optional: distribute evaluation across cores
-        if (useDistributedEvaluation) {
-            executor.distributeOnAllCores();
-        }
-
-        // Optional: collect runtime data
-        Instrumenter instrumenter = null;
-        if (collectRuntimeData) {
-            instrumenter = new Instrumenter()
-                .withProblem(problem)
-                .withFrequency(config.getPopulationSize())
-                .attachElapsedTimeCollector()
-                .attachGenerationalDistanceCollector()
-                .attachHypervolumeCollector();
-            executor.withInstrumenter(instrumenter);
-        }
-
-        // Run the optimization
-        NondominatedPopulation result = executor.run();
-        lastMoeaResult = result;  // Store MOEA result for plotting
-        lastEvaluationCount = maxEvaluations;
-
-        // Store runtime observations if collected
-        if (instrumenter != null) {
-            lastObservations = instrumenter.getObservations();
-        }
-
-        if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Optimization completed");
-        }
-
-        // Convert to our ParetoFront format
-        lastParetoFront = convertToParetoFront(result, problem);
-
-        if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Pareto front contains " + lastParetoFront.size() + " solutions");
-        }
-
-        return lastParetoFront;
+        return runDirect(tasks, vms, problem, maxEvaluations);
     }
 
     /**
-     * Runs SPEA2 directly (bypassing the Executor) so that heuristic seed
-     * solutions can be injected into the initial population via
-     * {@link InjectedInitialization}. The Executor doesn't expose the
-     * Initialization hook.
+     * Runs SPEA2 by constructing the algorithm directly (bypassing the
+     * Executor), for two reasons: (1) heuristic seed solutions can only be
+     * injected via the {@link InjectedInitialization} hook, which the Executor
+     * doesn't expose; (2) the variation must be the project's domain operators
+     * ({@link TaskSchedulingVariation}: the same uniform crossover +
+     * REASSIGN/SWAP_ORDER mutation + repair the native GA/SA arms use) rather
+     * than MOEA's generic real-coded SBX+PM, so the algorithm comparison is
+     * not confounded by operator family — and so intra-VM order genes (the
+     * dispatch permutation) are actually evolved.
      */
-    private ParetoFront runSeeded(List<Task> tasks, List<VM> vms,
+    private ParetoFront runDirect(List<Task> tasks, List<VM> vms,
                                    TaskSchedulingProblem problem, int maxEvaluations) {
         List<int[]> seeds = config.getSeedAssignments();
         int numTasks = tasks.size();
@@ -301,19 +254,27 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
             injected.add(problem.encode(s));
         }
 
-        if (config.isVerboseLogging()) {
+        if (config.isVerboseLogging() && !injected.isEmpty()) {
             System.out.println("[MOEA-SPEA2] Seeded run: injecting "
                 + injected.size() + " heuristic solution(s) into initial population");
         }
 
-        // Mirror Executor's default variation operators (SBX + PM) with the
-        // rates/distribution indices configured via properties elsewhere.
-        Variation variation = new CompoundVariation(
-            new SBX(config.getCrossoverRate(), 5.0),
-            new PM(config.getMutationRate(), 5.0)
+        // Domain-operator variation, matching the native GA arms: uniform
+        // crossover + COMBINED (REASSIGN/SWAP_ORDER) mutation + repair.
+        Variation variation = new TaskSchedulingVariation(
+            new CrossoverOperator(config.getNumObjectives(), PRNG.getRandom()),
+            new MutationOperator(vms.size(), problem.getRepairOperator(), PRNG.getRandom()),
+            problem.getRepairOperator(),
+            config.getCrossoverRate(),
+            config.getMutationRate(),
+            numTasks,
+            vms.size(),
+            config.getNumObjectives()
         );
 
-        InjectedInitialization initialization = new InjectedInitialization(problem, injected);
+        Initialization initialization = injected.isEmpty()
+            ? new RandomInitialization(problem)
+            : new InjectedInitialization(problem, injected);
 
         // Default SPEA2 parameters: numberOfOffspring=populationSize, k=1
         // (matches MOEA Framework's default configuration).
@@ -335,7 +296,7 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
         lastEvaluationCount = algorithm.getNumberOfEvaluations();
 
         if (config.isVerboseLogging()) {
-            System.out.println("[MOEA-SPEA2] Seeded run completed after "
+            System.out.println("[MOEA-SPEA2] Run completed after "
                 + lastEvaluationCount + " evaluations");
         }
 

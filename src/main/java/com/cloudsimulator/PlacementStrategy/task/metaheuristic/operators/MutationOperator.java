@@ -103,6 +103,13 @@ public class MutationOperator {
 
     /**
      * Reassignment mutation: Assign a task to a different (valid) VM.
+     *
+     * The move is surgical: the task is removed from its old VM's execution
+     * order and appended to the new VM's, leaving every other order list
+     * untouched. (A full rebuildTaskOrdering() here would reset ALL VMs'
+     * orders to canonical ascending-index, silently erasing the order
+     * information accumulated by SWAP_ORDER mutations across the whole
+     * solution on every reassignment.)
      */
     private boolean reassignMutation(SchedulingSolution solution, int taskIdx) {
         List<Integer> validVms = repairOperator.getValidVmsForTask(taskIdx);
@@ -121,7 +128,12 @@ public class MutationOperator {
 
         if (newVm != currentVm) {
             solution.setAssignedVM(taskIdx, newVm);
-            solution.rebuildTaskOrdering();
+            // A task with an out-of-range (unrepaired) assignment sits in no
+            // order list; guard the removal, then append to the new VM.
+            if (currentVm >= 0 && currentVm < solution.getNumVMs()) {
+                solution.getTaskOrderForVM(currentVm).remove(Integer.valueOf(taskIdx));
+            }
+            solution.getTaskOrderForVM(newVm).add(taskIdx);
             return true;
         }
 

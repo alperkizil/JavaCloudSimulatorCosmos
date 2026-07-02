@@ -342,12 +342,20 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             tasks, vms, config.getObjectives(), repairOperator
         );
 
-        // Calculate max evaluations
+        // Calculate max evaluations. AMOSA.initialize() unconditionally spends
+        // gamma*softLimit*(1 + hillClimbingIterations) evaluations building and
+        // hill-climbing the initial archive before the first annealing step;
+        // grant that one-time construction cost on top of the configured budget
+        // so the annealing search itself receives the full budget — the same
+        // effective search budget as the other experiment arms.
         int maxEvaluations = calculateMaxEvaluations();
+        int initEvaluations = (int) (gamma * softLimit) * (1 + hillClimbingIterations);
+        int totalEvaluations = maxEvaluations + initEvaluations;
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA] Starting optimization with Executor");
-            System.out.println("[MOEA-AMOSA] Algorithm: AMOSA, Evaluations: " + maxEvaluations);
+            System.out.println("[MOEA-AMOSA] Algorithm: AMOSA, Evaluations: " + maxEvaluations
+                + " (+" + initEvaluations + " archive-initialization)");
             System.out.println("[MOEA-AMOSA] Initial Temp: " + initialTemperature +
                 ", Stopping Temp: " + stoppingTemperature +
                 ", Alpha: " + alpha);
@@ -358,13 +366,14 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
                 ", Hill Climbing: " + hillClimbingIterations);
         }
 
-        // Create domain-specific mutation operator (REASSIGN only for AMOSA).
-        // SWAP_ORDER changes task execution order within a VM but doesn't affect
-        // objectives (makespan/energy depend on task-to-VM assignment, not ordering).
-        // For AMOSA's single-trajectory search, every mutation must change objectives
-        // to avoid wasting evaluations on identical neighbors.
+        // Domain-specific mutation, matching the native GA/SA arms: COMBINED
+        // randomly applies REASSIGN or SWAP_ORDER per mutated task. Under the
+        // per-vCPU lane scheduler, intra-VM execution order DOES affect the
+        // objectives (LaneSchedule start ticks drive makespan/waiting/energy),
+        // and the dispatch-permutation encoding carries order genes through
+        // the encode/decode round-trip, so order mutations are effective.
         MutationOperator domainMutation = new MutationOperator(
-            MutationOperator.MutationType.REASSIGN, vms.size(), repairOperator, PRNG.getRandom());
+            MutationOperator.MutationType.COMBINED, vms.size(), repairOperator, PRNG.getRandom());
         TaskSchedulingMutation mutation = new TaskSchedulingMutation(
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());
@@ -386,10 +395,10 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             alpha,
             iterationsPerTemperature,
             hillClimbingIterations);
-        amosa.setMaxEvaluations(maxEvaluations);
+        amosa.setMaxEvaluations(totalEvaluations);
 
         // Run the optimization (step until max evaluations or termination)
-        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
+        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
             amosa.step();
         }
         if (!amosa.isTerminated()) {
@@ -437,7 +446,11 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             tasks, vms, config.getObjectives(), repairOperator
         );
 
-        int maxEvaluations = calculateMaxEvaluations();
+        // Same archive-initialization budget grant as optimize(): AMOSA's
+        // initialize() spends gamma*softLimit*(1+hillClimbingIterations)
+        // evaluations before the annealing loop starts.
+        int maxEvaluations = calculateMaxEvaluations()
+            + (int) (gamma * softLimit) * (1 + hillClimbingIterations);
 
         // Configure Executor for multiple seeds
         Executor executor = new Executor()
@@ -497,12 +510,16 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
         );
 
         int maxEvaluations = calculateMaxEvaluations();
+        // Grant AMOSA its archive-initialization cost (see optimize()) so the
+        // annealing search budget matches NSGA-II's search budget below.
+        int amosaEvaluations = maxEvaluations
+            + (int) (gamma * softLimit) * (1 + hillClimbingIterations);
 
         // Run AMOSA
         Executor amosaExecutor = new Executor()
             .withProblem(problem)
             .withAlgorithm("AMOSA")
-            .withMaxEvaluations(maxEvaluations)
+            .withMaxEvaluations(amosaEvaluations)
             .withProperty("gamma", gamma)
             .withProperty("softLimit", softLimit)
             .withProperty("hardLimit", hardLimit)

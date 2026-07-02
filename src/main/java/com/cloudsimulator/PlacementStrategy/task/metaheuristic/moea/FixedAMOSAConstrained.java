@@ -40,6 +40,36 @@ public class FixedAMOSAConstrained extends AMOSA {
             new AggregateConstraintComparator(),
             new ParetoDominanceComparator()
         );
+        installConstrainedComparatorIntoBase();
+    }
+
+    /**
+     * Replaces AMOSA's own private {@code comparator} field with this class's
+     * constrained comparator.
+     *
+     * The field above only shadows the base class's — Java private fields are
+     * not polymorphic — so the inherited {@code AMOSA.initialize()}, whose
+     * archive-construction hill-climbing phase spends
+     * {@code gamma*softLimit*(1 + hillClimbingIterations)} evaluations
+     * comparing solutions via the base field, would otherwise run with plain
+     * (constraint-blind) Pareto dominance and can seed the archive with
+     * over-cap solutions refined without regard to the power cap.
+     * {@code initialize()} cannot be overridden without also duplicating its
+     * whole {@code super.initialize()} chain, so the base field is swapped
+     * reflectively. Fails fast if the MOEA Framework layout ever changes,
+     * rather than silently reverting to constraint-blind initialization.
+     */
+    private void installConstrainedComparatorIntoBase() {
+        try {
+            java.lang.reflect.Field baseComparator = AMOSA.class.getDeclaredField("comparator");
+            baseComparator.setAccessible(true);
+            baseComparator.set(this, this.comparator);
+        } catch (ReflectiveOperationException | SecurityException e) {
+            throw new IllegalStateException(
+                "Cannot install the constrained dominance comparator into AMOSA.initialize(): "
+                + "the MOEA Framework's AMOSA class layout has changed. Without it, archive "
+                + "initialization silently ignores the power-cap constraint.", e);
+        }
     }
 
     public void setMaxEvaluations(int maxEvaluations) {

@@ -292,7 +292,8 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .normalizeObjectiveScales(true)
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);
@@ -337,6 +338,7 @@ public final class AlgorithmRegistry {
 
         builder.addWeightedObjective(primaryObjective, 1.0)
                .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
+               .normalizeObjectiveScales(true)
                .verboseLogging(p.verboseLogging);
 
         if (heuristicSeed != null) {
@@ -364,7 +366,8 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .normalizeObjectiveScales(true)
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);
@@ -521,7 +524,8 @@ public final class AlgorithmRegistry {
             .tournamentSize(p.gaTournamentSize)
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .normalizeObjectiveScales(true)
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);

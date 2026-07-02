@@ -85,18 +85,30 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             tasks, vms, config.getObjectives(), repairOperator, hosts, powerCapWatts
         );
 
+        // AMOSA.initialize() unconditionally spends
+        // gamma*softLimit*(1 + hillClimbingIterations) evaluations building and
+        // hill-climbing the initial archive before the first annealing step;
+        // grant that one-time construction cost on top of the configured budget
+        // so the annealing search itself receives the full budget — the same
+        // effective search budget as the other experiment arms.
         int maxEvaluations = calculateMaxEvaluations();
+        int initEvaluations = (int) (gamma * softLimit) * (1 + hillClimbingIterations);
+        int totalEvaluations = maxEvaluations + initEvaluations;
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA-PC] Starting optimization");
-            System.out.println("[MOEA-AMOSA-PC] Cap: " + powerCapWatts + " W, Evaluations: " + maxEvaluations);
+            System.out.println("[MOEA-AMOSA-PC] Cap: " + powerCapWatts + " W, Evaluations: " + maxEvaluations
+                + " (+" + initEvaluations + " archive-initialization)");
             System.out.println("[MOEA-AMOSA-PC] T0: " + initialTemperature + ", alpha: " + alpha);
         }
 
-        // Domain-specific REASSIGN mutation (same choice as base strategy —
-        // every mutation must change objectives in AMOSA's trajectory search).
+        // Domain-specific COMBINED mutation (same choice as base strategy):
+        // REASSIGN or SWAP_ORDER per mutated task. Under the per-vCPU lane
+        // scheduler, intra-VM order affects the objectives, and the
+        // dispatch-permutation encoding carries order genes, so order
+        // mutations are effective moves for AMOSA's trajectory search.
         MutationOperator domainMutation = new MutationOperator(
-            MutationOperator.MutationType.REASSIGN, vms.size(), repairOperator, PRNG.getRandom());
+            MutationOperator.MutationType.COMBINED, vms.size(), repairOperator, PRNG.getRandom());
         TaskSchedulingMutation mutation = new TaskSchedulingMutation(
             domainMutation, repairOperator, config.getMutationRate(),
             tasks.size(), vms.size());
@@ -114,9 +126,9 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             alpha,
             iterationsPerTemperature,
             hillClimbingIterations);
-        amosa.setMaxEvaluations(maxEvaluations);
+        amosa.setMaxEvaluations(totalEvaluations);
 
-        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
+        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
             amosa.step();
         }
         if (!amosa.isTerminated()) {
