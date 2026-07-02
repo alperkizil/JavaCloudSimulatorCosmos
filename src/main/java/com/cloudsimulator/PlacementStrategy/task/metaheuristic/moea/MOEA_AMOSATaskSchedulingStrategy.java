@@ -342,12 +342,20 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             tasks, vms, config.getObjectives(), repairOperator
         );
 
-        // Calculate max evaluations
+        // Calculate max evaluations. AMOSA.initialize() unconditionally spends
+        // gamma*softLimit*(1 + hillClimbingIterations) evaluations building and
+        // hill-climbing the initial archive before the first annealing step;
+        // grant that one-time construction cost on top of the configured budget
+        // so the annealing search itself receives the full budget — the same
+        // effective search budget as the other experiment arms.
         int maxEvaluations = calculateMaxEvaluations();
+        int initEvaluations = (int) (gamma * softLimit) * (1 + hillClimbingIterations);
+        int totalEvaluations = maxEvaluations + initEvaluations;
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA] Starting optimization with Executor");
-            System.out.println("[MOEA-AMOSA] Algorithm: AMOSA, Evaluations: " + maxEvaluations);
+            System.out.println("[MOEA-AMOSA] Algorithm: AMOSA, Evaluations: " + maxEvaluations
+                + " (+" + initEvaluations + " archive-initialization)");
             System.out.println("[MOEA-AMOSA] Initial Temp: " + initialTemperature +
                 ", Stopping Temp: " + stoppingTemperature +
                 ", Alpha: " + alpha);
@@ -386,10 +394,10 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             alpha,
             iterationsPerTemperature,
             hillClimbingIterations);
-        amosa.setMaxEvaluations(maxEvaluations);
+        amosa.setMaxEvaluations(totalEvaluations);
 
         // Run the optimization (step until max evaluations or termination)
-        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
+        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
             amosa.step();
         }
         if (!amosa.isTerminated()) {

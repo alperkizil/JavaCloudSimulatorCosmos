@@ -85,11 +85,20 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             tasks, vms, config.getObjectives(), repairOperator, hosts, powerCapWatts
         );
 
+        // AMOSA.initialize() unconditionally spends
+        // gamma*softLimit*(1 + hillClimbingIterations) evaluations building and
+        // hill-climbing the initial archive before the first annealing step;
+        // grant that one-time construction cost on top of the configured budget
+        // so the annealing search itself receives the full budget — the same
+        // effective search budget as the other experiment arms.
         int maxEvaluations = calculateMaxEvaluations();
+        int initEvaluations = (int) (gamma * softLimit) * (1 + hillClimbingIterations);
+        int totalEvaluations = maxEvaluations + initEvaluations;
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA-PC] Starting optimization");
-            System.out.println("[MOEA-AMOSA-PC] Cap: " + powerCapWatts + " W, Evaluations: " + maxEvaluations);
+            System.out.println("[MOEA-AMOSA-PC] Cap: " + powerCapWatts + " W, Evaluations: " + maxEvaluations
+                + " (+" + initEvaluations + " archive-initialization)");
             System.out.println("[MOEA-AMOSA-PC] T0: " + initialTemperature + ", alpha: " + alpha);
         }
 
@@ -114,9 +123,9 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             alpha,
             iterationsPerTemperature,
             hillClimbingIterations);
-        amosa.setMaxEvaluations(maxEvaluations);
+        amosa.setMaxEvaluations(totalEvaluations);
 
-        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < maxEvaluations) {
+        while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
             amosa.step();
         }
         if (!amosa.isTerminated()) {

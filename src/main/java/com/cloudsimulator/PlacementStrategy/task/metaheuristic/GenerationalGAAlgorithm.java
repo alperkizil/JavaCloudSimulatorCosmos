@@ -73,6 +73,11 @@ public class GenerationalGAAlgorithm {
     // Per-run reference scales for weighted-sum fitness (see ObjectiveScaleNormalizer)
     private final ObjectiveScaleNormalizer scaleNormalizer = new ObjectiveScaleNormalizer();
 
+    // Fitness of the elites carried unchanged into the current population
+    // (population slots [0, length)). Objectives are deterministic, so
+    // re-evaluating unchanged elite copies would only burn evaluation budget.
+    private double[] carriedEliteFitness;
+
     /**
      * Creates a new Generational GA algorithm.
      *
@@ -155,6 +160,7 @@ public class GenerationalGAAlgorithm {
 
         // Step 2: Evaluate initial population
         evaluatePopulation();
+        algoStats.setTotalFitnessEvaluations(statistics.getTotalFitnessEvaluations());
         statistics.updateGeneration(0, population, fitnessValues, isMinimization());
 
         if (config.isVerboseLogging()) {
@@ -176,6 +182,10 @@ public class GenerationalGAAlgorithm {
 
             // Evaluate new population
             evaluatePopulation();
+
+            // Refresh the evaluation count so an evaluation-budget termination
+            // sees this generation's consumption at the next loop check.
+            algoStats.setTotalFitnessEvaluations(statistics.getTotalFitnessEvaluations());
 
             // Update statistics
             statistics.updateGeneration(generation, population, fitnessValues, isMinimization());
@@ -326,9 +336,13 @@ public class GenerationalGAAlgorithm {
             }
         });
 
-        // Select top individuals
-        List<SchedulingSolution> elite = new ArrayList<>(count);
-        for (int i = 0; i < Math.min(count, indices.length); i++) {
+        // Select top individuals, carrying their known fitness so
+        // evaluatePopulation can skip re-evaluating the unchanged copies.
+        int selected = Math.min(count, indices.length);
+        List<SchedulingSolution> elite = new ArrayList<>(selected);
+        carriedEliteFitness = new double[selected];
+        for (int i = 0; i < selected; i++) {
+            carriedEliteFitness[i] = fitnessValues[indices[i]];
             elite.add(population.get(indices[i]).copy());
         }
 
@@ -336,10 +350,20 @@ public class GenerationalGAAlgorithm {
     }
 
     /**
-     * Evaluates all solutions in the population.
+     * Evaluates all solutions in the population. Elite slots (the first
+     * carriedEliteFitness.length individuals, placed there by
+     * evolveGeneration) are unchanged copies with deterministic objectives:
+     * their fitness is reused and no evaluation is counted, so the
+     * evaluation budget is spent only on genuinely new candidates. They were
+     * already offered to the archive when first evaluated.
      */
     private void evaluatePopulation() {
+        int carried = (carriedEliteFitness != null) ? carriedEliteFitness.length : 0;
         for (int i = 0; i < population.size(); i++) {
+            if (i < carried) {
+                fitnessValues[i] = carriedEliteFitness[i];
+                continue;
+            }
             SchedulingSolution solution = population.get(i);
             fitnessValues[i] = evaluateFitness(solution);
             statistics.incrementEvaluations();

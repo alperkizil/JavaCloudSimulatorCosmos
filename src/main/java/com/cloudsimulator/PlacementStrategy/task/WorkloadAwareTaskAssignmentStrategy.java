@@ -2,7 +2,9 @@ package com.cloudsimulator.PlacementStrategy.task;
 
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.LaneSchedule;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -11,23 +13,26 @@ import java.util.Optional;
  *
  * Algorithm:
  * For each task:
- *   1. Estimate the VM's completion time if the task were added, under the
- *      per-vCPU FIFO scheduler: the VM's queued tasks plus the new task are
- *      distributed across its vCPU lanes (each running at the host-clamped
- *      effective per-vCPU IPS, least-loaded lane first), and the estimate is the
- *      busiest lane's finish time.
+ *   1. Estimate the VM's completion time if the task were appended to its FIFO
+ *      queue, by replaying the per-vCPU FIFO scheduler via {@link LaneSchedule}
+ *      (the same analytic mirror of {@code VM.executeOneSecond} the scheduling
+ *      objectives use): tasks dispatch in queue order onto vCPU lanes running at
+ *      the host-clamped effective per-vCPU IPS, with concurrent GPU tasks capped
+ *      by the VM's bound GPU count (head-of-line non-blocking).
  *   2. Select the VM with the lowest estimated completion time.
  *   3. Ties are broken by selecting the first VM encountered.
  *
  * Where:
  * - each lane runs one task at a time at vm.effectiveIpsPerVcpu
  * - a task of length L costs ceil(L / effectiveIpsPerVcpu) ticks
- * - lane count = vm.requestedVcpuCount (true parallelism width)
+ * - concurrency width = vm.requestedVcpuCount lanes, and additionally at most
+ *   vm.boundGpuCount concurrent GPU-workload tasks (a GPU task needs a lane AND
+ *   a GPU) — without the GPU cap the estimate systematically under-counts
+ *   completion time on GPU/MIXED VMs whose GPU count is below their vCPU count
  *
  * Characteristics:
- * - Time complexity: O(m * k) per task where m = VMs, k = avg queue length
  * - Considers task instruction length, VM speed (clamped to host per-core IPS),
- *   parallelism width, and current per-lane queue load
+ *   parallelism width, GPU concurrency cap, and current queue load
  * - Minimizes makespan with a greedy heuristic consistent with the simulation
  *
  * Use case:
@@ -63,40 +68,28 @@ public class WorkloadAwareTaskAssignmentStrategy implements TaskAssignmentStrate
     }
 
     /**
-     * Estimates the VM's completion time (busiest vCPU lane) after adding the new
-     * task, mirroring the per-vCPU FIFO scheduler: queued tasks (by remaining
-     * instructions) and the new task are placed on the least-loaded lane in turn,
-     * each costing ceil(instructions / effIpsPerVcpu) ticks.
+     * Estimates the VM's completion time after appending the new task to its
+     * FIFO queue, by replaying the per-vCPU FIFO scheduler via
+     * {@link LaneSchedule} — including the GPU concurrency cap
+     * (vm.boundGpuCount) that the previous hand-rolled least-loaded-lane
+     * estimate ignored.
+     *
+     * LaneSchedule costs each task by its full instruction length; in the
+     * offline pipeline this strategy runs in (assignment before any execution)
+     * queued tasks have executed nothing, so remaining == full length.
      */
     private long estimateCompletionTicks(VM vm, Task newTask, long effIps) {
-        long[] lanes = new long[Math.max(1, vm.getRequestedVcpuCount())];
+        List<Task> queue = new ArrayList<>(vm.getAssignedTasks());
+        queue.add(newTask);
 
-        for (Task queued : vm.getAssignedTasks()) {
-            addToLeastLoaded(lanes, ceilDiv(queued.getRemainingInstructions(), effIps));
+        List<Integer> order = new ArrayList<>(queue.size());
+        for (int i = 0; i < queue.size(); i++) {
+            order.add(i);
         }
-        addToLeastLoaded(lanes, ceilDiv(newTask.getInstructionLength(), effIps));
 
-        long max = 0L;
-        for (long load : lanes) {
-            if (load > max) {
-                max = load;
-            }
-        }
-        return max;
-    }
-
-    private static void addToLeastLoaded(long[] lanes, long ticks) {
-        int idx = 0;
-        for (int i = 1; i < lanes.length; i++) {
-            if (lanes[i] < lanes[idx]) {
-                idx = i;
-            }
-        }
-        lanes[idx] += ticks;
-    }
-
-    private static long ceilDiv(long instructions, long ipsPerVcpu) {
-        return (instructions + ipsPerVcpu - 1) / ipsPerVcpu;
+        return LaneSchedule
+            .schedule(order, queue, effIps, vm.getRequestedVcpuCount(), vm.getBoundGpuCount())
+            .getCompletionTicks();
     }
 
     @Override

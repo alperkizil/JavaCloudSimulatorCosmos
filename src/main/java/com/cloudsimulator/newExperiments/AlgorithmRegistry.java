@@ -293,7 +293,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);
@@ -367,7 +367,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);
@@ -525,7 +525,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
-            .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize - 1))
+            .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
             builder.addSeedAssignment(heuristicSeed);
