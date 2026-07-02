@@ -394,7 +394,7 @@ public class WaitingTimeExperimentRunner {
         // 60 VMs with DIVERSE speeds to create waiting-time vs energy trade-off.
         // Speed range is 10x (500M to 5B IPS) — matches real-world cloud VM family spread
         // (e.g. burstable vs. compute-optimized instances) and combines with the
-        // DVFS-like power scaling exponent (2.0) to give a wide Pareto front.
+        // DVFS-like power scaling exponent (1.5) to give a wide Pareto front.
         // CPU VMs: 8 fast + 8 medium + 4 slow = 20
         for (int i = 0; i < 8; i++) {
             config.addVMConfig(new VMConfig("ExperimentUser",

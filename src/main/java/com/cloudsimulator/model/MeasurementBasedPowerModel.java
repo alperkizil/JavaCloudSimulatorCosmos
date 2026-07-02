@@ -41,9 +41,19 @@ public class MeasurementBasedPowerModel {
     public static final String REFERENCE_SYSTEM = "Dell Precision 7920 + Nvidia 5080 GPU";
 
     // Speed-based power scaling parameters
-    // Power scales as (vmIPS / referenceIPS) ^ exponent
-    // 1.0 = linear, 1.5 = super-linear (realistic for CPUs), 2.0 = quadratic
-    public static final double POWER_SCALING_EXPONENT = 2.0;
+    // Incremental power scales as (vmIPS / referenceIPS) ^ exponent, so energy
+    // per instruction scales as speed^(exponent - 1).
+    // 1.0 = linear (energy per instruction speed-independent: no speed-energy
+    // trade-off), 1.5 = super-linear, 2.0 = quadratic.
+    // 1.5 matches full-range CPU DVFS behaviour: dynamic power is ~f*V^2, but
+    // below ~2 GHz voltage is pinned at Vmin (power ~linear in f) while only
+    // the boost region is ~cubic — over a wide clock span (e.g. a modern
+    // desktop core capped at 0.5 GHz vs boosting at 5 GHz: ~10x speed for
+    // ~20-30x core power) the effective exponent is ~1.4-1.6. Under the
+    // default fleet (0.5G..3.0G effective per-vCPU IPS, reference 2.8G) this
+    // gives a ~14.7x incremental-power span and a ~2.4x energy-per-instruction
+    // span between the slowest and fastest tiers.
+    public static final double POWER_SCALING_EXPONENT = 1.5;
 
     // Reference full-load incremental power per component (Watts; wall/AC, average
     // delta above idle), used to attribute a workload's single lumped incremental
