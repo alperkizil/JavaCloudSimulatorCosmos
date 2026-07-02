@@ -23,8 +23,11 @@ import java.util.function.ToDoubleFunction;
  */
 public enum PrimaryObjective {
 
-    /** Makespan (seconds) — used by the ScenarioComparison study. */
-    MAKESPAN("Makespan", MakespanObjective::new, TaskExecutionStep::getMakespan),
+    /** Makespan (seconds, instruction-resolution) — used by the ScenarioComparison
+     *  study. Reads {@code getFractionalMakespan()} so the simulated value matches
+     *  the fractional {@link MakespanObjective} predictions bit-for-bit (the
+     *  tick-rounded {@code getMakespan()} would re-collapse equal-tick fronts). */
+    MAKESPAN("Makespan", MakespanObjective::new, TaskExecutionStep::getFractionalMakespan),
 
     /** Average task waiting time (seconds) — used by the WaitingTime study. */
     WAITING_TIME("WaitingTime", WaitingTimeObjective::new, TaskExecutionStep::getAverageWaitingTime);
