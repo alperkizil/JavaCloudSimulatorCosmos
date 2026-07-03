@@ -13,24 +13,27 @@ import java.util.List;
 /**
  * Energy objective: Minimizes total energy consumption.
  *
- * Energy is calculated to match the simulation's tick-by-tick power model:
- * - Base idle power is consumed for the entire simulation duration (makespan)
+ * Energy is calculated to match the simulation's tick-by-tick power model
+ * under idle-host power gating (a host draws power only while it still has
+ * work; a drained host suspends at 0 W; a host with no scheduled work is
+ * never powered on):
+ * - Base idle power is consumed per host for that host's own active window
+ *   (contiguous from t=0 to its last task's tick = max completion of its VMs)
  * - Incremental workload power is consumed for each task's execution ticks
  *
- * Energy (kWh) = (idlePower × makespan + sum(incrementalPower × taskTicks)) / 3,600,000
+ * Energy (kWh) = (idlePower × Σ_hosts activeTicks(host)
+ *                 + sum(incrementalPower × taskTicks)) / 3,600,000
  *
- * Calculation (Discrete Simulation Model):
- * The simulation executes in 1-second ticks. Power calculation per tick:
- *   tickPower = baseIdlePower + sum(activeVM_incrementalPower)
- *
- * This is equivalent to:
- *   totalEnergy = baseIdlePower × makespan + sum(incrementalPower × taskTicks)
+ * Mirrors the per-tick gate in Host.updateState(): during a busy tick the
+ * host draws idle + Σ busy-lane incremental power; during a non-busy tick it
+ * draws 0 W. Per-VM busy windows are contiguous from t=0 (FIFO lanes with
+ * pre-assigned queues), so a host's busy-tick count equals its window length.
  *
  * This objective encourages:
  * - Assigning tasks to more power-efficient VMs
- * - Consolidating tasks on fewer VMs (reducing idle power waste)
+ * - Consolidating work so hosts drain (and suspend) early
  * - Matching workloads to appropriate hardware (GPU tasks on GPU VMs)
- * - Minimizing makespan (reduces idle power duration)
+ * - Shortening each host's own busy window (not just the global makespan)
  */
 public class EnergyObjective implements SchedulingObjective {
 
@@ -48,11 +51,12 @@ public class EnergyObjective implements SchedulingObjective {
     // Flag to enable speed-based power scaling (creates makespan vs energy trade-off)
     private boolean useSpeedBasedScaling = true;
 
-    // Additional hosts that consume idle power but have no VMs assigned
-    // (e.g., hosts placed in datacenter but without VM assignments)
+    // INERT under idle-host power gating (kept so legacy runners compile):
+    // hosts without scheduled work are never powered on, so extra powered-on
+    // idle hosts no longer contribute energy.
     private int additionalIdleHostCount = 0;
 
-    // Hosts list for dynamic calculation of idle host count
+    // Hosts list (inert under idle-host gating; see above)
     private java.util.List<Host> hosts = null;
 
     /**
@@ -117,26 +121,12 @@ public class EnergyObjective implements SchedulingObjective {
         int activeVmCount = 0;
         long totalVmTicks = 0;  // Sum of all VM completion times (for idle calculation)
 
-        // Count unique hosts that have VMs assigned (these will consume idle power)
-        // This matches simulation behavior where ALL hosts with VMs consume idle power
-        java.util.Set<Long> hostsWithVMs = new java.util.HashSet<>();
-        for (VM vm : vms) {
-            if (vm.getAssignedHostId() != null) {
-                hostsWithVMs.add(vm.getAssignedHostId());
-            }
-        }
-        int activeHostCount = Math.max(1, hostsWithVMs.size());
-
-        // Dynamically calculate additional idle hosts if hosts list is provided
-        int dynamicAdditionalHosts = additionalIdleHostCount;
-        if (hosts != null && !hosts.isEmpty()) {
-            // Count hosts that are in datacenters (have assignedDatacenterId)
-            int hostsInDatacenter = (int) hosts.stream()
-                .filter(h -> h.getAssignedDatacenterId() != null)
-                .count();
-            // Additional idle hosts = hosts in datacenter without VMs
-            dynamicAdditionalHosts = Math.max(0, hostsInDatacenter - hostsWithVMs.size());
-        }
+        // Idle-host power gating: a host stays powered only while it still has
+        // work (its window is contiguous from t=0 to its last task's tick, so it
+        // equals the max completion of its VMs); a drained host suspends (0 W)
+        // and a host with no scheduled work is never powered on. Mirrors the
+        // simulator's per-tick gate in Host.updateState().
+        java.util.Map<Long, Long> hostActiveTicks = new java.util.HashMap<>();
 
         // First pass: calculate makespan and incremental energy
         long[] vmCompletionTicks = new long[vms.size()];
@@ -180,21 +170,25 @@ public class EnergyObjective implements SchedulingObjective {
             if (vmCompletionTicks[vmIdx] > makespan) {
                 makespan = vmCompletionTicks[vmIdx];
             }
+
+            // Extend the VM's host's powered-on window (max over its VMs).
+            Long hostId = vm.getAssignedHostId();
+            if (hostId != null) {
+                hostActiveTicks.merge(hostId, vmCompletionTicks[vmIdx], Math::max);
+            }
         }
 
-        // Add base idle energy for the entire simulation duration (host idle power)
-        // Each host with VMs consumes idle power for the entire makespan duration
-        // Also include any additional hosts that are powered on but have no VMs
-        // This matches simulation's tick-by-tick calculation where each host adds idlePower per tick
+        // Base idle energy under idle-host gating: each powered host draws idle
+        // power only during its own active window (Σ per-host max VM completion),
+        // NOT for the global makespan; hosts without scheduled work contribute
+        // nothing. Matches the simulator's tick-by-tick gate exactly (a host's
+        // busy ticks are contiguous from t=0, so window length == busy ticks).
         double baseIdlePower = powerModel.getScaledIdlePower();
-        int totalActiveHosts = activeHostCount + dynamicAdditionalHosts;
-        double hostIdleEnergyJoules = baseIdlePower * makespan * totalActiveHosts;
-
-        // Add VM idle energy: when VMs finish before makespan, they still consume some power
-        // Each active VM runs for 'makespan' ticks total, but only executes tasks for vmCompletionTicks
-        // The idle time (makespan - vmCompletionTicks) still consumes base VM power
-        // Approximation: use IDLE workload incremental power (which is 0 for measurement-based model)
-        // The simulation counts host idle during VM idle, which we already count in hostIdleEnergyJoules
+        long totalHostActiveTicks = 0;
+        for (long ticks : hostActiveTicks.values()) {
+            totalHostActiveTicks += ticks;
+        }
+        double hostIdleEnergyJoules = baseIdlePower * totalHostActiveTicks;
 
         double totalEnergyJoules = hostIdleEnergyJoules + incrementalEnergyJoules;
 

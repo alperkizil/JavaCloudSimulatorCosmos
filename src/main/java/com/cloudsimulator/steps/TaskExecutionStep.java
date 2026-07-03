@@ -43,6 +43,7 @@ public class TaskExecutionStep implements SimulationStep {
 
     // Timing metrics
     private long makespan;
+    private double fractionalMakespan;
     private double averageWaitingTime;
     private double averageTurnaroundTime;
     private double averageExecutionTime;
@@ -97,6 +98,14 @@ public class TaskExecutionStep implements SimulationStep {
         List<Long> turnaroundTimes = new ArrayList<>();
         List<Long> executionTimes = new ArrayList<>();
 
+        // Effective per-vCPU lane speed by VM id, for the fractional makespan
+        // (the same VM.getEffectiveIpsPerVcpu() the scheduling objectives use).
+        Map<Long, Long> effIpsByVmId = new HashMap<>();
+        for (VM vm : context.getVms()) {
+            effIpsByVmId.put(vm.getId(), vm.getEffectiveIpsPerVcpu());
+        }
+        double maxExactEnd = 0.0;
+
         for (Task task : allTasks) {
             String userId = task.getUserId();
             WorkloadType workloadType = task.getWorkloadType();
@@ -134,6 +143,22 @@ public class TaskExecutionStep implements SimulationStep {
                 if (startTime != null) {
                     if (firstTaskStartTime == null || startTime < firstTaskStartTime) {
                         firstTaskStartTime = startTime;
+                    }
+                }
+
+                // Exact (instruction-resolution) finish instant. Lanes are FIFO
+                // and non-preemptive, so a task runs contiguously at its VM's
+                // effective per-vCPU IPS from its start tick: it finishes at
+                // startTick + length / laneSpeed. MUST stay the identical
+                // IEEE-754 expression as LaneSchedule's completionExact so the
+                // metaheuristics' predicted makespan matches this bit-for-bit.
+                if (startTime != null) {
+                    Long effIps = effIpsByVmId.get(task.getAssignedVmId());
+                    if (effIps != null && effIps > 0) {
+                        double exactEnd = startTime + task.getInstructionLength() / (double) effIps;
+                        if (exactEnd > maxExactEnd) {
+                            maxExactEnd = exactEnd;
+                        }
                     }
                 }
 
@@ -196,6 +221,13 @@ public class TaskExecutionStep implements SimulationStep {
             makespan = lastTaskEndTime - firstTaskStartTime + 1;
         }
 
+        // Fractional makespan: latest exact task-finish instant, relative to the
+        // first start (0 in the offline studies, where every schedule dispatches
+        // from t=0). Tick-rounding relationship: makespan - 1 < fractional <= makespan.
+        if (firstTaskStartTime != null && maxExactEnd > 0.0) {
+            fractionalMakespan = maxExactEnd - firstTaskStartTime;
+        }
+
         // Calculate averages
         if (!waitingTimes.isEmpty()) {
             averageWaitingTime = waitingTimes.stream()
@@ -241,6 +273,7 @@ public class TaskExecutionStep implements SimulationStep {
         this.failedTasks = 0;
         this.unassignedTasks = 0;
         this.makespan = 0;
+        this.fractionalMakespan = 0.0;
         this.averageWaitingTime = 0.0;
         this.averageTurnaroundTime = 0.0;
         this.averageExecutionTime = 0.0;
@@ -319,6 +352,7 @@ public class TaskExecutionStep implements SimulationStep {
         context.recordMetric("taskExecution.failedTasks", failedTasks);
         context.recordMetric("taskExecution.unassignedTasks", unassignedTasks);
         context.recordMetric("taskExecution.makespan", makespan);
+        context.recordMetric("taskExecution.fractionalMakespan", fractionalMakespan);
         context.recordMetric("taskExecution.avgWaitingTime", averageWaitingTime);
         context.recordMetric("taskExecution.avgTurnaroundTime", averageTurnaroundTime);
         context.recordMetric("taskExecution.avgExecutionTime", averageExecutionTime);
@@ -386,6 +420,18 @@ public class TaskExecutionStep implements SimulationStep {
 
     public long getMakespan() {
         return makespan;
+    }
+
+    /**
+     * Makespan at instruction resolution: the latest exact task-finish instant
+     * ({@code startTick + length / (double) effIpsPerVcpu}) minus the first task
+     * start. Unlike {@link #getMakespan()} it is not rounded up to whole ticks:
+     * {@code getMakespan() - 1 < getFractionalMakespan() <= getMakespan()}.
+     * Bit-for-bit identical to the metaheuristics' predicted Makespan objective
+     * (same IEEE-754 expression as {@code LaneSchedule.getCompletionExact()}).
+     */
+    public double getFractionalMakespan() {
+        return fractionalMakespan;
     }
 
     public double getAverageWaitingTime() {

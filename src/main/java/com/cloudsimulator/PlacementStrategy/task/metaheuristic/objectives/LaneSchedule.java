@@ -26,11 +26,14 @@ import java.util.List;
 public final class LaneSchedule {
 
     private final long completionTicks;
+    private final double completionExact;
     private final long[] startTicks;   // index-aligned to the input task order
     private final long[] taskTicks;    // index-aligned to the input task order
 
-    private LaneSchedule(long completionTicks, long[] startTicks, long[] taskTicks) {
+    private LaneSchedule(long completionTicks, double completionExact,
+                         long[] startTicks, long[] taskTicks) {
         this.completionTicks = completionTicks;
+        this.completionExact = completionExact;
         this.startTicks = startTicks;
         this.taskTicks = taskTicks;
     }
@@ -38,6 +41,21 @@ public final class LaneSchedule {
     /** VM completion time in ticks (the busiest lane's load). */
     public long getCompletionTicks() {
         return completionTicks;
+    }
+
+    /**
+     * VM completion time at instruction resolution: the latest exact finish
+     * instant {@code startTick + length / (double) effIpsPerVcpu} over all
+     * scheduled tasks. The lane still holds the resource until the tick
+     * boundary ({@link #getCompletionTicks()}) — dispatch dynamics are
+     * unchanged — this only stops rounding the finish line up to a whole tick,
+     * so {@code completionTicks - 1 < completionExact <= completionTicks}.
+     * Must stay the same IEEE-754 expression as the simulator-side
+     * {@code TaskExecutionStep} fractional makespan so predictions match the
+     * re-simulated value bit-for-bit.
+     */
+    public double getCompletionExact() {
+        return completionExact;
     }
 
     /** Start tick of the task at the given position in the input order. */
@@ -75,16 +93,18 @@ public final class LaneSchedule {
         long[] taskTicks = new long[n];
 
         if (n == 0 || effIpsPerVcpu <= 0) {
-            return new LaneSchedule(0, startTicks, taskTicks);
+            return new LaneSchedule(0, 0.0, startTicks, taskTicks);
         }
 
         // Per-task tick cost (ceiling division — a task finishing mid-tick wastes
         // the remainder of that tick, exactly as the discrete simulation does) and
         // GPU flag.
         boolean[] isGpu = new boolean[n];
+        long[] lengths = new long[n];
         for (int pos = 0; pos < n; pos++) {
             Task task = tasks.get(taskOrder.get(pos));
-            taskTicks[pos] = (task.getInstructionLength() + effIpsPerVcpu - 1) / effIpsPerVcpu;
+            lengths[pos] = task.getInstructionLength();
+            taskTicks[pos] = (lengths[pos] + effIpsPerVcpu - 1) / effIpsPerVcpu;
             isGpu[pos] = task.getWorkloadType().isGpuWorkload();
         }
 
@@ -95,6 +115,7 @@ public final class LaneSchedule {
         boolean[] started = new boolean[n];
         int remaining = n;
         long completion = 0;
+        double completionExact = 0.0;
         long t = 0;
 
         while (remaining > 0) {
@@ -140,6 +161,10 @@ public final class LaneSchedule {
                 if (fin > completion) {
                     completion = fin;
                 }
+                double finExact = t + lengths[pick] / (double) effIpsPerVcpu;
+                if (finExact > completionExact) {
+                    completionExact = finExact;
+                }
                 progressed = true;
             }
 
@@ -169,7 +194,7 @@ public final class LaneSchedule {
             t = nextT;
         }
 
-        return new LaneSchedule(completion, startTicks, taskTicks);
+        return new LaneSchedule(completion, completionExact, startTicks, taskTicks);
     }
 
     /** Index of the smallest entry (lowest index on tie); 0 for empty input. */

@@ -577,6 +577,20 @@ public class Host {
         } else {
             secondsIDLE++;
             totalNumberOfSecondsIdle++;
+
+            // Idle-host power gating: a host with no lane executing this tick has
+            // no remaining work (pending tasks always occupy a lane), so it is
+            // suspended and draws nothing — hosts that never receive work are
+            // never powered on, and drained hosts stop drawing after their last
+            // task's tick. Residual suspend power is modeled as 0 W. The 0 W tick
+            // still enters the per-tick series so coincident-peak/series indices
+            // stay tick-aligned. Mirrored analytically by EnergyObjective
+            // (idle energy = idlePower x Σ per-host active windows).
+            currentTotalPowerDraw = 0.0;
+            currentCpuPowerDraw = 0.0;
+            currentGpuPowerDraw = 0.0;
+            otherComponentsPowerDraw = 0.0;
+            currentTickVmIncrementalWatts.clear();
         }
 
         updateEnergyConsumption();
