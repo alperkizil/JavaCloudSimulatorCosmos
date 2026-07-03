@@ -1,24 +1,24 @@
 package com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives;
 
 import com.cloudsimulator.enums.WorkloadType;
-import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.MeasurementBasedPowerModel;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Energy objective extended with instantaneous aggregate-power accounting.
  *
  * Additive wrapper over EnergyObjective: evaluate() still returns energy in kWh
  * (identical formulation to the parent), but internally runs a sweep-line over
- * task start/end events to expose:
+ * task start/end events plus per-host idle-window events (idle-host power
+ * gating: a host draws idle power only during its own active window, exactly
+ * as Host.updateState suspends drained hosts) to expose:
  *   - peakPower  (W)   : max aggregate DC power at any simulated tick
  *   - overflowSeconds  : integrated tick-seconds spent strictly above the cap
  *   - averageActivePower (W): time-weighted mean DC power over [0, makespan]
@@ -85,29 +85,17 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
             return;
         }
 
-        // Identify which hosts are active (hold at least one VM with tasks)
-        Set<Long> hostsWithVMs = new HashSet<>();
-        for (VM vm : vms) {
-            if (vm.getAssignedHostId() != null) {
-                hostsWithVMs.add(vm.getAssignedHostId());
-            }
-        }
-        int activeHostCount = Math.max(1, hostsWithVMs.size());
-
-        int dynamicAdditionalHosts = getAdditionalIdleHostCount();
-        List<Host> hosts = getHosts();
-        if (hosts != null && !hosts.isEmpty()) {
-            int hostsInDatacenter = (int) hosts.stream()
-                .filter(h -> h.getAssignedDatacenterId() != null)
-                .count();
-            dynamicAdditionalHosts = Math.max(0, hostsInDatacenter - hostsWithVMs.size());
-        }
-        int totalActiveHosts = activeHostCount + dynamicAdditionalHosts;
-
+        // Idle-host power gating (mirrors Host.updateState and EnergyObjective):
+        // a host draws idle power only during its own active window
+        // [0, max LaneSchedule completion of its VMs); a drained host suspends
+        // at 0 W and a host with no scheduled work is never powered on. Each
+        // occupied host contributes +idle/-idle step events to the same
+        // sweep-line as the per-task incremental events, so peak, overflow and
+        // average all see the gated fleet draw the simulator produces.
         double baseIdlePerHost = getPowerModel() != null
             ? getPowerModel().getScaledIdlePower()
             : 0.0;
-        double baselineDcPower = baseIdlePerHost * totalActiveHosts;
+        Map<Long, Long> hostActiveTicks = new HashMap<>();
 
         // Build (time, deltaPower) events from each VM's sequential schedule.
         // 2N events for N tasks: +inc at task start, -inc at task end.
@@ -139,16 +127,28 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
                 events.add(new double[]{ end,   -incPower });
             }
             if (sched.getCompletionTicks() > makespan) makespan = sched.getCompletionTicks();
+
+            // Extend the VM's host's powered-on window (max over its VMs).
+            Long hostId = vm.getAssignedHostId();
+            if (hostId != null) {
+                hostActiveTicks.merge(hostId, sched.getCompletionTicks(), Math::max);
+            }
         }
 
         lastMakespanTicks = makespan;
 
         if (makespan == 0L) {
-            // No work scheduled. Peak equals idle baseline.
-            lastPeakPower = baselineDcPower;
-            lastAverageActivePower = baselineDcPower;
-            lastOverflowSeconds = baselineDcPower > powerCapWatts ? 0.0 : 0.0;
+            // No work scheduled: under idle-host gating no host is powered on,
+            // so the fleet draws nothing (metrics already reset to zero).
             return;
+        }
+
+        // Per-host idle step events over each host's active window.
+        for (Map.Entry<Long, Long> hostWindow : hostActiveTicks.entrySet()) {
+            long windowTicks = hostWindow.getValue();
+            if (windowTicks <= 0) continue;
+            events.add(new double[]{ 0.0, +baseIdlePerHost });
+            events.add(new double[]{ (double) windowTicks, -baseIdlePerHost });
         }
 
         // Sort events by time; ties: apply decrements before increments so we
@@ -161,39 +161,35 @@ public class PowerCeilingEnergyObjective extends EnergyObjective {
             return Double.compare(a[1], b[1]); // negatives first
         });
 
-        double runningIncremental = 0.0;
-        double peak = baselineDcPower;
+        double runningPower = 0.0;   // gated fleet draw: per-host idle + task increments
+        double peak = 0.0;
         double overflow = 0.0;
-        double energyWattSeconds = baselineDcPower * makespan; // idle contribution
+        double energyWattSeconds = 0.0;
         double prevTime = 0.0;
 
         // Sweep-line: between consecutive event times the power is constant.
         int i = 0;
         while (i < events.size()) {
             double t = events.get(i)[0];
-            // Interval [prevTime, t) has power = baselineDcPower + runningIncremental
-            double instantPower = baselineDcPower + runningIncremental;
+            // Interval [prevTime, t) has power = runningPower
+            double instantPower = runningPower;
             double dt = t - prevTime;
             if (dt > 0) {
                 if (instantPower > peak) peak = instantPower;
                 if (instantPower > powerCapWatts) {
                     overflow += dt;
                 }
-                // Accumulate incremental contribution to average power
-                energyWattSeconds += runningIncremental * dt;
+                energyWattSeconds += instantPower * dt;
             }
             // Apply all events at time t
             while (i < events.size() && events.get(i)[0] == t) {
-                runningIncremental += events.get(i)[1];
+                runningPower += events.get(i)[1];
                 i++;
             }
             prevTime = t;
         }
-        // Tail interval [prevTime, makespan] — all tasks have ended so running=0.
-        // Nothing to add; peak already captured by last interval.
-
-        // Guard against floating-point underflow producing a tiny negative.
-        if (runningIncremental < 1e-9) runningIncremental = 0.0;
+        // Tail: the last event is the final host window's -idle at t == makespan,
+        // so the intervals above cover [0, makespan] completely and running is 0.
 
         lastPeakPower = peak;
         lastOverflowSeconds = overflow;
