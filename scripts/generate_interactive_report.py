@@ -698,6 +698,7 @@ aside.controls h2 { font-size:13px; text-transform:uppercase;
     letter-spacing:.06em; color:var(--dim); margin:16px 0 6px; }
 aside.controls label.row { display:flex; align-items:center; gap:8px;
     padding:3px 0; cursor:pointer; }
+aside.controls label.row.sub { padding-left:20px; }
 .algo-row { display:flex; align-items:center; gap:7px; padding:2.5px 0; }
 .algo-row input[type=color] { width:26px; height:20px; padding:0;
     border:1px solid var(--line); background:none; cursor:pointer; }
@@ -752,7 +753,7 @@ JS = """
 const M = window.REPORT_MANIFEST;
 const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
-  hv: true,
+  hv: true, hvUniv: true,
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
@@ -761,11 +762,13 @@ function applyHvSuffixes() {
   M.figs.filter(f => f.kind === 'pareto').forEach(f => {
     ['n', 's'].forEach(v => {
       M.algos.forEach(a => {
+        const want = state.hv &&
+          (a.key !== 'Universal_Pareto' || state.hvUniv);
         document.querySelectorAll(
           'g[id^="' + f.base + v + '--legt--' + a.slug + '--"]'
         ).forEach(g => {
           const t = g.querySelector('text');
-          if (t) t.textContent = a.label + (state.hv ? (a.hvSuffix || '') : '');
+          if (t) t.textContent = a.label + (want ? (a.hvSuffix || '') : '');
         });
       });
     });
@@ -1069,6 +1072,9 @@ function init() {
   document.getElementById('ck-hv').addEventListener('change', e => {
     state.hv = e.target.checked; applyHvSuffixes();
   });
+  document.getElementById('ck-hv-univ').addEventListener('change', e => {
+    state.hvUniv = e.target.checked; applyHvSuffixes();
+  });
   M.algos.forEach(a => {
     const c = document.getElementById('col-' + a.slug);
     if (c) c.addEventListener('input', e => recolorAlgo(a.slug, e.target.value));
@@ -1085,15 +1091,18 @@ function init() {
       if (v) v.checked = true;
       state.algoVisible[a.slug] = true;
     });
-    ['ck-legend', 'ck-labels', 'ck-values', 'ck-hv'].forEach((id, i) => {
-      const el = document.getElementById(id);
-      const def = [M.options.show_legend, M.options.show_labels, true, true][i];
-      el.checked = def;
-    });
+    ['ck-legend', 'ck-labels', 'ck-values', 'ck-hv', 'ck-hv-univ']
+      .forEach((id, i) => {
+        const el = document.getElementById(id);
+        const def = [M.options.show_legend, M.options.show_labels,
+                     true, true, true][i];
+        el.checked = def;
+      });
     state.legend = M.options.show_legend;
     state.labels = M.options.show_labels;
     state.values = true;
     state.hv = true;
+    state.hvUniv = true;
     applyHvSuffixes();
     M.figs.forEach(f => {
       setSwap(f.base, false);
@@ -1195,6 +1204,8 @@ def build_html(exp_name, x_col, y_col, styles, manifest,
     Show bar value labels</label>
   <label class="row"><input type="checkbox" id="ck-hv" checked/>
     Show HV values in legends</label>
+  <label class="row sub"><input type="checkbox" id="ck-hv-univ" checked/>
+    &hellip;including Universal Pareto</label>
   <h2>Algorithms — colour &amp; visibility</h2>
   {controls_algos}
   <p style="margin-top:12px"><button class="small" id="btn-reset">
