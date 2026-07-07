@@ -469,19 +469,26 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
         pts = pooled_raw(algo)
         if len(pts) == 0:
             continue
+        pts = pts[np.argsort(pts[:, 0])]
+        # Front line connecting the algorithm's Pareto points, under the markers.
+        if len(pts) > 1:
+            ln, = ax.plot(pts[:, 0], pts[:, 1], color=color, linewidth=1.0,
+                          alpha=0.65, zorder=3)
+            tag(ln, gids('algo', slug))
         sc = ax.scatter(pts[:, 0], pts[:, 1], s=marker_size * 2.6,
                         marker=marker,
                         facecolors=color if filled else 'none',
                         edgecolors=color, linewidths=0.9, alpha=0.85, zorder=4)
         tag(sc, gids('algo', slug))
         leg_handles.append(mpl.lines.Line2D(
-            [], [], marker=marker, linestyle='none', markersize=6,
+            [], [], marker=marker, linestyle='-', linewidth=1.0,
+            color=color, markersize=6,
             markerfacecolor=color if filled else 'none',
             markeredgecolor=color))
         leg_labels.append(
             f"{st['label']}{psp.format_hv_suffix(hv_summary.get(algo))}")
         leg_slugs.append(slug)
-        mid = pts[np.argsort(pts[:, 0])][len(pts) // 2]
+        mid = pts[len(pts) // 2]
         ann = ax.annotate(st['label'], xy=tuple(mid), xytext=(5, 5),
                           textcoords='offset points', fontsize=7, color=color,
                           alpha=0.95, zorder=9, clip_on=True)
