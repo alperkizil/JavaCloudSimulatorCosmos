@@ -75,6 +75,15 @@ UNIVERSAL_SLUG = 'universal-pareto'
 PC_SUFFIX_RE = re.compile(r'^(?P<base>.+)_PC(?P<tier>\d+)$')
 
 
+def pc_parts(key):
+    """(base algorithm key, tier string or None) for a CSV algorithm name."""
+    if key != UNIVERSAL_KEY:
+        m = PC_SUFFIX_RE.match(key)
+        if m:
+            return m.group('base'), m.group('tier')
+    return key, None
+
+
 # =============================================================================
 # STYLE RESOLUTION (per-algorithm colour/marker/label, robust to PC variants)
 # =============================================================================
@@ -699,6 +708,11 @@ aside.controls h2 { font-size:13px; text-transform:uppercase;
 aside.controls label.row { display:flex; align-items:center; gap:8px;
     padding:3px 0; cursor:pointer; }
 aside.controls label.row.sub { padding-left:20px; }
+.pcrow { display:flex; align-items:center; gap:8px; padding:3px 0; }
+.pcrow > span { width:72px; color:var(--dim); flex-shrink:0; }
+.pcrow select { flex:1; min-width:0; font-size:12px; padding:2px 4px;
+    border:1px solid var(--line); border-radius:3px; background:var(--card); }
+.pcrow select:disabled { opacity:.45; cursor:not-allowed; }
 .algo-row { display:flex; align-items:center; gap:7px; padding:2.5px 0; }
 .algo-row input[type=color] { width:26px; height:20px; padding:0;
     border:1px solid var(--line); background:none; cursor:pointer; }
@@ -753,10 +767,36 @@ JS = """
 const M = window.REPORT_MANIFEST;
 const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
-  hv: true, hvUniv: true,
+  hv: true, hvUniv: true, pcMode: 'all',
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
+
+// PowerCap views: presets over the per-algorithm visibility. Capped arms are
+// only directly comparable within a tier, so the two filtered modes show
+// either all algorithms at one tier or all tiers of one algorithm.
+function applyPcMode() {
+  const pcTier = document.getElementById('pc-tier');
+  const pcBase = document.getElementById('pc-base');
+  const enabled = M.powercap && M.powercap.enabled;
+  pcTier.disabled = !(enabled && state.pcMode === 'tier');
+  pcBase.disabled = !(enabled && state.pcMode === 'algo');
+  if (!enabled) return;
+  M.algos.forEach(a => {
+    let vis = true;
+    if (a.key !== 'Universal_Pareto') {
+      if (state.pcMode === 'tier') {
+        vis = (pcTier.value === 'uncapped') ? !a.tier : (a.tier === pcTier.value);
+      } else if (state.pcMode === 'algo') {
+        vis = (a.baseKey === pcBase.value);
+      }
+    }
+    state.algoVisible[a.slug] = vis;
+    const ck = document.getElementById('vis-' + a.slug);
+    if (ck) ck.checked = vis;
+  });
+  refreshVisibility();
+}
 
 function applyHvSuffixes() {
   M.figs.filter(f => f.kind === 'pareto').forEach(f => {
@@ -1075,6 +1115,11 @@ function init() {
   document.getElementById('ck-hv-univ').addEventListener('change', e => {
     state.hvUniv = e.target.checked; applyHvSuffixes();
   });
+  document.getElementById('pc-mode').addEventListener('change', e => {
+    state.pcMode = e.target.value; applyPcMode();
+  });
+  document.getElementById('pc-tier').addEventListener('change', applyPcMode);
+  document.getElementById('pc-base').addEventListener('change', applyPcMode);
   M.algos.forEach(a => {
     const c = document.getElementById('col-' + a.slug);
     if (c) c.addEventListener('input', e => recolorAlgo(a.slug, e.target.value));
@@ -1104,6 +1149,11 @@ function init() {
     state.hv = true;
     state.hvUniv = true;
     applyHvSuffixes();
+    state.pcMode = 'all';
+    document.getElementById('pc-mode').value = 'all';
+    document.getElementById('pc-tier').selectedIndex = 0;
+    document.getElementById('pc-base').selectedIndex = 0;
+    applyPcMode();
     M.figs.forEach(f => {
       setSwap(f.base, false);
       const inp = document.getElementById('ttl-' + f.base);
@@ -1163,6 +1213,44 @@ def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s, caption=''):
 </div>'''
 
 
+def build_powercap_controls(manifest):
+    """Sidebar section for PowerCeiling tier/algorithm comparison views.
+    Rendered for every experiment; the controls stay disabled when the data
+    has no _PC<tier> arms."""
+    pc = manifest['powercap']
+    dis = '' if pc['enabled'] else ' disabled'
+    tier_options = ('<option value="uncapped">Uncapped (no cap)</option>'
+                    + ''.join(f'<option value="{esc(t)}">@PC{esc(t)}</option>'
+                              for t in pc['tiers']))
+    base_options = ''.join(
+        f'<option value="{esc(b["key"])}">{esc(b["label"])}</option>'
+        for b in pc['bases'])
+    if pc['enabled']:
+        note = ('Capped arms are directly comparable only within a tier '
+                '(same power cap). &ldquo;Algorithms at one tier&rdquo; is '
+                'the fair within-tier comparison; &ldquo;Tiers of one '
+                'algorithm&rdquo; shows how the cap degrades a single '
+                'algorithm. The Universal Pareto reference (pooled over ALL '
+                'arms) stays visible. Quality-indicator values are unchanged '
+                '— only visibility is filtered.')
+    else:
+        note = ('Only available for PowerCeiling experiments — this data '
+                'has no _PC&lt;tier&gt; arms.')
+    return f'''
+  <h2>PowerCap Views</h2>
+  <div class="pcrow"><span>Mode</span>
+    <select id="pc-mode"{dis}>
+      <option value="all">All arms</option>
+      <option value="tier">Algorithms at one tier</option>
+      <option value="algo">Tiers of one algorithm</option>
+    </select></div>
+  <div class="pcrow"><span>Tier</span>
+    <select id="pc-tier" disabled>{tier_options}</select></div>
+  <div class="pcrow"><span>Algorithm</span>
+    <select id="pc-base" disabled>{base_options}</select></div>
+  <p class="note">{note}</p>'''
+
+
 def build_html(exp_name, x_col, y_col, styles, manifest,
                pareto_cards, metric_cards, table_sections, generated):
     controls_algos = '\n'.join(
@@ -1206,6 +1294,7 @@ def build_html(exp_name, x_col, y_col, styles, manifest,
     Show HV values in legends</label>
   <label class="row sub"><input type="checkbox" id="ck-hv-univ" checked/>
     &hellip;including Universal Pareto</label>
+  {build_powercap_controls(manifest)}
   <h2>Algorithms — colour &amp; visibility</h2>
   {controls_algos}
   <p style="margin-top:12px"><button class="small" id="btn-reset">
@@ -1475,14 +1564,25 @@ def process_directory(reports_dir, out_path=None):
                 + build_full_table(df, styles, f'tbl-full-{s}') + '</details>')
         tables.append('</section>')
 
+    pc_tiers = sorted({pc_parts(k)[1] for k in styles if pc_parts(k)[1]},
+                      key=int, reverse=True)
+    pc_bases = [k for k in styles
+                if k != UNIVERSAL_KEY and pc_parts(k)[1] is None]
     manifest = {
         'expName': exp_name,
         'algos': [{'slug': st['slug'], 'key': k, 'label': st['label'],
                    'color': st['color'],
+                   'tier': pc_parts(k)[1], 'baseKey': pc_parts(k)[0],
                    'hvSuffix': psp.format_hv_suffix(hv_summary.get(k))}
                   for k, st in styles.items()],
         'figs': figs_manifest,
         'tables': tables_manifest,
+        'powercap': {
+            'enabled': bool(pc_tiers),
+            'tiers': pc_tiers,
+            'bases': [{'key': k, 'label': styles[k]['label']}
+                      for k in pc_bases],
+        },
         'options': {
             'show_legend': bool(config.get('show_legend', True)),
             'show_labels': bool(config.get('show_labels', True)),
