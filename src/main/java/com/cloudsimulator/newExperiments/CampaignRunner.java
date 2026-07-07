@@ -169,6 +169,7 @@ public final class CampaignRunner {
                 PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
             }
             ConsoleReporter.printDone(dir);
+            PostRunScripts.runAll(dir);
             return dir;
         } catch (IOException e) {
             throw new RuntimeException("Failed to write experiment output: " + e.getMessage(), e);
