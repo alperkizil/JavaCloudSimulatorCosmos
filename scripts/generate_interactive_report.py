@@ -370,7 +370,8 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
         leg_handles.append(mpl.lines.Line2D(
             [], [], color=ucolor, linewidth=1.8, marker='o', markersize=4,
             markerfacecolor=ucolor, markeredgecolor=ucolor))
-        leg_labels.append(st['label'])
+        leg_labels.append(
+            f"{st['label']}{psp.format_hv_suffix(hv_summary.get(UNIVERSAL_KEY))}")
         leg_slugs.append(uslug)
 
     # Ideal-point reference marker at (0, 0)
@@ -739,9 +740,25 @@ JS = """
 const M = window.REPORT_MANIFEST;
 const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
+  hv: true,
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
+
+function applyHvSuffixes() {
+  M.figs.filter(f => f.kind === 'pareto').forEach(f => {
+    ['n', 's'].forEach(v => {
+      M.algos.forEach(a => {
+        document.querySelectorAll(
+          'g[id^="' + f.base + v + '--legt--' + a.slug + '--"]'
+        ).forEach(g => {
+          const t = g.querySelector('text');
+          if (t) t.textContent = a.label + (state.hv ? (a.hvSuffix || '') : '');
+        });
+      });
+    });
+  });
+}
 
 function groupsFor(role, slug) {
   return document.querySelectorAll('g[id*="--' + role + '--' + slug + '--"]');
@@ -825,6 +842,9 @@ function init() {
   document.getElementById('ck-values').addEventListener('change', e => {
     state.values = e.target.checked; refreshVisibility();
   });
+  document.getElementById('ck-hv').addEventListener('change', e => {
+    state.hv = e.target.checked; applyHvSuffixes();
+  });
   M.algos.forEach(a => {
     const c = document.getElementById('col-' + a.slug);
     if (c) c.addEventListener('input', e => recolorAlgo(a.slug, e.target.value));
@@ -841,14 +861,16 @@ function init() {
       if (v) v.checked = true;
       state.algoVisible[a.slug] = true;
     });
-    ['ck-legend', 'ck-labels', 'ck-values'].forEach((id, i) => {
+    ['ck-legend', 'ck-labels', 'ck-values', 'ck-hv'].forEach((id, i) => {
       const el = document.getElementById(id);
-      const def = [M.options.show_legend, M.options.show_labels, true][i];
+      const def = [M.options.show_legend, M.options.show_labels, true, true][i];
       el.checked = def;
     });
     state.legend = M.options.show_legend;
     state.labels = M.options.show_labels;
     state.values = true;
+    state.hv = true;
+    applyHvSuffixes();
     M.figs.forEach(f => {
       setSwap(f.base, false);
       const inp = document.getElementById('ttl-' + f.base);
@@ -932,6 +954,8 @@ def build_html(exp_name, x_col, y_col, styles, manifest,
     {'checked' if manifest['options']['show_labels'] else ''}/> Show algorithm name labels</label>
   <label class="row"><input type="checkbox" id="ck-values" checked/>
     Show bar value labels</label>
+  <label class="row"><input type="checkbox" id="ck-hv" checked/>
+    Show HV values in legends</label>
   <h2>Algorithms — colour &amp; visibility</h2>
   {controls_algos}
   <p style="margin-top:12px"><button class="small" id="btn-reset">
@@ -954,6 +978,44 @@ def build_html(exp_name, x_col, y_col, styles, manifest,
 # =============================================================================
 # MAIN
 # =============================================================================
+
+def compute_universal_hv_stats(all_pareto, all_metrics, uses_hv_fixed):
+    """(median, q25, q75) of the Universal Pareto set's HV across scenarios,
+    in the SAME definition the algorithm legend entries use: recomputed
+    HV_fixed (recompute_hv.py math, which excludes the universal front from
+    its own CSV) when quality indicators are present, otherwise the Java HV
+    column. None if no universal data exists."""
+    vals = []
+    if uses_hv_fixed:
+        try:
+            import recompute_hv as rhv
+        except ImportError:
+            rhv = None
+        if rhv is not None:
+            for df in all_pareto.values():
+                x_col, y_col = rhv.detect_objective_columns(df)
+                univ = df[df['Algorithm'] == UNIVERSAL_KEY]
+                if univ.empty:
+                    continue
+                pts = df[[x_col, y_col]].values.astype(float)
+                bounds = (float(pts[:, 0].min()), float(pts[:, 1].min()),
+                          float(pts[:, 0].max()), float(pts[:, 1].max()))
+                univ_norm = rhv.normalize(
+                    univ[[x_col, y_col]].values.astype(float), bounds)
+                vals.append(rhv.hv_2d(univ_norm, (1.1, 1.1)) / (1.1 * 1.1))
+    if not vals:
+        for df in all_metrics.values():
+            row = df[df['Algorithm'] == UNIVERSAL_KEY]
+            if not row.empty and 'HV' in row.columns:
+                v = float(row.iloc[0]['HV'])
+                if np.isfinite(v):
+                    vals.append(v)
+    if not vals:
+        return None
+    return (float(np.median(vals)),
+            float(np.percentile(vals, 25)),
+            float(np.percentile(vals, 75)))
+
 
 def discover_scenarios(reports_dir, config):
     found = set()
@@ -1001,6 +1063,11 @@ def process_directory(reports_dir, out_path=None):
         'recomputed HV_fixed (scenario-fixed reference point, from '
         'quality_indicators_all_scenarios.csv)' if uses_hv_fixed
         else 'the HV column of scenario_&lt;N&gt;_performance_metrics.csv')
+    univ_stats = compute_universal_hv_stats(all_pareto, all_metrics,
+                                            uses_hv_fixed)
+    if univ_stats is not None:
+        hv_summary = dict(hv_summary)
+        hv_summary[UNIVERSAL_KEY] = univ_stats
 
     # Algorithm order: pareto-data encounter order, then any metrics-only ones.
     algo_order = []
@@ -1047,7 +1114,7 @@ def process_directory(reports_dir, out_path=None):
         ax_n = f'X: {psp.axis_label(x_col)} / Y: {psp.axis_label(y_col)}'
         ax_s = f'X: {psp.axis_label(y_col)} / Y: {psp.axis_label(x_col)}'
         pareto_cards.append(fig_card(base, title, ax_n, ax_s, svg_n, svg_s))
-        figs_manifest.append({'base': base, 'title': title,
+        figs_manifest.append({'base': base, 'title': title, 'kind': 'pareto',
                               'axesNormal': ax_n, 'axesSwapped': ax_s})
     pareto_cards.append('</section>')
 
@@ -1078,6 +1145,7 @@ def process_directory(reports_dir, out_path=None):
             metric_cards.append(fig_card(base, title_txt, ax_n, ax_s,
                                          svg_n, svg_s))
             figs_manifest.append({'base': base, 'title': title_txt,
+                                  'kind': 'metric',
                                   'axesNormal': ax_n, 'axesSwapped': ax_s})
         metric_cards.append('</section>')
 
@@ -1112,7 +1180,9 @@ def process_directory(reports_dir, out_path=None):
 
     manifest = {
         'algos': [{'slug': st['slug'], 'key': k, 'label': st['label'],
-                   'color': st['color']} for k, st in styles.items()],
+                   'color': st['color'],
+                   'hvSuffix': psp.format_hv_suffix(hv_summary.get(k))}
+                  for k, st in styles.items()],
         'figs': figs_manifest,
         'options': {
             'show_legend': bool(config.get('show_legend', True)),
