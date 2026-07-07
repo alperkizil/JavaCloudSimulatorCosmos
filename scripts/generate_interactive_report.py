@@ -443,20 +443,34 @@ def render_metric_figure(fig_id, metric, title_txt, ylabel,
 
     bar_width = 0.12
     span = n_bars * bar_width + (len(scenarios) + 1) * bar_width * 2
+    max_name = max(len(styles[a]['label']) for a in seen_algos)
+    # Bands reserved on the categorical axis for the per-bar algorithm names
+    # (drawn as tick labels under/left of the graph) and the scenario names
+    # (one band further out).
+    names_h = min(max(0.036 * max_name + 0.25, 0.7), 2.4)  # rotated 40° names
+    names_w = min(max(0.055 * max_name + 0.25, 0.9), 2.8)  # horizontal names
+    scen_band = 0.35
+
     if horizontal:
+        axes_w = 5.8
+        left = names_w + scen_band + 0.15
+        fig_w = left + axes_w + 0.40
         # ~0.22 in per bar along the categorical (Y) axis
-        fig_w = 7.6
-        fig_h = min(max(3.4, span * 1.9), 18.0) + legend_h + 1.1
+        axes_h = min(max(3.4, span * 1.9), 18.0)
+        fig_h = 0.55 + axes_h + 0.55 + legend_h
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        fig.subplots_adjust(left=left / fig_w, right=1 - 0.40 / fig_w,
+                            top=1 - 0.55 / fig_h,
+                            bottom=(0.55 + legend_h) / fig_h)
     else:
+        axes_h = 3.9
+        bottom = 0.15 + names_h + scen_band + legend_h + 0.10
         # ~0.30 in per bar along the categorical (X) axis
         fig_w = min(max(7.6, span * 2.5 + 1.6), 20.0)
-        fig_h = 4.4 + legend_h
-
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    fig.subplots_adjust(left=(1.15 if horizontal else 0.85) / fig_w,
-                        right=1 - 0.35 / fig_w,
-                        top=1 - 0.55 / fig_h,
-                        bottom=(0.55 + legend_h) / fig_h)
+        fig_h = 0.55 + axes_h + bottom
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        fig.subplots_adjust(left=0.85 / fig_w, right=1 - 0.35 / fig_w,
+                            top=1 - 0.55 / fig_h, bottom=bottom / fig_h)
 
     title = ax.set_title(title_txt)
     tag(title, gids('title', 'main'))
@@ -467,6 +481,7 @@ def render_metric_figure(fig_id, metric, title_txt, ylabel,
 
     labelled = set()
     group_ticks, group_names, boundaries = [], [], []
+    tick_pos, tick_names, tick_slugs, tick_colors = [], [], [], []
     pos, prev_end = 0.0, None
     max_val = 0.0
 
@@ -495,18 +510,12 @@ def render_metric_figure(fig_id, metric, title_txt, ylabel,
                                   fontsize=7)
             for t in vtexts:
                 tag(t, gids('val', slug))
-            # Algorithm-name label alongside the bar (toggleable).
-            if horizontal:
-                nt = ax.annotate(st['label'], xy=(0.0, coords[j]),
-                                 xytext=(4, 0), textcoords='offset points',
-                                 va='center', ha='left', fontsize=6,
-                                 color=color, alpha=0.9, zorder=9)
-            else:
-                nt = ax.annotate(st['label'], xy=(coords[j], 0.0),
-                                 xytext=(0, 4), textcoords='offset points',
-                                 rotation=90, va='bottom', ha='center',
-                                 fontsize=6, color=color, alpha=0.9, zorder=9)
-            tag(nt, gids('lbl', slug))
+            # Algorithm-name labels become per-bar tick labels under/left of
+            # the graph (added after the loop, keeping the plot area clean).
+            tick_pos.append(coords[j])
+            tick_names.append(st['label'])
+            tick_slugs.append(slug)
+            tick_colors.append(color)
             max_val = max(max_val, val)
             if algo not in labelled:
                 labelled.add(algo)
@@ -528,16 +537,36 @@ def render_metric_figure(fig_id, metric, title_txt, ylabel,
             ax.axvline(xb, color='gray', linestyle='--', linewidth=0.8, alpha=0.6)
 
     if horizontal:
-        ax.set_yticks(group_ticks)
-        ax.set_yticklabels(group_names)
+        ax.set_yticks(tick_pos)
+        ax.set_yticklabels(tick_names, fontsize=6.5)
+        for tl, slug, color in zip(ax.get_yticklabels(), tick_slugs, tick_colors):
+            tl.set_color(color)
+            tag(tl, gids('lbl', slug))
         ax.invert_yaxis()
         ax.set_xlim(0, max_val * 1.15 if max_val > 0 else 1)
         ax.grid(True, axis='x')
+        # Scenario names: a band left of the algorithm names, rotated.
+        trans = mpl.transforms.blended_transform_factory(ax.transAxes,
+                                                         ax.transData)
+        x_frac = -(names_w + 0.10 + scen_band * 0.5) / axes_w
+        for mid, gname in zip(group_ticks, group_names):
+            ax.text(x_frac, mid, gname, transform=trans, rotation=90,
+                    va='center', ha='center', fontsize=10)
     else:
-        ax.set_xticks(group_ticks)
-        ax.set_xticklabels(group_names)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_names, rotation=40, ha='right', fontsize=6.5)
+        for tl, slug, color in zip(ax.get_xticklabels(), tick_slugs, tick_colors):
+            tl.set_color(color)
+            tag(tl, gids('lbl', slug))
         ax.set_ylim(0, max_val * 1.15 if max_val > 0 else 1)
         ax.grid(True, axis='y')
+        # Scenario names: a band below the algorithm names.
+        trans = mpl.transforms.blended_transform_factory(ax.transData,
+                                                         ax.transAxes)
+        y_frac = -(0.15 + names_h + scen_band * 0.5) / axes_h
+        for mid, gname in zip(group_ticks, group_names):
+            ax.text(mid, y_frac, gname, transform=trans,
+                    va='center', ha='center', fontsize=10)
 
     add_bottom_legend(fig, leg_handles, leg_labels, gids, leg_slugs)
     return fig_to_svg(fig)
