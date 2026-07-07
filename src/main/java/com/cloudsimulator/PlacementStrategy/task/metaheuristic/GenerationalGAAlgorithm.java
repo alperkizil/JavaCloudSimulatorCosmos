@@ -157,7 +157,7 @@ public class GenerationalGAAlgorithm {
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
 
         // Reset the non-dominated archive for this run
-        archive = new NonDominatedArchive(buildMinimizationArray());
+        archive = new NonDominatedArchive(buildMinimizationArray(), config.getArchiveEpsilonFraction());
 
         // Step 1: Initialize population
         initializePopulation();
