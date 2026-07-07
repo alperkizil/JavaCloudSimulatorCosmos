@@ -417,20 +417,29 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
 # =============================================================================
 
 def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
-                         x_col, y_col, styles, hv_summary, config):
-    """Plain raw-unit X-Y scatter: each algorithm's pooled Pareto set as
-    coloured markers, with the Universal Pareto set overlaid as OPEN black
-    rings — the coloured marker inside a ring is the algorithm that
-    contributed that universal point."""
+                         x_col, y_col, styles, hv_summary, config,
+                         bounds=None):
+    """Plain X-Y scatter: each algorithm's pooled Pareto set as coloured
+    markers connected by a front line, with the Universal Pareto set overlaid
+    as OPEN black rings — the coloured marker inside a ring is the algorithm
+    that contributed that universal point. With `bounds` the points are
+    globally normalized to ideal (0,0) / nadir (1,1) like the EAF view (raw
+    units on secondary axes); without, raw units."""
     gids = GidFactory(fig_id)
     marker_size = config.get('marker_size', 10)
+    normalized = bounds is not None
+
+    def prep(pts):
+        return psp.normalize_points(pts, bounds) if normalized else pts
 
     algorithms = [a for a in df['Algorithm'].unique() if a != UNIVERSAL_KEY]
     entries = len(algorithms) + (1 if (df['Algorithm'] == UNIVERSAL_KEY).any() else 0)
     rows = legend_rows(entries)
 
     ax_w, ax_h = 5.6, 4.9
-    left, right, top = 0.95, 0.35, 0.55
+    left = 0.95
+    right = 0.80 if normalized else 0.35   # room for the secondary raw axes
+    top = 0.85 if normalized else 0.55
     bottom_axes = 0.62
     legend_h = 0.26 * rows + 0.30
     fig_w = left + ax_w + right
@@ -442,11 +451,16 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
 
     title = ax.set_title(
         f'Scenario {scenario_num}: '
-        f'{psp.SCENARIO_NAMES.get(scenario_num, scenario_name)}')
+        f'{psp.SCENARIO_NAMES.get(scenario_num, scenario_name)}',
+        pad=26 if normalized else 6)
     tag(title, gids('title', 'main'))
-    ax.set_xlabel(psp.axis_label(x_col))
-    ax.set_ylabel(psp.axis_label(y_col))
+    suffix = '  (normalized)' if normalized else ''
+    ax.set_xlabel(f'{psp.axis_label(x_col)}{suffix}')
+    ax.set_ylabel(f'{psp.axis_label(y_col)}{suffix}')
     ax.grid(True, which='major')
+    if normalized:
+        ax.set_xlim(-0.03, 1.05)
+        ax.set_ylim(-0.03, 1.05)
 
     def pooled_raw(algo):
         """Pooled Pareto set in raw units: the reporter's per-algorithm front
@@ -469,6 +483,7 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
         pts = pooled_raw(algo)
         if len(pts) == 0:
             continue
+        pts = prep(pts)
         pts = pts[np.argsort(pts[:, 0])]
         # Front line connecting the algorithm's Pareto points, under the markers.
         if len(pts) > 1:
@@ -498,7 +513,7 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
     if not univ_df.empty:
         st = styles[UNIVERSAL_KEY]
         ucolor, uslug = st['color'], st['slug']
-        u = univ_df[[x_col, y_col]].values.astype(float)
+        u = prep(univ_df[[x_col, y_col]].values.astype(float))
         u = u[np.argsort(u[:, 0])]
         line, = ax.plot(u[:, 0], u[:, 1], color=ucolor, linewidth=0.9,
                         alpha=0.55, zorder=6)
@@ -519,7 +534,22 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
                           color=ucolor, alpha=0.95, zorder=9, clip_on=True)
         tag(ann, gids('lbl', uslug))
 
-    ax.margins(0.04)
+    if normalized:
+        # Secondary axes in raw units (same construction as the EAF view).
+        ideal_x, ideal_y, nadir_x, nadir_y = bounds
+        range_x = max(nadir_x - ideal_x, 1e-12)
+        range_y = max(nadir_y - ideal_y, 1e-12)
+        secx = ax.secondary_xaxis(
+            'top', functions=(lambda u, a=ideal_x, r=range_x: a + u * r,
+                              lambda v, a=ideal_x, r=range_x: (v - a) / r))
+        secx.set_xlabel(psp.axis_label(x_col), fontsize=9, labelpad=4)
+        secx.tick_params(labelsize=8)
+        secy = ax.secondary_yaxis(
+            'right', functions=(lambda u, a=ideal_y, r=range_y: a + u * r,
+                                lambda v, a=ideal_y, r=range_y: (v - a) / r))
+        secy.tick_params(labelsize=8)
+    else:
+        ax.margins(0.04)
     add_bottom_legend(fig, leg_handles, leg_labels, gids, leg_slugs)
     return fig_to_svg(fig)
 
@@ -833,6 +863,7 @@ aside.controls label.row.sub { padding-left:20px; }
 button.small { font-size:12px; padding:4px 10px; border:1px solid var(--line);
     background:#f0f0ea; border-radius:4px; cursor:pointer; }
 button.small:hover { background:#e6e6df; }
+button.small:disabled { opacity:.45; cursor:not-allowed; }
 main.content { padding:20px 26px 80px; min-width:0; }
 section.block { margin:0 0 34px; }
 section.block > h2 { font-size:18px; border-bottom:2px solid var(--line);
@@ -881,6 +912,7 @@ const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
   hv: true, hvUniv: true, pcMode: 'all',
   view: Object.fromEntries(M.figs.map(f => [f.base, 'eaf'])),
+  norm: Object.fromEntries(M.figs.map(f => [f.base, false])),
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
@@ -913,7 +945,7 @@ function applyPcMode() {
 
 function applyHvSuffixes() {
   M.figs.filter(f => f.kind === 'pareto').forEach(f => {
-    ['n', 's', 'pn', 'ps'].forEach(v => {
+    FIG_VARIANTS.forEach(v => {
       M.algos.forEach(a => {
         const want = state.hv &&
           (a.key !== 'Universal_Pareto' || state.hvUniv);
@@ -943,9 +975,7 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 function savePng(base) {
-  const wrap = document.getElementById(
-    'wrap-' + base + '-' + (state.view[base] === 'points' ? 'p' : '')
-    + (state.swapped[base] ? 's' : 'n'));
+  const wrap = document.getElementById('wrap-' + base + '-' + variantSuffix(base));
   const svg = wrap && wrap.querySelector('svg');
   if (!svg) return;
   const vb = svg.viewBox.baseVal;
@@ -969,6 +999,7 @@ function savePng(base) {
     const ttl = document.getElementById('ttl-' + base);
     const name = sanitizeName(M.expName + '_' + (ttl ? ttl.value : base))
       + (state.view[base] === 'points' ? '_points' : '')
+      + (state.view[base] === 'points' && state.norm[base] ? '_normalized' : '')
       + (state.swapped[base] ? '_swapped' : '') + '.png';
     canvas.toBlob(b => { if (b) downloadBlob(b, name); }, 'image/png');
   };
@@ -1195,7 +1226,7 @@ function refreshVisibility() {
     ).forEach(el => el.classList.toggle('alg-hidden', !vis));
   });
 }
-const FIG_VARIANTS = ['n', 's', 'pn', 'ps'];
+const FIG_VARIANTS = ['n', 's', 'pn', 'ps', 'qn', 'qs'];
 function setTitle(base, text) {
   FIG_VARIANTS.forEach(v => {
     const g = document.querySelector(
@@ -1205,19 +1236,29 @@ function setTitle(base, text) {
     if (t) t.textContent = text;
   });
 }
+function variantSuffix(base) {
+  const o = state.swapped[base] ? 's' : 'n';
+  if (state.view[base] !== 'points') return o;
+  return (state.norm[base] ? 'q' : 'p') + o;
+}
 function refreshFigVariant(base) {
-  const cur = (state.view[base] === 'points' ? 'p' : '')
-    + (state.swapped[base] ? 's' : 'n');
+  const cur = variantSuffix(base);
   FIG_VARIANTS.forEach(v => {
     const w = document.getElementById('wrap-' + base + '-' + v);
     if (w) w.style.display = (v === cur) ? '' : 'none';
   });
   const f = M.figs.find(x => x.base === base);
+  const points = state.view[base] === 'points';
   const st = document.getElementById('axst-' + base);
-  if (st) st.textContent = state.swapped[base] ? f.axesSwapped : f.axesNormal;
+  if (st) st.textContent = (state.swapped[base] ? f.axesSwapped : f.axesNormal)
+    + (points && state.norm[base] ? ' — normalized 0-1' : '');
   const vb = document.getElementById('view-' + base);
-  if (vb) vb.innerHTML = (state.view[base] === 'points')
-    ? '&#9646; EAF view' : '&#9679; Points view';
+  if (vb) vb.innerHTML = points ? '&#9646; EAF view' : '&#9679; Points view';
+  const nb = document.getElementById('norm-' + base);
+  if (nb) {
+    nb.disabled = !points;
+    nb.innerHTML = state.norm[base] ? '&#8645; Raw units' : '&#8645; Normalize';
+  }
 }
 function setSwap(base, swapped) {
   state.swapped[base] = swapped;
@@ -1284,6 +1325,7 @@ function init() {
     applyPcMode();
     M.figs.forEach(f => {
       state.view[f.base] = 'eaf';
+      state.norm[f.base] = false;
       setSwap(f.base, false);
       const inp = document.getElementById('ttl-' + f.base);
       if (inp) { inp.value = f.title; setTitle(f.base, f.title); }
@@ -1301,6 +1343,11 @@ function init() {
     const viewBtn = document.getElementById('view-' + f.base);
     if (viewBtn) viewBtn.addEventListener('click', () =>
       setView(f.base, state.view[f.base] === 'points' ? 'eaf' : 'points'));
+    const normBtn = document.getElementById('norm-' + f.base);
+    if (normBtn) normBtn.addEventListener('click', () => {
+      state.norm[f.base] = !state.norm[f.base];
+      refreshFigVariant(f.base);
+    });
   });
   document.querySelectorAll('button.dl-xlsx').forEach(b =>
     b.addEventListener('click', e => {
@@ -1326,18 +1373,26 @@ document.addEventListener('DOMContentLoaded', init);
 
 
 def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s,
-             svg_pn=None, svg_ps=None, caption=''):
+             svg_pn=None, svg_ps=None, svg_qn=None, svg_qs=None, caption=''):
     cap = f'<p class="caption">{esc(caption)}</p>' if caption else ''
     view_btn = ''
     extra = ''
     if svg_pn is not None:
         view_btn = (f'<button class="small" id="view-{base}" title="Switch '
-                    f'between the EAF publication view and a plain raw-unit '
-                    f'scatter of the Pareto sets">&#9679; Points view</button>')
+                    f'between the EAF publication view and a plain scatter '
+                    f'of the Pareto sets">&#9679; Points view</button>'
+                    f'<button class="small" id="norm-{base}" disabled '
+                    f'title="Points view only: switch between raw units and '
+                    f'globally normalized ideal/nadir axes">'
+                    f'&#8645; Normalize</button>')
         extra = (f'<div class="svgbox" id="wrap-{base}-pn" '
                  f'style="display:none">{svg_pn}</div>'
                  f'<div class="svgbox" id="wrap-{base}-ps" '
-                 f'style="display:none">{svg_ps}</div>')
+                 f'style="display:none">{svg_ps}</div>'
+                 f'<div class="svgbox" id="wrap-{base}-qn" '
+                 f'style="display:none">{svg_qn}</div>'
+                 f'<div class="svgbox" id="wrap-{base}-qs" '
+                 f'style="display:none">{svg_qs}</div>')
     return f'''
 <div class="figcard" id="card-{base}">
   <div class="figbar">
@@ -1610,10 +1665,16 @@ def process_directory(reports_dir, out_path=None):
         svg_ps = render_points_figure(
             base + 'ps', all_pareto[s], all_fronts.get(s), s, name,
             y_col, x_col, styles, hv_summary, config)
+        svg_qn = render_points_figure(
+            base + 'qn', all_pareto[s], all_fronts.get(s), s, name,
+            x_col, y_col, styles, hv_summary, config, bounds=bounds)
+        svg_qs = render_points_figure(
+            base + 'qs', all_pareto[s], all_fronts.get(s), s, name,
+            y_col, x_col, styles, hv_summary, config, bounds=bounds_swapped)
         ax_n = f'X: {psp.axis_label(x_col)} / Y: {psp.axis_label(y_col)}'
         ax_s = f'X: {psp.axis_label(y_col)} / Y: {psp.axis_label(x_col)}'
         pareto_cards.append(fig_card(base, title, ax_n, ax_s, svg_n, svg_s,
-                                     svg_pn, svg_ps))
+                                     svg_pn, svg_ps, svg_qn, svg_qs))
         figs_manifest.append({'base': base, 'title': title, 'kind': 'pareto',
                               'hasPoints': True,
                               'axesNormal': ax_n, 'axesSwapped': ax_s})
