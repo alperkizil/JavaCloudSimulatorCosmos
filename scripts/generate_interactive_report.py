@@ -362,18 +362,6 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
                         s=marker_size * 3, marker='o', facecolors=ucolor,
                         edgecolors=ucolor, linewidths=0.4, zorder=7)
         tag(sc, gids('algo', uslug))
-        kp = psp.knee_point(univ_sorted)
-        if kp is not None:
-            ann = ax.annotate(
-                'knee', xy=(kp[0], kp[1]), xytext=(18, 18),
-                textcoords='offset points', fontsize=8, style='italic',
-                color=ucolor,
-                arrowprops=dict(arrowstyle='-', color=ucolor, lw=0.6,
-                                shrinkA=0, shrinkB=2),
-                zorder=8)
-            tag(ann, gids('algo', uslug))
-            if ann.arrow_patch is not None:
-                tag(ann.arrow_patch, gids('algo', uslug))
         mid = univ_sorted[len(univ_sorted) // 2]
         ann = ax.annotate(st['label'], xy=tuple(mid), xytext=(6, -12),
                           textcoords='offset points', fontsize=7,
