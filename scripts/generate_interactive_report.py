@@ -25,6 +25,11 @@ scripts in this folder consume.
 
 Usage:
     python generate_interactive_report.py <reports_directory> [--out FILE]
+    python generate_interactive_report.py
+        With no arguments (e.g. run by hand or double-clicked), file-picker
+        dialogs ask for the experiment results folder and where to save the
+        HTML. The Java runners (PostRunScripts) always pass the directory, so
+        campaigns stay fully automatic and never prompt.
 """
 
 import argparse
@@ -1484,17 +1489,90 @@ def process_directory(reports_dir, out_path=None):
     return 0
 
 
+def default_initial_dir():
+    """Sensible starting folder for the picker: the repo's results folders."""
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for cand in ('results', 'newExperimentResults'):
+        path = os.path.join(repo, cand)
+        if os.path.isdir(path):
+            return path
+    return repo
+
+
+def choose_paths_console(preset_out=None):
+    """Console fallback when no GUI is available. Returns (dir, out) or
+    (None, None) on cancel / non-interactive stdin."""
+    if not sys.stdin.isatty():
+        print('ERROR: no results directory given, and neither a GUI nor an '
+              'interactive console is available to ask for one.')
+        print(f'Usage: python {os.path.basename(__file__)} '
+              '<reports_directory> [--out FILE]')
+        return None, None
+    d = input('Experiment results folder: ').strip().strip('\'"')
+    if not d:
+        return None, None
+    if preset_out:
+        return d, preset_out
+    default_out = os.path.join(d, HTML_NAME)
+    o = input(f'Output HTML path [{default_out}]: ').strip().strip('\'"')
+    return d, (o or default_out)
+
+
+def choose_paths_interactively(preset_out=None):
+    """File-picker dialogs for the results folder and the output HTML.
+    Falls back to console prompts when tkinter or a display is missing.
+    Returns (reports_dir, out_path); (None, None) means the user cancelled."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return choose_paths_console(preset_out)
+    try:
+        root = tk.Tk()
+    except Exception:  # no display / broken Tk — fall back to the console
+        return choose_paths_console(preset_out)
+    root.withdraw()
+    root.update()
+    try:
+        reports_dir = filedialog.askdirectory(
+            title='Select the experiment results folder '
+                  '(contains scenario_*_pareto_graph_data.csv)',
+            initialdir=default_initial_dir())
+        if not reports_dir:
+            return None, None
+        if preset_out:
+            return reports_dir, preset_out
+        out = filedialog.asksaveasfilename(
+            title='Save the interactive report as...',
+            initialdir=reports_dir, initialfile=HTML_NAME,
+            defaultextension='.html',
+            filetypes=[('HTML files', '*.html'), ('All files', '*.*')])
+        if not out:
+            return None, None
+        return reports_dir, out
+    finally:
+        root.destroy()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n')[1])
-    p.add_argument('reports_dir', help='experiment results directory')
+    p.add_argument('reports_dir', nargs='?', default=None,
+                   help='experiment results directory (omit to pick both '
+                        'the folder and the output file via dialogs)')
     p.add_argument('--out', default=None, help='output HTML path '
                    f'(default: <reports_dir>/{HTML_NAME})')
     args = p.parse_args()
-    if not os.path.isdir(args.reports_dir):
-        print(f'ERROR: {args.reports_dir} is not a directory')
+    reports_dir, out_path = args.reports_dir, args.out
+    if reports_dir is None:
+        reports_dir, out_path = choose_paths_interactively(preset_out=args.out)
+        if not reports_dir:
+            print('No folder selected — nothing to do.')
+            return 1
+    if not os.path.isdir(reports_dir):
+        print(f'ERROR: {reports_dir} is not a directory')
         return 1
-    print(f'Processing: {args.reports_dir}')
-    rc = process_directory(args.reports_dir, args.out)
+    print(f'Processing: {reports_dir}')
+    rc = process_directory(reports_dir, out_path)
     if rc == 0:
         print('Done.')
     return rc
