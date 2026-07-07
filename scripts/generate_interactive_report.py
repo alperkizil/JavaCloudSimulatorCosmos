@@ -298,10 +298,13 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
         label = f"{st['label']}{psp.format_hv_suffix(hv_summary.get(algo))}"
         label_anchor = None
 
+        pooled_nd_for_outline = None
+
         if algo in psp.SINGLE_OBJ_ALGORITHMS or algo in psp.BASELINE_ALGORITHMS:
             pts = psp.normalize_points(algo_df[[x_col, y_col]].values, bounds)
             if len(pts) == 0:
                 continue
+            pooled_nd_for_outline = psp.get_non_dominated(pts)
             mx, my = float(np.median(pts[:, 0])), float(np.median(pts[:, 1]))
             qx = np.percentile(pts[:, 0], [25, 75])
             qy = np.percentile(pts[:, 1], [25, 75])
@@ -351,8 +354,19 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
                 pass
             leg_handles.append(mpl.lines.Line2D([], [], color=color, linewidth=1.6))
             pooled_nd = psp.get_non_dominated(np.array(pooled))
+            pooled_nd_for_outline = pooled_nd
             if len(pooled_nd) > 0:
                 label_anchor = tuple(pooled_nd[len(pooled_nd) // 2])
+
+        # Best-run (0% attainment) outline: the non-dominated envelope of the
+        # algorithm's best points across ALL seeds, as a staircase. It touches
+        # the Universal Pareto set exactly where this algorithm contributes.
+        # Hidden by default (JS toggle).
+        if pooled_nd_for_outline is not None and len(pooled_nd_for_outline) > 0:
+            bl, = ax.plot(pooled_nd_for_outline[:, 0], pooled_nd_for_outline[:, 1],
+                          color=color, linewidth=1.0, linestyle='--', alpha=0.9,
+                          drawstyle='steps-post', zorder=5)
+            tag(bl, gids('best', slug))
 
         leg_labels.append(label)
         leg_slugs.append(slug)
@@ -767,7 +781,7 @@ JS = """
 const M = window.REPORT_MANIFEST;
 const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
-  hv: true, hvUniv: true, pcMode: 'all',
+  hv: true, hvUniv: true, best: false, pcMode: 'all',
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
@@ -1050,7 +1064,7 @@ function setPaint(el, color) {
   }
 }
 function recolorAlgo(slug, color) {
-  ['algo', 'lbl', 'legh'].forEach(role => {
+  ['algo', 'lbl', 'legh', 'best'].forEach(role => {
     groupsFor(role, slug).forEach(g => {
       setPaint(g, color);
       g.querySelectorAll('path, use, text, tspan, rect, circle, line')
@@ -1071,6 +1085,9 @@ function refreshVisibility() {
       }));
     groupsFor('lbl', a.slug).forEach(g => {
       g.style.display = (vis && state.labels) ? '' : 'none';
+    });
+    groupsFor('best', a.slug).forEach(g => {
+      g.style.display = (vis && state.best) ? '' : 'none';
     });
     groupsFor('val', a.slug).forEach(g => {
       g.style.display = (vis && state.values) ? '' : 'none';
@@ -1109,6 +1126,9 @@ function init() {
   document.getElementById('ck-values').addEventListener('change', e => {
     state.values = e.target.checked; refreshVisibility();
   });
+  document.getElementById('ck-best').addEventListener('change', e => {
+    state.best = e.target.checked; refreshVisibility();
+  });
   document.getElementById('ck-hv').addEventListener('change', e => {
     state.hv = e.target.checked; applyHvSuffixes();
   });
@@ -1136,11 +1156,11 @@ function init() {
       if (v) v.checked = true;
       state.algoVisible[a.slug] = true;
     });
-    ['ck-legend', 'ck-labels', 'ck-values', 'ck-hv', 'ck-hv-univ']
+    ['ck-legend', 'ck-labels', 'ck-values', 'ck-hv', 'ck-hv-univ', 'ck-best']
       .forEach((id, i) => {
         const el = document.getElementById(id);
         const def = [M.options.show_legend, M.options.show_labels,
-                     true, true, true][i];
+                     true, true, true, false][i];
         el.checked = def;
       });
     state.legend = M.options.show_legend;
@@ -1148,6 +1168,7 @@ function init() {
     state.values = true;
     state.hv = true;
     state.hvUniv = true;
+    state.best = false;
     applyHvSuffixes();
     state.pcMode = 'all';
     document.getElementById('pc-mode').value = 'all';
@@ -1294,6 +1315,8 @@ def build_html(exp_name, x_col, y_col, styles, manifest,
     Show HV values in legends</label>
   <label class="row sub"><input type="checkbox" id="ck-hv-univ" checked/>
     &hellip;including Universal Pareto</label>
+  <label class="row"><input type="checkbox" id="ck-best"/>
+    Show best-run outlines (0% attainment)</label>
   {build_powercap_controls(manifest)}
   <h2>Algorithms — colour &amp; visibility</h2>
   {controls_algos}
@@ -1438,7 +1461,11 @@ def process_directory(reports_dir, out_path=None):
                     f'seed) runs, computed from {hv_source} — the same figure '
                     'plot_scenario_pareto.py publishes. It intentionally '
                     'differs from the per-scenario HV means shown in the '
-                    'Quality Indicators section below.</p>']
+                    'Quality Indicators section below. The optional dashed '
+                    'outlines (sidebar toggle) are each algorithm&rsquo;s '
+                    'best-of-seeds (0%) attainment staircase — the envelope '
+                    'of its best runs, which touches the Universal Pareto '
+                    'set exactly where that algorithm contributes.</p>']
     for i, s in enumerate(scenarios):
         base = f'f{i}'
         name = psp.SCENARIO_NAMES.get(s, f'Scenario {s}')
