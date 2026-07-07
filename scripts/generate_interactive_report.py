@@ -760,6 +760,218 @@ function applyHvSuffixes() {
   });
 }
 
+// ---- downloads: PNG (current view) and XLSX (verbatim table data) ----
+function sanitizeName(s) {
+  return String(s).replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'export';
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+function savePng(base) {
+  const wrap = document.getElementById(
+    'wrap-' + base + (state.swapped[base] ? '-s' : '-n'));
+  const svg = wrap && wrap.querySelector('svg');
+  if (!svg) return;
+  const vb = svg.viewBox.baseVal;
+  const scale = 3;  // viewBox is in points (72/in) -> ~216 dpi
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('width', vb.width);
+  clone.setAttribute('height', vb.height);
+  const url = URL.createObjectURL(new Blob(
+    [new XMLSerializer().serializeToString(clone)],
+    {type: 'image/svg+xml;charset=utf-8'}));
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(vb.width * scale);
+    canvas.height = Math.round(vb.height * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const ttl = document.getElementById('ttl-' + base);
+    const name = sanitizeName(M.expName + '_' + (ttl ? ttl.value : base))
+      + (state.swapped[base] ? '_swapped' : '') + '.png';
+    canvas.toBlob(b => { if (b) downloadBlob(b, name); }, 'image/png');
+  };
+  img.src = url;
+}
+
+// Minimal XLSX writer: a stored (uncompressed) ZIP of OOXML parts with
+// inline-string cells; numeric-looking values are written as numbers.
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0;
+  const now = new Date();
+  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) |
+                   (now.getSeconds() >> 1)) & 0xFFFF;
+  const dosDate = (((now.getFullYear() - 1980) << 9) |
+                   ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF;
+  const le = (n, len) => {
+    const a = [];
+    for (let i = 0; i < len; i++) a.push((n >>> (8 * i)) & 0xFF);
+    return a;
+  };
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const data = enc.encode(f.data);
+    const crc = crc32(data);
+    const header = new Uint8Array([
+      0x50, 0x4B, 0x03, 0x04, ...le(20, 2), ...le(0, 2), ...le(0, 2),
+      ...le(dosTime, 2), ...le(dosDate, 2), ...le(crc, 4),
+      ...le(data.length, 4), ...le(data.length, 4),
+      ...le(name.length, 2), ...le(0, 2)]);
+    chunks.push(header, name, data);
+    central.push({name, crc, size: data.length, offset});
+    offset += header.length + name.length + data.length;
+  }
+  const cdStart = offset;
+  for (const e of central) {
+    const rec = new Uint8Array([
+      0x50, 0x4B, 0x01, 0x02, ...le(20, 2), ...le(20, 2), ...le(0, 2),
+      ...le(0, 2), ...le(dosTime, 2), ...le(dosDate, 2), ...le(e.crc, 4),
+      ...le(e.size, 4), ...le(e.size, 4), ...le(e.name.length, 2),
+      ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4),
+      ...le(e.offset, 4)]);
+    chunks.push(rec, e.name);
+    offset += rec.length + e.name.length;
+  }
+  const eocd = new Uint8Array([
+    0x50, 0x4B, 0x05, 0x06, ...le(0, 2), ...le(0, 2),
+    ...le(central.length, 2), ...le(central.length, 2),
+    ...le(offset - cdStart, 4), ...le(cdStart, 4), ...le(0, 2)]);
+  chunks.push(eocd);
+  return new Blob(chunks, {type:
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function xmlEsc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+function colRef(i) {
+  let s = '';
+  i++;
+  while (i > 0) {
+    const m = (i - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    i = Math.floor((i - 1) / 26);
+  }
+  return s;
+}
+const NUM_RE = /^-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?$/;
+function sheetXml(cols, rows) {
+  let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/' +
+    'spreadsheetml/2006/main"><sheetData>';
+  [cols, ...rows].forEach((row, r) => {
+    xml += '<row r="' + (r + 1) + '">';
+    row.forEach((v, c) => {
+      const s = v == null ? '' : String(v);
+      if (s === '') return;
+      const ref = colRef(c) + (r + 1);
+      if (r > 0 && NUM_RE.test(s)) {
+        xml += '<c r="' + ref + '"><v>' + s + '</v></c>';
+      } else {
+        xml += '<c r="' + ref + '" t="inlineStr"><is><t>' + xmlEsc(s) +
+          '</t></is></c>';
+      }
+    });
+    xml += '</row>';
+  });
+  return xml + '</sheetData></worksheet>';
+}
+function saveXlsx(tables, filename) {
+  const BAD = '[]*?:/' + String.fromCharCode(92);  // chars invalid in names
+  const names = new Set();
+  const clean = tables.map((t, i) => {
+    let n = Array.from(String(t.sheet || ('Sheet' + (i + 1))))
+      .map(ch => BAD.includes(ch) ? ' ' : ch).join('').slice(0, 31).trim()
+      || ('Sheet' + (i + 1));
+    const base = n;
+    let k = 2;
+    while (names.has(n)) { n = base.slice(0, 28) + ' ' + k++; }
+    names.add(n);
+    return {sheet: n, cols: t.cols, rows: t.rows};
+  });
+  const XMLH = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const workbook = XMLH +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets>' + clean.map((t, i) =>
+      '<sheet name="' + xmlEsc(t.sheet) + '" sheetId="' + (i + 1) +
+      '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets></workbook>';
+  const wbRels = XMLH +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    clean.map((t, i) => '<Relationship Id="rId' + (i + 1) + '" Type=' +
+      '"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"' +
+      ' Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') +
+    '<Relationship Id="rId' + (clean.length + 1) + '" Type=' +
+    '"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"' +
+    ' Target="styles.xml"/></Relationships>';
+  const rootRels = XMLH +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/' +
+    'officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    '</Relationships>';
+  const styles = XMLH +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+    '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+    '<borders count="1"><border/></borders>' +
+    '<cellStyleXfs count="1"><xf/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf/></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/>' +
+    '</cellStyles></styleSheet>';
+  const types = XMLH +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType=' +
+    '"application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType=' +
+    '"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType=' +
+    '"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    clean.map((t, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) +
+      '.xml" ContentType="application/vnd.openxmlformats-officedocument.' +
+      'spreadsheetml.worksheet+xml"/>').join('') + '</Types>';
+  const files = [
+    {name: '[Content_Types].xml', data: types},
+    {name: '_rels/.rels', data: rootRels},
+    {name: 'xl/workbook.xml', data: workbook},
+    {name: 'xl/_rels/workbook.xml.rels', data: wbRels},
+    {name: 'xl/styles.xml', data: styles},
+  ];
+  clean.forEach((t, i) => files.push({
+    name: 'xl/worksheets/sheet' + (i + 1) + '.xml',
+    data: sheetXml(t.cols, t.rows)}));
+  downloadBlob(makeZip(files), filename);
+}
+
 function groupsFor(role, slug) {
   return document.querySelectorAll('g[id*="--' + role + '--' + slug + '--"]');
 }
@@ -884,7 +1096,19 @@ function init() {
     const btn = document.getElementById('swap-' + f.base);
     if (btn) btn.addEventListener('click', () =>
       setSwap(f.base, !state.swapped[f.base]));
+    const pngBtn = document.getElementById('png-' + f.base);
+    if (pngBtn) pngBtn.addEventListener('click', () => savePng(f.base));
   });
+  document.querySelectorAll('button.dl-xlsx').forEach(b =>
+    b.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const t = (M.tables || []).find(x => x.id === b.dataset.table);
+      if (t) saveXlsx([t], sanitizeName(M.expName + '_' + t.sheet) + '.xlsx');
+    }));
+  const allBtn = document.getElementById('btn-xlsx-all');
+  if (allBtn) allBtn.addEventListener('click', () =>
+    saveXlsx(M.tables || [], sanitizeName(M.expName + '_tables') + '.xlsx'));
   document.querySelectorAll('button.tgl').forEach(b =>
     b.addEventListener('click', () => {
       const tb = b.closest('tbody');
@@ -907,6 +1131,9 @@ def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s, caption=''):
            title="Custom plot title" />
     <button class="small" id="swap-{base}" title="Interchange the X and Y axes">
       &#8646; Swap X&#8596;Y</button>
+    <button class="small" id="png-{base}"
+      title="Download the current view (orientation, colours, toggles, title) as a PNG">
+      &#8595; PNG</button>
     <span class="axes-state" id="axst-{base}">{esc(axes_normal)}</span>
   </div>
   <div class="svgbox" id="wrap-{base}-n">{svg_n}</div>
@@ -1150,14 +1377,21 @@ def process_directory(reports_dir, out_path=None):
         metric_cards.append('</section>')
 
     # --- Tables (HV; GD & IGD; full CSV mirror) ---
+    def table_rows(df, cols):
+        return [['' if pd.isna(r[c]) else str(r[c]) for c in cols]
+                for _, r in df.iterrows()]
+
     tables = []
+    tables_manifest = []
     if all_metrics_str:
         tables.append('<section class="block"><h2>Quality Indicators — '
                       'Tables</h2><p class="note">Values verbatim from '
                       'scenario_&lt;N&gt;_performance_metrics.csv (the same '
                       'tables the scripts in scripts/ consume): one row per '
                       'seed plus MEAN and STDDEV, and the Universal_Pareto '
-                      'reference row. Click a seeds button to expand.</p>')
+                      'reference row. Click a seeds button to expand.</p>'
+                      '<p><button class="small" id="btn-xlsx-all">&#8595; '
+                      'Download all tables (.xlsx)</button></p>')
         for s in scenarios:
             if s not in all_metrics_str:
                 continue
@@ -1165,25 +1399,45 @@ def process_directory(reports_dir, out_path=None):
             tables.append(f'<h3 class="scen">Scenario {s}'
                           f'{": " + esc(name) if name else ""}</h3>')
             df = all_metrics_str[s]
-            tables.append('<h4>Hypervolume (HV)</h4>')
+            hv_cols = [c for c in ('Algorithm', 'Seed', 'HV') if c in df.columns]
+            gd_cols = [c for c in ('Algorithm', 'Seed', 'GD', 'IGD')
+                       if c in df.columns]
+            full_cols = list(df.columns)
+            tables_manifest.append({'id': f'tbl-hv-{s}', 'sheet': f'S{s} HV',
+                                    'cols': hv_cols,
+                                    'rows': table_rows(df, hv_cols)})
+            tables_manifest.append({'id': f'tbl-gdigd-{s}',
+                                    'sheet': f'S{s} GD-IGD', 'cols': gd_cols,
+                                    'rows': table_rows(df, gd_cols)})
+            tables_manifest.append({'id': f'tbl-full-{s}', 'sheet': f'S{s} Full',
+                                    'cols': full_cols,
+                                    'rows': table_rows(df, full_cols)})
+            tables.append(f'<h4>Hypervolume (HV) <button class="small dl-xlsx" '
+                          f'data-table="tbl-hv-{s}">&#8595; XLSX</button></h4>')
             tables.append(build_metric_table(
                 df, ['Algorithm', 'Seed', 'HV'], styles, f'tbl-hv-{s}'))
             tables.append('<h4>Generational Distance (GD) &amp; Inverted '
-                          'Generational Distance (IGD)</h4>')
+                          'Generational Distance (IGD) '
+                          f'<button class="small dl-xlsx" '
+                          f'data-table="tbl-gdigd-{s}">&#8595; XLSX</button></h4>')
             tables.append(build_metric_table(
                 df, ['Algorithm', 'Seed', 'GD', 'IGD'], styles, f'tbl-gdigd-{s}'))
             tables.append(
                 f'<details class="rawcsv"><summary>Full metrics table '
                 f'(scenario_{s}_performance_metrics.csv, verbatim)</summary>'
+                f'<p><button class="small dl-xlsx" data-table="tbl-full-{s}">'
+                f'&#8595; XLSX (full table)</button></p>'
                 + build_full_table(df, styles, f'tbl-full-{s}') + '</details>')
         tables.append('</section>')
 
     manifest = {
+        'expName': exp_name,
         'algos': [{'slug': st['slug'], 'key': k, 'label': st['label'],
                    'color': st['color'],
                    'hvSuffix': psp.format_hv_suffix(hv_summary.get(k))}
                   for k, st in styles.items()],
         'figs': figs_manifest,
+        'tables': tables_manifest,
         'options': {
             'show_legend': bool(config.get('show_legend', True)),
             'show_labels': bool(config.get('show_labels', True)),
