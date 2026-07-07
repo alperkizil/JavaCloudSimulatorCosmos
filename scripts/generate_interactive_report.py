@@ -402,10 +402,15 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
 # METRIC BAR FIGURE (mirrors psp.plot_metrics_comparison, + Universal_Pareto)
 # =============================================================================
 
+# (metric, title, axis label, integer-valued) — integer metrics use the CSV
+# MEAN row's total-across-seeds semantics (see plot_scenario_pareto.py).
 METRIC_SPECS = [
-    ('HV', 'Hypervolume (higher is better)', 'HV (mean)'),
-    ('GD', 'Generational Distance (lower is better)', 'GD (mean)'),
-    ('IGD', 'Inverted Generational Distance (lower is better)', 'IGD (mean)'),
+    ('HV', 'Hypervolume (higher is better)', 'HV (mean)', False),
+    ('GD', 'Generational Distance (lower is better)', 'GD (mean)', False),
+    ('IGD', 'Inverted Generational Distance (lower is better)', 'IGD (mean)',
+     False),
+    ('ParetoContribution', 'Pareto Contribution (higher is better)',
+     'Pareto contribution (total across seeds)', True),
 ]
 
 
@@ -425,7 +430,8 @@ def metric_rows_for_scenario(metrics_df, metric):
 
 
 def render_metric_figure(fig_id, metric, title_txt, ylabel,
-                         all_metrics, styles, config, horizontal):
+                         all_metrics, styles, config, horizontal,
+                         is_int=False):
     gids = GidFactory(fig_id)
     scenarios = sorted(all_metrics.keys())
     per_scenario = {s: metric_rows_for_scenario(all_metrics[s], metric)
@@ -507,7 +513,8 @@ def render_metric_figure(fig_id, metric, title_txt, ylabel,
                 bar = ax.bar(coords[j], val, bar_width * 0.85,
                              facecolor=face, edgecolor=color, linewidth=0.9)
             tag(bar.patches[0], gids('algo', slug))
-            vtexts = ax.bar_label(bar, labels=[f'{val:.3g}'], padding=2,
+            vfmt = f'{int(round(val))}' if is_int else f'{val:.3g}'
+            vtexts = ax.bar_label(bar, labels=[vfmt], padding=2,
                                   fontsize=7)
             for t in vtexts:
                 tag(t, gids('val', slug))
@@ -1355,20 +1362,26 @@ def process_directory(reports_dir, out_path=None):
             '(the Java-computed indicators — NOT the pooled HV_fixed used in '
             'the Pareto plot legends), plus the Universal_Pareto reference. '
             'GD and IGD of the universal set are 0 by definition (it is the '
-            'reference front). Swapping axes turns the chart horizontal.</p>')
-        for metric, title_txt, ylab in METRIC_SPECS:
+            'reference front). For Pareto contribution, the CSV MEAN row '
+            'holds the TOTAL number of universal-front points contributed '
+            'across all seeds (the universal bar is the front size). '
+            'Swapping axes turns the chart horizontal.</p>')
+        for metric, title_txt, ylab, is_int in METRIC_SPECS:
             if not any(metric in df.columns for df in all_metrics.values()):
                 continue
             base = f'f{metric.lower()}'
             print(f'  Rendering metric figure ({metric}) ...')
             svg_n = render_metric_figure(base + 'n', metric, title_txt, ylab,
-                                         all_metrics, styles, config, False)
+                                         all_metrics, styles, config, False,
+                                         is_int)
             svg_s = render_metric_figure(base + 's', metric, title_txt, ylab,
-                                         all_metrics, styles, config, True)
+                                         all_metrics, styles, config, True,
+                                         is_int)
             if svg_n is None:
                 continue
-            ax_n = f'X: scenario / Y: {metric} (mean)'
-            ax_s = f'X: {metric} (mean) / Y: scenario'
+            unit = 'total' if is_int else 'mean'
+            ax_n = f'X: scenario / Y: {metric} ({unit})'
+            ax_s = f'X: {metric} ({unit}) / Y: scenario'
             metric_cards.append(fig_card(base, title_txt, ax_n, ax_s,
                                          svg_n, svg_s))
             figs_manifest.append({'base': base, 'title': title_txt,
@@ -1402,6 +1415,8 @@ def process_directory(reports_dir, out_path=None):
             hv_cols = [c for c in ('Algorithm', 'Seed', 'HV') if c in df.columns]
             gd_cols = [c for c in ('Algorithm', 'Seed', 'GD', 'IGD')
                        if c in df.columns]
+            pc_cols = [c for c in ('Algorithm', 'Seed', 'ParetoContribution')
+                       if c in df.columns]
             full_cols = list(df.columns)
             tables_manifest.append({'id': f'tbl-hv-{s}', 'sheet': f'S{s} HV',
                                     'cols': hv_cols,
@@ -1409,6 +1424,11 @@ def process_directory(reports_dir, out_path=None):
             tables_manifest.append({'id': f'tbl-gdigd-{s}',
                                     'sheet': f'S{s} GD-IGD', 'cols': gd_cols,
                                     'rows': table_rows(df, gd_cols)})
+            if 'ParetoContribution' in df.columns:
+                tables_manifest.append({'id': f'tbl-pc-{s}',
+                                        'sheet': f'S{s} ParetoCount',
+                                        'cols': pc_cols,
+                                        'rows': table_rows(df, pc_cols)})
             tables_manifest.append({'id': f'tbl-full-{s}', 'sheet': f'S{s} Full',
                                     'cols': full_cols,
                                     'rows': table_rows(df, full_cols)})
@@ -1422,6 +1442,15 @@ def process_directory(reports_dir, out_path=None):
                           f'data-table="tbl-gdigd-{s}">&#8595; XLSX</button></h4>')
             tables.append(build_metric_table(
                 df, ['Algorithm', 'Seed', 'GD', 'IGD'], styles, f'tbl-gdigd-{s}'))
+            if 'ParetoContribution' in df.columns:
+                tables.append('<h4>Pareto Count (points contributed to the '
+                              'Universal Pareto set) '
+                              f'<button class="small dl-xlsx" '
+                              f'data-table="tbl-pc-{s}">&#8595; XLSX</button>'
+                              '</h4>')
+                tables.append(build_metric_table(
+                    df, ['Algorithm', 'Seed', 'ParetoContribution'], styles,
+                    f'tbl-pc-{s}'))
             tables.append(
                 f'<details class="rawcsv"><summary>Full metrics table '
                 f'(scenario_{s}_performance_metrics.csv, verbatim)</summary>'
