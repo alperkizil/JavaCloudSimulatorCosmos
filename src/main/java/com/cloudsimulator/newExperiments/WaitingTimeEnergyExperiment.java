@@ -24,6 +24,8 @@ public final class WaitingTimeEnergyExperiment {
         };
 
         // 2. Algorithm hyperparameters — identical to the legacy runner; edit to deviate.
+        //    Detailed console output is off; the campaign shows a one-line progress bar
+        //    per run instead. Set params.verboseLogging = true to restore it.
         AlgorithmParameters params = AlgorithmParameters.defaults();
 
         // 3. Infrastructure — datacenter, hosts, VMs, user, workloads, scenarios, seeds.
