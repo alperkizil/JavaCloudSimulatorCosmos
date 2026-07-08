@@ -74,6 +74,7 @@ public class GAConfiguration {
     private final List<SchedulingObjective> objectives;
     private final Map<SchedulingObjective, Double> objectiveWeights;
     private final boolean normalizeObjectiveScales;
+    private final double archiveEpsilonFraction;
 
     // Termination
     private final TerminationCondition terminationCondition;
@@ -100,6 +101,7 @@ public class GAConfiguration {
         this.objectives = new ArrayList<>(builder.objectives);
         this.objectiveWeights = new LinkedHashMap<>(builder.objectiveWeights);
         this.normalizeObjectiveScales = builder.normalizeObjectiveScales;
+        this.archiveEpsilonFraction = builder.archiveEpsilonFraction;
         this.terminationCondition = builder.terminationCondition;
         this.seedAssignments = new ArrayList<>(builder.seedAssignments);
         this.verboseLogging = builder.verboseLogging;
@@ -218,6 +220,14 @@ public class GAConfiguration {
         return normalizeObjectiveScales;
     }
 
+    /**
+     * Epsilon-resolution of the non-dominated archive, as a fraction of the
+     * archive's current per-objective range (0 = pure dominance archiving).
+     */
+    public double getArchiveEpsilonFraction() {
+        return archiveEpsilonFraction;
+    }
+
     public TerminationCondition getTerminationCondition() {
         return terminationCondition;
     }
@@ -313,6 +323,7 @@ public class GAConfiguration {
         private List<SchedulingObjective> objectives = new ArrayList<>();
         private Map<SchedulingObjective, Double> objectiveWeights = new LinkedHashMap<>();
         private boolean normalizeObjectiveScales = false;
+        private double archiveEpsilonFraction = 0.0;
         private TerminationCondition terminationCondition = new GenerationCountTermination(100);
         private List<int[]> seedAssignments = new ArrayList<>();
         private boolean verboseLogging = false;
@@ -460,6 +471,23 @@ public class GAConfiguration {
          */
         public Builder normalizeObjectiveScales(boolean normalize) {
             this.normalizeObjectiveScales = normalize;
+            return this;
+        }
+
+        /**
+         * Epsilon-resolution for the non-dominated archive, as a fraction of
+         * the archive's current per-objective range (e.g. 0.01 = 1%). A
+         * mutually non-dominated candidate within that box of an existing
+         * member is not archived, so the published front is free of
+         * near-duplicate trajectory points. Does not affect the search itself
+         * (the archive is passive). 0 (default) keeps pure dominance
+         * archiving.
+         *
+         * @param fraction epsilon as a fraction of the objective ranges
+         * @return this builder
+         */
+        public Builder archiveEpsilonFraction(double fraction) {
+            this.archiveEpsilonFraction = fraction;
             return this;
         }
 

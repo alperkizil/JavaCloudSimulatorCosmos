@@ -21,15 +21,31 @@ public class NonDominatedArchive {
 
     private final boolean[] minimization;
     private final List<SchedulingSolution> members;
+    private final double epsilonFraction;
 
     public NonDominatedArchive(boolean[] minimization) {
+        this(minimization, 0.0);
+    }
+
+    /**
+     * @param epsilonFraction epsilon-resolution as a fraction of the archive's
+     *        current per-objective range (e.g. 0.01 = 1%). A mutually
+     *        non-dominated candidate lying within that box of an existing
+     *        member is not admitted, pruning near-duplicate trajectory points.
+     *        0 disables the filter (pure dominance archiving). Admission-time
+     *        only: as the ranges widen during the run, points admitted earlier
+     *        are not re-pruned.
+     */
+    public NonDominatedArchive(boolean[] minimization, double epsilonFraction) {
         this.minimization = minimization.clone();
         this.members = new ArrayList<>();
+        this.epsilonFraction = Math.max(0.0, epsilonFraction);
     }
 
     /**
      * Offers a candidate to the archive. A copy is stored if accepted.
-     * Duplicates (exact objective-vector equality) are not re-added.
+     * Duplicates (exact objective-vector equality) are not re-added, and with
+     * a positive epsilon fraction neither are near-duplicates of members.
      *
      * @return true if the candidate was added
      */
@@ -54,8 +70,48 @@ public class NonDominatedArchive {
             }
         }
 
+        if (epsilonFraction > 0.0 && withinEpsilonOfMember(candObj)) {
+            return false;
+        }
+
         members.add(candidate.copy());
         return true;
+    }
+
+    /**
+     * True if the candidate lies within the epsilon box of any member, where
+     * the box is epsilonFraction of the per-objective range over the current
+     * members plus the candidate. Called only for candidates that are
+     * mutually non-dominated with every remaining member.
+     */
+    private boolean withinEpsilonOfMember(double[] candObj) {
+        if (members.isEmpty()) return false;
+        int n = candObj.length;
+        double[] min = candObj.clone();
+        double[] max = candObj.clone();
+        for (SchedulingSolution m : members) {
+            double[] o = m.getObjectiveValues();
+            for (int i = 0; i < n; i++) {
+                if (o[i] < min[i]) min[i] = o[i];
+                if (o[i] > max[i]) max[i] = o[i];
+            }
+        }
+        double[] eps = new double[n];
+        for (int i = 0; i < n; i++) {
+            eps[i] = epsilonFraction * (max[i] - min[i]);
+        }
+        for (SchedulingSolution m : members) {
+            double[] o = m.getObjectiveValues();
+            boolean close = true;
+            for (int i = 0; i < n; i++) {
+                if (Math.abs(candObj[i] - o[i]) > eps[i]) {
+                    close = false;
+                    break;
+                }
+            }
+            if (close) return true;
+        }
+        return false;
     }
 
     public List<SchedulingSolution> getMembers() {

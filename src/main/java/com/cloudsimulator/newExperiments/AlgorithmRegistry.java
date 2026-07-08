@@ -293,6 +293,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
@@ -316,6 +317,7 @@ public final class AlgorithmRegistry {
                     p.saCoolingBaseRate, p.saCoolingMinRate, p.saCoolingMaxRate,
                     p.saCoolingLowAccept, p.saCoolingHighAccept))
                .iterationsPerTemperature(p.saIterationsPerTemp)
+               .archiveEpsilonFraction(p.archiveEpsilonFraction)
                .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount));
 
         if (p.saReheatEnabled) {
@@ -367,6 +369,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {
@@ -525,6 +528,7 @@ public final class AlgorithmRegistry {
             .addWeightedObjective(primaryObjective, 1.0)
             .addWeightedObjective(tiebreakerObjective, p.tiebreakerWeight)
             .normalizeObjectiveScales(true)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .verboseLogging(p.verboseLogging);
         if (heuristicSeed != null) {

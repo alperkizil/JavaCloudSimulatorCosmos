@@ -117,7 +117,7 @@ public class GenerationalGAPowerCeilingAlgorithm {
         statistics.startTimer();
 
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
-        archive = new ConstrainedNonDominatedArchive(buildMinimizationArray());
+        archive = new ConstrainedNonDominatedArchive(buildMinimizationArray(), config.getArchiveEpsilonFraction());
 
         initializePopulation();
         evaluatePopulation();

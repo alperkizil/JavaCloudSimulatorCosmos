@@ -144,7 +144,7 @@ public class SimulatedAnnealingAlgorithm {
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
 
         // Reset the non-dominated archive for this run
-        archive = new NonDominatedArchive(buildMinimizationArray());
+        archive = new NonDominatedArchive(buildMinimizationArray(), config.getArchiveEpsilonFraction());
 
         // Step 1: Generate initial solution (s = s0) — seeded if a heuristic
         // seed is available, random otherwise. Extra seeds beyond the first

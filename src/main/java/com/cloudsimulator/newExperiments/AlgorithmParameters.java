@@ -16,6 +16,16 @@ public final class AlgorithmParameters {
     public double tiebreakerWeight = 0.001;
     public boolean verboseLogging = true;
 
+    /**
+     * Epsilon-resolution of the GA/SA non-dominated archives, as a fraction of
+     * the archive's current per-objective range (0.01 = 1%). Mutually
+     * non-dominated points within this box of an archived point are not added,
+     * so published fronts and Pareto-contribution counts are free of
+     * near-duplicate trajectory points (annealing otherwise hoards them).
+     * Passive: does not alter the search trajectory. 0 disables.
+     */
+    public double archiveEpsilonFraction = 0.01;
+
     // ---- GA ----
     public double crossoverRate = 0.95;
     public double mutationRate = 0.05;

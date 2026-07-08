@@ -29,9 +29,23 @@ public class ConstrainedNonDominatedArchive {
         Member(SchedulingSolution s, double v) { this.solution = s; this.violation = v; }
     }
 
+    private final double epsilonFraction;
+
     public ConstrainedNonDominatedArchive(boolean[] minimization) {
+        this(minimization, 0.0);
+    }
+
+    /**
+     * @param epsilonFraction epsilon-resolution as a fraction of the archive's
+     *        current per-objective range over FEASIBLE members (see
+     *        {@link NonDominatedArchive}). Applied only between a feasible
+     *        candidate and feasible members — infeasible members are ranked by
+     *        violation, not objective proximity. 0 disables the filter.
+     */
+    public ConstrainedNonDominatedArchive(boolean[] minimization, double epsilonFraction) {
         this.minimization = minimization.clone();
         this.members = new ArrayList<>();
+        this.epsilonFraction = Math.max(0.0, epsilonFraction);
     }
 
     /**
@@ -58,8 +72,52 @@ public class ConstrainedNonDominatedArchive {
             }
         }
 
+        if (epsilonFraction > 0.0 && cViol <= 0.0 && withinEpsilonOfFeasibleMember(candObj)) {
+            return false;
+        }
+
         members.add(new Member(candidate.copy(), cViol));
         return true;
+    }
+
+    /**
+     * True if the feasible candidate lies within the epsilon box of any
+     * feasible member; the box is epsilonFraction of the per-objective range
+     * over the feasible members plus the candidate. Called only for
+     * candidates that are mutually non-dominated with every remaining member.
+     */
+    private boolean withinEpsilonOfFeasibleMember(double[] candObj) {
+        int n = candObj.length;
+        double[] min = candObj.clone();
+        double[] max = candObj.clone();
+        boolean anyFeasible = false;
+        for (Member m : members) {
+            if (m.violation > 0.0) continue;
+            anyFeasible = true;
+            double[] o = m.solution.getObjectiveValues();
+            for (int i = 0; i < n; i++) {
+                if (o[i] < min[i]) min[i] = o[i];
+                if (o[i] > max[i]) max[i] = o[i];
+            }
+        }
+        if (!anyFeasible) return false;
+        double[] eps = new double[n];
+        for (int i = 0; i < n; i++) {
+            eps[i] = epsilonFraction * (max[i] - min[i]);
+        }
+        for (Member m : members) {
+            if (m.violation > 0.0) continue;
+            double[] o = m.solution.getObjectiveValues();
+            boolean close = true;
+            for (int i = 0; i < n; i++) {
+                if (Math.abs(candObj[i] - o[i]) > eps[i]) {
+                    close = false;
+                    break;
+                }
+            }
+            if (close) return true;
+        }
+        return false;
     }
 
     public List<SchedulingSolution> getMembers() {

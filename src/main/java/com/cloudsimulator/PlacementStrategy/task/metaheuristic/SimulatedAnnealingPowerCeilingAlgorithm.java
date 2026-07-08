@@ -103,7 +103,7 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
         statistics.startTimer();
 
         AlgorithmStatistics algoStats = new AlgorithmStatistics(config.getNumObjectives());
-        archive = new ConstrainedNonDominatedArchive(buildMinimizationArray());
+        archive = new ConstrainedNonDominatedArchive(buildMinimizationArray(), config.getArchiveEpsilonFraction());
 
         currentSolution = generateInitialSolution();
         currentFitness = evaluateFitness(currentSolution);

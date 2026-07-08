@@ -413,6 +413,148 @@ def render_pareto_figure(fig_id, df, scenario_num, scenario_name,
 
 
 # =============================================================================
+# PLAIN POINTS FIGURE (raw units: pooled Pareto sets + universal rings)
+# =============================================================================
+
+def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
+                         x_col, y_col, styles, hv_summary, config,
+                         bounds=None):
+    """Plain X-Y scatter: each algorithm's pooled Pareto set as coloured
+    markers connected by a front line, with the Universal Pareto set overlaid
+    as OPEN black rings — the coloured marker inside a ring is the algorithm
+    that contributed that universal point. With `bounds` the points are
+    globally normalized to ideal (0,0) / nadir (1,1) like the EAF view (raw
+    units on secondary axes); without, raw units."""
+    gids = GidFactory(fig_id)
+    marker_size = config.get('marker_size', 10)
+    normalized = bounds is not None
+
+    def prep(pts):
+        return psp.normalize_points(pts, bounds) if normalized else pts
+
+    algorithms = [a for a in df['Algorithm'].unique() if a != UNIVERSAL_KEY]
+    entries = len(algorithms) + (1 if (df['Algorithm'] == UNIVERSAL_KEY).any() else 0)
+    rows = legend_rows(entries)
+
+    ax_w, ax_h = 5.6, 4.9
+    left = 0.95
+    right = 0.80 if normalized else 0.35   # room for the secondary raw axes
+    top = 0.85 if normalized else 0.55
+    bottom_axes = 0.62
+    legend_h = 0.26 * rows + 0.30
+    fig_w = left + ax_w + right
+    fig_h = top + ax_h + bottom_axes + legend_h
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig.subplots_adjust(left=left / fig_w, right=1 - right / fig_w,
+                        top=1 - top / fig_h,
+                        bottom=(bottom_axes + legend_h) / fig_h)
+
+    title = ax.set_title(
+        f'Scenario {scenario_num}: '
+        f'{psp.SCENARIO_NAMES.get(scenario_num, scenario_name)}',
+        pad=26 if normalized else 6)
+    tag(title, gids('title', 'main'))
+    suffix = '  (normalized)' if normalized else ''
+    ax.set_xlabel(f'{psp.axis_label(x_col)}{suffix}')
+    ax.set_ylabel(f'{psp.axis_label(y_col)}{suffix}')
+    ax.grid(True, which='major')
+    if normalized:
+        ax.set_xlim(-0.03, 1.05)
+        ax.set_ylim(-0.03, 1.05)
+
+    def pooled_raw(algo):
+        """Pooled Pareto set in raw units: the reporter's per-algorithm front
+        CSV when available, else the non-dominated union of the seed data."""
+        if front_df is not None and x_col in front_df.columns \
+                and y_col in front_df.columns:
+            sub = front_df[front_df['Algorithm'] == algo]
+            if not sub.empty:
+                return sub[[x_col, y_col]].values.astype(float)
+        pts = df[df['Algorithm'] == algo][[x_col, y_col]].values.astype(float)
+        nd = psp.get_non_dominated(pts)
+        return nd if len(nd) else pts
+
+    leg_handles, leg_labels, leg_slugs = [], [], []
+
+    for algo in algorithms:
+        st = styles[algo]
+        color, marker, filled = st['color'], st['marker'], st['filled']
+        slug = st['slug']
+        pts = pooled_raw(algo)
+        if len(pts) == 0:
+            continue
+        pts = prep(pts)
+        pts = pts[np.argsort(pts[:, 0])]
+        # Front line connecting the algorithm's Pareto points, under the markers.
+        if len(pts) > 1:
+            ln, = ax.plot(pts[:, 0], pts[:, 1], color=color, linewidth=1.0,
+                          alpha=0.65, zorder=3)
+            tag(ln, gids('algo', slug))
+        sc = ax.scatter(pts[:, 0], pts[:, 1], s=marker_size * 2.6,
+                        marker=marker,
+                        facecolors=color if filled else 'none',
+                        edgecolors=color, linewidths=0.9, alpha=0.85, zorder=4)
+        tag(sc, gids('algo', slug))
+        leg_handles.append(mpl.lines.Line2D(
+            [], [], marker=marker, linestyle='-', linewidth=1.0,
+            color=color, markersize=6,
+            markerfacecolor=color if filled else 'none',
+            markeredgecolor=color))
+        leg_labels.append(
+            f"{st['label']}{psp.format_hv_suffix(hv_summary.get(algo))}")
+        leg_slugs.append(slug)
+        mid = pts[len(pts) // 2]
+        ann = ax.annotate(st['label'], xy=tuple(mid), xytext=(5, 5),
+                          textcoords='offset points', fontsize=7, color=color,
+                          alpha=0.95, zorder=9, clip_on=True)
+        tag(ann, gids('lbl', slug))
+
+    univ_df = df[df['Algorithm'] == UNIVERSAL_KEY]
+    if not univ_df.empty:
+        st = styles[UNIVERSAL_KEY]
+        ucolor, uslug = st['color'], st['slug']
+        u = prep(univ_df[[x_col, y_col]].values.astype(float))
+        u = u[np.argsort(u[:, 0])]
+        line, = ax.plot(u[:, 0], u[:, 1], color=ucolor, linewidth=0.9,
+                        alpha=0.55, zorder=6)
+        tag(line, gids('algo', uslug))
+        rings = ax.scatter(u[:, 0], u[:, 1], s=marker_size * 9, marker='o',
+                           facecolors='none', edgecolors=ucolor,
+                           linewidths=1.3, zorder=7)
+        tag(rings, gids('algo', uslug))
+        leg_handles.append(mpl.lines.Line2D(
+            [], [], color=ucolor, linewidth=0.9, marker='o', markersize=8,
+            markerfacecolor='none', markeredgecolor=ucolor))
+        leg_labels.append(
+            f"{st['label']}{psp.format_hv_suffix(hv_summary.get(UNIVERSAL_KEY))}")
+        leg_slugs.append(uslug)
+        mid = u[len(u) // 2]
+        ann = ax.annotate(st['label'], xy=tuple(mid), xytext=(6, -12),
+                          textcoords='offset points', fontsize=7,
+                          color=ucolor, alpha=0.95, zorder=9, clip_on=True)
+        tag(ann, gids('lbl', uslug))
+
+    if normalized:
+        # Secondary axes in raw units (same construction as the EAF view).
+        ideal_x, ideal_y, nadir_x, nadir_y = bounds
+        range_x = max(nadir_x - ideal_x, 1e-12)
+        range_y = max(nadir_y - ideal_y, 1e-12)
+        secx = ax.secondary_xaxis(
+            'top', functions=(lambda u, a=ideal_x, r=range_x: a + u * r,
+                              lambda v, a=ideal_x, r=range_x: (v - a) / r))
+        secx.set_xlabel(psp.axis_label(x_col), fontsize=9, labelpad=4)
+        secx.tick_params(labelsize=8)
+        secy = ax.secondary_yaxis(
+            'right', functions=(lambda u, a=ideal_y, r=range_y: a + u * r,
+                                lambda v, a=ideal_y, r=range_y: (v - a) / r))
+        secy.tick_params(labelsize=8)
+    else:
+        ax.margins(0.04)
+    add_bottom_legend(fig, leg_handles, leg_labels, gids, leg_slugs)
+    return fig_to_svg(fig)
+
+
+# =============================================================================
 # METRIC BAR FIGURE (mirrors psp.plot_metrics_comparison, + Universal_Pareto)
 # =============================================================================
 
@@ -721,6 +863,7 @@ aside.controls label.row.sub { padding-left:20px; }
 button.small { font-size:12px; padding:4px 10px; border:1px solid var(--line);
     background:#f0f0ea; border-radius:4px; cursor:pointer; }
 button.small:hover { background:#e6e6df; }
+button.small:disabled { opacity:.45; cursor:not-allowed; }
 main.content { padding:20px 26px 80px; min-width:0; }
 section.block { margin:0 0 34px; }
 section.block > h2 { font-size:18px; border-bottom:2px solid var(--line);
@@ -768,6 +911,8 @@ const M = window.REPORT_MANIFEST;
 const state = {
   legend: M.options.show_legend, labels: M.options.show_labels, values: true,
   hv: true, hvUniv: true, pcMode: 'all',
+  view: Object.fromEntries(M.figs.map(f => [f.base, 'eaf'])),
+  norm: Object.fromEntries(M.figs.map(f => [f.base, false])),
   algoVisible: Object.fromEntries(M.algos.map(a => [a.slug, true])),
   swapped: Object.fromEntries(M.figs.map(f => [f.base, false])),
 };
@@ -800,7 +945,7 @@ function applyPcMode() {
 
 function applyHvSuffixes() {
   M.figs.filter(f => f.kind === 'pareto').forEach(f => {
-    ['n', 's'].forEach(v => {
+    FIG_VARIANTS.forEach(v => {
       M.algos.forEach(a => {
         const want = state.hv &&
           (a.key !== 'Universal_Pareto' || state.hvUniv);
@@ -830,8 +975,7 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 function savePng(base) {
-  const wrap = document.getElementById(
-    'wrap-' + base + (state.swapped[base] ? '-s' : '-n'));
+  const wrap = document.getElementById('wrap-' + base + '-' + variantSuffix(base));
   const svg = wrap && wrap.querySelector('svg');
   if (!svg) return;
   const vb = svg.viewBox.baseVal;
@@ -854,6 +998,8 @@ function savePng(base) {
     URL.revokeObjectURL(url);
     const ttl = document.getElementById('ttl-' + base);
     const name = sanitizeName(M.expName + '_' + (ttl ? ttl.value : base))
+      + (state.view[base] === 'points' ? '_points' : '')
+      + (state.view[base] === 'points' && state.norm[base] ? '_normalized' : '')
       + (state.swapped[base] ? '_swapped' : '') + '.png';
     canvas.toBlob(b => { if (b) downloadBlob(b, name); }, 'image/png');
   };
@@ -1080,8 +1226,9 @@ function refreshVisibility() {
     ).forEach(el => el.classList.toggle('alg-hidden', !vis));
   });
 }
+const FIG_VARIANTS = ['n', 's', 'pn', 'ps', 'qn', 'qs'];
 function setTitle(base, text) {
-  ['n', 's'].forEach(v => {
+  FIG_VARIANTS.forEach(v => {
     const g = document.querySelector(
       'g[id^="' + base + v + '--title--main--"]');
     if (!g) return;
@@ -1089,15 +1236,37 @@ function setTitle(base, text) {
     if (t) t.textContent = text;
   });
 }
+function variantSuffix(base) {
+  const o = state.swapped[base] ? 's' : 'n';
+  if (state.view[base] !== 'points') return o;
+  return (state.norm[base] ? 'q' : 'p') + o;
+}
+function refreshFigVariant(base) {
+  const cur = variantSuffix(base);
+  FIG_VARIANTS.forEach(v => {
+    const w = document.getElementById('wrap-' + base + '-' + v);
+    if (w) w.style.display = (v === cur) ? '' : 'none';
+  });
+  const f = M.figs.find(x => x.base === base);
+  const points = state.view[base] === 'points';
+  const st = document.getElementById('axst-' + base);
+  if (st) st.textContent = (state.swapped[base] ? f.axesSwapped : f.axesNormal)
+    + (points && state.norm[base] ? ' — normalized 0-1' : '');
+  const vb = document.getElementById('view-' + base);
+  if (vb) vb.innerHTML = points ? '&#9646; EAF view' : '&#9679; Points view';
+  const nb = document.getElementById('norm-' + base);
+  if (nb) {
+    nb.disabled = !points;
+    nb.innerHTML = state.norm[base] ? '&#8645; Raw units' : '&#8645; Normalize';
+  }
+}
 function setSwap(base, swapped) {
   state.swapped[base] = swapped;
-  const n = document.getElementById('wrap-' + base + '-n');
-  const s = document.getElementById('wrap-' + base + '-s');
-  if (n) n.style.display = swapped ? 'none' : '';
-  if (s) s.style.display = swapped ? '' : 'none';
-  const st = document.getElementById('axst-' + base);
-  if (st) st.textContent = swapped ? M.figs.find(f => f.base === base).axesSwapped
-                                   : M.figs.find(f => f.base === base).axesNormal;
+  refreshFigVariant(base);
+}
+function setView(base, view) {
+  state.view[base] = view;
+  refreshFigVariant(base);
 }
 function init() {
   document.getElementById('ck-legend').addEventListener('change', e => {
@@ -1155,6 +1324,8 @@ function init() {
     document.getElementById('pc-base').selectedIndex = 0;
     applyPcMode();
     M.figs.forEach(f => {
+      state.view[f.base] = 'eaf';
+      state.norm[f.base] = false;
       setSwap(f.base, false);
       const inp = document.getElementById('ttl-' + f.base);
       if (inp) { inp.value = f.title; setTitle(f.base, f.title); }
@@ -1169,6 +1340,14 @@ function init() {
       setSwap(f.base, !state.swapped[f.base]));
     const pngBtn = document.getElementById('png-' + f.base);
     if (pngBtn) pngBtn.addEventListener('click', () => savePng(f.base));
+    const viewBtn = document.getElementById('view-' + f.base);
+    if (viewBtn) viewBtn.addEventListener('click', () =>
+      setView(f.base, state.view[f.base] === 'points' ? 'eaf' : 'points'));
+    const normBtn = document.getElementById('norm-' + f.base);
+    if (normBtn) normBtn.addEventListener('click', () => {
+      state.norm[f.base] = !state.norm[f.base];
+      refreshFigVariant(f.base);
+    });
   });
   document.querySelectorAll('button.dl-xlsx').forEach(b =>
     b.addEventListener('click', e => {
@@ -1193,8 +1372,27 @@ document.addEventListener('DOMContentLoaded', init);
 """
 
 
-def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s, caption=''):
+def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s,
+             svg_pn=None, svg_ps=None, svg_qn=None, svg_qs=None, caption=''):
     cap = f'<p class="caption">{esc(caption)}</p>' if caption else ''
+    view_btn = ''
+    extra = ''
+    if svg_pn is not None:
+        view_btn = (f'<button class="small" id="view-{base}" title="Switch '
+                    f'between the EAF publication view and a plain scatter '
+                    f'of the Pareto sets">&#9679; Points view</button>'
+                    f'<button class="small" id="norm-{base}" disabled '
+                    f'title="Points view only: switch between raw units and '
+                    f'globally normalized ideal/nadir axes">'
+                    f'&#8645; Normalize</button>')
+        extra = (f'<div class="svgbox" id="wrap-{base}-pn" '
+                 f'style="display:none">{svg_pn}</div>'
+                 f'<div class="svgbox" id="wrap-{base}-ps" '
+                 f'style="display:none">{svg_ps}</div>'
+                 f'<div class="svgbox" id="wrap-{base}-qn" '
+                 f'style="display:none">{svg_qn}</div>'
+                 f'<div class="svgbox" id="wrap-{base}-qs" '
+                 f'style="display:none">{svg_qs}</div>')
     return f'''
 <div class="figcard" id="card-{base}">
   <div class="figbar">
@@ -1202,6 +1400,7 @@ def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s, caption=''):
            title="Custom plot title" />
     <button class="small" id="swap-{base}" title="Interchange the X and Y axes">
       &#8646; Swap X&#8596;Y</button>
+    {view_btn}
     <button class="small" id="png-{base}"
       title="Download the current view (orientation, colours, toggles, title) as a PNG">
       &#8595; PNG</button>
@@ -1209,6 +1408,7 @@ def fig_card(base, title, axes_normal, axes_swapped, svg_n, svg_s, caption=''):
   </div>
   <div class="svgbox" id="wrap-{base}-n">{svg_n}</div>
   <div class="svgbox" id="wrap-{base}-s" style="display:none">{svg_s}</div>
+  {extra}
   {cap}
 </div>'''
 
@@ -1376,7 +1576,7 @@ def process_directory(reports_dir, out_path=None):
         print('ERROR: no scenario_<N>_pareto_graph_data.csv files found.')
         return 1
 
-    all_pareto, all_metrics, all_metrics_str = {}, {}, {}
+    all_pareto, all_metrics, all_metrics_str, all_fronts = {}, {}, {}, {}
     x_col = y_col = None
     for s in scenarios:
         pf = os.path.join(reports_dir, f'scenario_{s}_pareto_graph_data.csv')
@@ -1390,6 +1590,10 @@ def process_directory(reports_dir, out_path=None):
             all_metrics[s] = pd.read_csv(mf)
             all_metrics_str[s] = pd.read_csv(mf, dtype=str)
             print(f'  Loaded: {os.path.basename(mf)}')
+        ff = os.path.join(reports_dir, f'scenario_{s}_algorithm_pareto_fronts.csv')
+        if os.path.exists(ff):
+            all_fronts[s] = pd.read_csv(ff)
+            print(f'  Loaded: {os.path.basename(ff)}')
 
     print(f'  Objectives detected: X={x_col}, Y={y_col}')
     bounds = psp.compute_global_bounds(all_pareto, x_col, y_col)
@@ -1438,7 +1642,12 @@ def process_directory(reports_dir, out_path=None):
                     f'seed) runs, computed from {hv_source} — the same figure '
                     'plot_scenario_pareto.py publishes. It intentionally '
                     'differs from the per-scenario HV means shown in the '
-                    'Quality Indicators section below.</p>']
+                    'Quality Indicators section below. The Points-view '
+                    'button on each plot switches to a plain raw-unit '
+                    'scatter of every algorithm&rsquo;s pooled Pareto set, '
+                    'with the Universal Pareto set overlaid as open black '
+                    'rings — the coloured marker inside a ring is the '
+                    'algorithm that contributed that point.</p>']
     for i, s in enumerate(scenarios):
         base = f'f{i}'
         name = psp.SCENARIO_NAMES.get(s, f'Scenario {s}')
@@ -1450,10 +1659,24 @@ def process_directory(reports_dir, out_path=None):
         svg_s = render_pareto_figure(
             base + 's', all_pareto[s], s, name, y_col, x_col,
             bounds_swapped, styles, hv_summary, config)
+        svg_pn = render_points_figure(
+            base + 'pn', all_pareto[s], all_fronts.get(s), s, name,
+            x_col, y_col, styles, hv_summary, config)
+        svg_ps = render_points_figure(
+            base + 'ps', all_pareto[s], all_fronts.get(s), s, name,
+            y_col, x_col, styles, hv_summary, config)
+        svg_qn = render_points_figure(
+            base + 'qn', all_pareto[s], all_fronts.get(s), s, name,
+            x_col, y_col, styles, hv_summary, config, bounds=bounds)
+        svg_qs = render_points_figure(
+            base + 'qs', all_pareto[s], all_fronts.get(s), s, name,
+            y_col, x_col, styles, hv_summary, config, bounds=bounds_swapped)
         ax_n = f'X: {psp.axis_label(x_col)} / Y: {psp.axis_label(y_col)}'
         ax_s = f'X: {psp.axis_label(y_col)} / Y: {psp.axis_label(x_col)}'
-        pareto_cards.append(fig_card(base, title, ax_n, ax_s, svg_n, svg_s))
+        pareto_cards.append(fig_card(base, title, ax_n, ax_s, svg_n, svg_s,
+                                     svg_pn, svg_ps, svg_qn, svg_qs))
         figs_manifest.append({'base': base, 'title': title, 'kind': 'pareto',
+                              'hasPoints': True,
                               'axesNormal': ax_n, 'axesSwapped': ax_s})
     pareto_cards.append('</section>')
 
