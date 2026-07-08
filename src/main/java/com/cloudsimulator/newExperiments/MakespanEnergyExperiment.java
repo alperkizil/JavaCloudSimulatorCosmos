@@ -21,7 +21,9 @@ public final class MakespanEnergyExperiment {
             "NSGA-II", "SPEA-II", "AMOSA"
         };
 
-        // 2. Hyperparameters — identical defaults.
+        // 2. Hyperparameters — identical defaults. Detailed console output is off;
+        //    the campaign shows a one-line progress bar per run instead. Set
+        //    params.verboseLogging = true to restore the legacy detailed output.
         AlgorithmParameters params = AlgorithmParameters.defaults();
 
         // 3. Infrastructure — identical defaults.

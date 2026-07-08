@@ -28,6 +28,8 @@ import com.cloudsimulator.observer.ExperimentSpec;
 import com.cloudsimulator.observer.ParetoAnalyzer;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,6 +50,9 @@ import java.util.Map;
  * datacenter-stat reset before each re-simulated Pareto solution.</p>
  */
 public final class CampaignRunner {
+
+    /** Swallows per-run console output in quiet (non-verbose) mode. */
+    private static final PrintStream SINK = new PrintStream(OutputStream.nullOutputStream());
 
     private final ExperimentSpec spec;
     private final PrimaryObjective primary;
@@ -91,8 +96,17 @@ public final class CampaignRunner {
         AlgorithmRegistry registry = new AlgorithmRegistry(params, primary);
         boolean twoPhase = spec.hasAuxPeak();
         int scenarioCount = infra.scenarioCount();
+        double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
+
+        // One progress-bar line per run (in place of the detailed per-run output,
+        // which quiet mode swallows — see runOne). Phase 2 is planned at one
+        // constrained re-run per derived cap tier; re-sized if that differs.
+        int phase1Runs = scenarioCount * labels.size() * infra.numRuns;
+        int plannedTotal = phase1Runs + (twoPhase ? phase1Runs * targets.length : 0);
+        CampaignProgress progress = new CampaignProgress(
+            System.out, experimentId, plannedTotal, !params.verboseLogging);
 
         // ---- Phase 1: uncapped pass (all scenarios); pool peaks for cap derivation ----
         List<List<AlgorithmRunResult>> perScenarioRuns = new ArrayList<>();
@@ -100,6 +114,7 @@ public final class CampaignRunner {
         for (int s = 0; s < scenarioCount; s++) {
             int scenarioNum = s + 1;
             String scenarioName = infra.scenarioNames[s];
+            progress.clearLine();
             ConsoleReporter.printScenarioHeader(scenarioNum, scenarioName, infra);
 
             List<AlgorithmRunResult> scenarioRuns = new ArrayList<>();
@@ -108,8 +123,10 @@ public final class CampaignRunner {
                 for (int run = 0; run < infra.numRuns; run++) {
                     long seed = infra.baseSeed + run;
                     ExperimentConfiguration config = infra.toExperimentConfiguration(scenarioNum, seed);
+                    progress.beginRun(scenarioNum, scenarioName, base, seed);
                     AlgorithmRunResult r = runOne(base, (ctx, sd) -> registry.create(base, ctx, sd),
                         config, scenarioNum, scenarioName, seed);
+                    progress.endRun();
                     if (r != null) scenarioRuns.add(r);
                 }
             }
@@ -119,13 +136,16 @@ public final class CampaignRunner {
 
         // ---- Phase 2 (PowerCeiling): derive caps, re-run constrained under each ----
         double[] caps = null;
-        double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
         if (twoPhase) {
             caps = PowerCapCalibrator.deriveCaps(allUncapped, targets);
+            progress.clearLine();
             logDerivedCaps(caps, targets);
             System.out.printf(java.util.Locale.US,
                 "Phase 2: constrained re-run of %d arms under %d derived caps.%n",
                 labels.size(), caps.length);
+            if (caps.length != targets.length) {
+                progress.setTotal(phase1Runs + phase1Runs * caps.length);
+            }
             for (int s = 0; s < scenarioCount; s++) {
                 int scenarioNum = s + 1;
                 String scenarioName = infra.scenarioNames[s];
@@ -139,9 +159,11 @@ public final class CampaignRunner {
                         for (int run = 0; run < infra.numRuns; run++) {
                             long seed = infra.baseSeed + run;
                             ExperimentConfiguration config = infra.toExperimentConfiguration(scenarioNum, seed);
+                            progress.beginRun(scenarioNum, scenarioName, pcLabel, seed);
                             AlgorithmRunResult r = runOne(pcLabel,
                                 (ctx, sd) -> registry.createPowerCeiling(base, ctx, sd, capWatts),
                                 config, scenarioNum, scenarioName, seed);
+                            progress.endRun();
                             if (r != null) scenarioRuns.add(r);
                         }
                     }
@@ -150,6 +172,7 @@ public final class CampaignRunner {
         }
 
         // ---- Analyze + report (per scenario: uncapped baselines + constrained arms) ----
+        progress.clearLine();
         List<ExperimentReporter.ScenarioReport> reports = new ArrayList<>();
         for (int s = 0; s < scenarioCount; s++) {
             List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
@@ -193,10 +216,33 @@ public final class CampaignRunner {
      * the strategy from the placed context (so it can compute warm-start seeds); the
      * {@code label} is only the display/CSV name. Returns {@code null} if the factory
      * yields no strategy (e.g. a label with no power-ceiling variant).
+     *
+     * <p>Unless {@code params.verboseLogging} is set, {@code System.out} is swallowed
+     * for the duration of the run — the engine, steps, and strategies print detailed
+     * per-run output that quiet campaigns replace with the progress bar. Output
+     * control only; the simulation itself is untouched. {@code System.err} (used by
+     * the strategies for real failures only) stays visible.</p>
      */
     AlgorithmRunResult runOne(String label, StrategyFactory factory,
                               ExperimentConfiguration baseConfig,
                               int scenarioNum, String scenarioName, long seed) {
+        boolean quiet = !params.verboseLogging;
+        PrintStream saved = System.out;
+        if (quiet) {
+            System.setOut(SINK);
+        }
+        try {
+            return doRunOne(label, factory, baseConfig, scenarioNum, scenarioName, seed);
+        } finally {
+            if (quiet) {
+                System.setOut(saved);
+            }
+        }
+    }
+
+    private AlgorithmRunResult doRunOne(String label, StrategyFactory factory,
+                                        ExperimentConfiguration baseConfig,
+                                        int scenarioNum, String scenarioName, long seed) {
         long startTime = System.currentTimeMillis();
 
         ExperimentConfiguration config = baseConfig.clone();

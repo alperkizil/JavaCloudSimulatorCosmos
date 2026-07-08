@@ -4,7 +4,8 @@ package com.cloudsimulator.newExperiments;
  * All metaheuristic hyperparameters, mutable so a Main file can tweak them.
  * {@link #defaults()} returns values <b>identical</b> to the constants in the
  * legacy {@code *ExperimentRunner} classes — change a field after calling it to
- * deviate.
+ * deviate. (Sole exception: {@link #verboseLogging} defaults to off here; it is
+ * output-only and does not affect results.)
  *
  * <p>These three studies share the same default parameter block.</p>
  */
@@ -14,7 +15,16 @@ public final class AlgorithmParameters {
     public int populationSize = 200;
     public int iterationCount = 40_000;
     public double tiebreakerWeight = 0.001;
-    public boolean verboseLogging = true;
+
+    /**
+     * Per-generation/temperature algorithm chatter plus the engine/step logs.
+     * Off by default: campaign runs show only the single-line progress bar
+     * ({@code CampaignProgress}), with each run's detailed {@code System.out}
+     * output swallowed by {@code CampaignRunner}. Set {@code true} in a Main to
+     * restore the legacy detailed output (the progress display then falls back
+     * to one plain line per run). Output-only — results are identical either way.
+     */
+    public boolean verboseLogging = false;
 
     /**
      * Epsilon-resolution of the GA/SA non-dominated archives, as a fraction of
