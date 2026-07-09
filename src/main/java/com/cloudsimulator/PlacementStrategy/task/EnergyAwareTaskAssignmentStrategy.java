@@ -2,6 +2,7 @@ package com.cloudsimulator.PlacementStrategy.task;
 
 import com.cloudsimulator.enums.WorkloadType;
 import com.cloudsimulator.model.EmpiricalWorkloadProfile;
+import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.MeasurementBasedPowerModel;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
@@ -44,6 +45,39 @@ import java.util.HashSet;
 public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy {
 
     private final MeasurementBasedPowerModel powerModel = new MeasurementBasedPowerModel();
+
+    // Nullable: when present, the speed-power scaling reference IPS is
+    // calibrated from the host fleet's median core speed — the same basis the
+    // real EnergyObjective uses (setHosts -> calculateReferenceIpsFromHosts).
+    // When absent, falls back to the legacy placed-VM-fleet median, which
+    // under the default fleet sits ~40% below the host median and distorts
+    // the greedy marginal-energy comparison this strategy is built on.
+    private final List<Host> hosts;
+
+    /**
+     * Legacy no-hosts constructor: calibrates from the VM fleet passed to
+     * assignAll/selectVM. Kept explicitly (adding any constructor suppresses
+     * the implicit default) for callers without host context, e.g. the
+     * FinalExperiment legacy runners.
+     */
+    public EnergyAwareTaskAssignmentStrategy() {
+        this(null);
+    }
+
+    /**
+     * Hosts-aware constructor: calibrates the speed-power scaling reference
+     * IPS from the host fleet's median, exactly like
+     * {@link PowerCeilingAdmissionTaskAssignmentStrategy} and the real
+     * {@code EnergyObjective} the metaheuristic arms optimize — so this
+     * heuristic's marginal-energy estimates are dimensionally consistent with
+     * the objective its seed is meant to warm-start.
+     *
+     * @param hosts host fleet to calibrate against; null/empty falls back to
+     *              the legacy VM-fleet median
+     */
+    public EnergyAwareTaskAssignmentStrategy(List<Host> hosts) {
+        this.hosts = hosts;
+    }
 
     // Populated by assignAll; used by selectVM for global context.
     private double idleHostPower;
@@ -97,7 +131,11 @@ public class EnergyAwareTaskAssignmentStrategy implements TaskAssignmentStrategy
     }
 
     private void initializeContext(List<VM> vms) {
-        powerModel.setReferenceVmIps(perCoreReferenceIps(vms));
+        if (hosts != null && !hosts.isEmpty()) {
+            powerModel.calculateReferenceIpsFromHosts(hosts);
+        } else {
+            powerModel.setReferenceVmIps(perCoreReferenceIps(vms));
+        }
         idleHostPower = powerModel.getScaledIdlePower();
 
         Set<Long> hostIds = new HashSet<>();
