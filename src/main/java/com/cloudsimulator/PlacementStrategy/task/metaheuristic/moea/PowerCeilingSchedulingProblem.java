@@ -3,6 +3,7 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ConstrainedNonDominatedArchive;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerCeilingEnergyObjective;
@@ -39,6 +40,7 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
     private final RepairOperator repairOperator;
     private final PowerCeilingEnergyObjective meter;
     private final double powerCapWatts;
+    private final ConstrainedNonDominatedArchive publicationArchive;
 
     public PowerCeilingSchedulingProblem(List<Task> tasks,
                                          List<VM> vms,
@@ -46,6 +48,25 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
                                          RepairOperator repairOperator,
                                          List<Host> hosts,
                                          double powerCapWatts) {
+        this(tasks, vms, objectives, repairOperator, hosts, powerCapWatts, null);
+    }
+
+    /**
+     * Variant that additionally publishes every genuinely-evaluated solution
+     * (with its constraint violation) to an external
+     * {@link ConstrainedNonDominatedArchive} — the same Deb-rule archive the
+     * GA/SA PowerCeiling-with-Dominance arms publish, so the constrained MOEA
+     * arms expose their full evaluation stream instead of only the final
+     * search-state snapshot. Passive; pass {@code null} (or use the 6-arg
+     * constructor) for the previous behavior.
+     */
+    public PowerCeilingSchedulingProblem(List<Task> tasks,
+                                         List<VM> vms,
+                                         List<SchedulingObjective> objectives,
+                                         RepairOperator repairOperator,
+                                         List<Host> hosts,
+                                         double powerCapWatts,
+                                         ConstrainedNonDominatedArchive publicationArchive) {
         // numTasks assignment variables + 1 dispatch-order permutation
         // (see TaskSchedulingProblem for the encoding)
         super(tasks.size() + 1, objectives.size(), 1);
@@ -56,6 +77,7 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
         this.powerCapWatts = powerCapWatts;
         this.meter = new PowerCeilingEnergyObjective(powerCapWatts);
         if (hosts != null) this.meter.setHosts(hosts);
+        this.publicationArchive = publicationArchive;
     }
 
     @Override
@@ -74,10 +96,16 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
         SchedulingSolution schedulingSolution = decode(solution);
         repairOperator.repair(schedulingSolution);
 
+        // Evaluate each objective. The values are written onto the decoded
+        // SchedulingSolution as well as the MOEA Solution: the publication
+        // archive compares candidates by getObjectiveValues(), which otherwise
+        // stays at its all-zero constructor default.
+        double[] rawValues = new double[objectives.size()];
         for (int i = 0; i < objectives.size(); i++) {
-            double value = objectives.get(i).evaluate(schedulingSolution, tasks, vms);
-            solution.setObjective(i, value);
+            rawValues[i] = objectives.get(i).evaluate(schedulingSolution, tasks, vms);
+            solution.setObjective(i, rawValues[i]);
         }
+        schedulingSolution.setObjectiveValues(rawValues);
 
         // Power-ceiling constraint: violation magnitude in Watts, 0 if feasible.
         // Objectives above may already include EnergyObjective, so use the
@@ -89,6 +117,12 @@ public class PowerCeilingSchedulingProblem extends AbstractProblem {
         // Store the repaired assignment and ordering back so the genotype
         // stays in sync with the evaluated phenotype.
         TaskSchedulingProblem.encodeInto(solution, schedulingSolution);
+
+        // Offer this genuinely-evaluated candidate (with its violation) to the
+        // publication archive, matching the GA/SA PowerCeiling arms' contract.
+        if (publicationArchive != null) {
+            publicationArchive.offer(schedulingSolution, violation);
+        }
     }
 
     public SchedulingSolution decode(Solution solution) {

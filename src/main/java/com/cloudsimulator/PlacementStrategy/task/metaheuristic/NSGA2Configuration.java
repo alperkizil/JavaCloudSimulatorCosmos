@@ -53,6 +53,9 @@ public class NSGA2Configuration {
     private final boolean verboseLogging;
     private final int logInterval;
 
+    // Publication archive epsilon-resolution (0 = pure dominance archiving)
+    private final double archiveEpsilonFraction;
+
     /**
      * Private constructor - use Builder.
      */
@@ -67,6 +70,7 @@ public class NSGA2Configuration {
         this.seedAssignments = new ArrayList<>(builder.seedAssignments);
         this.verboseLogging = builder.verboseLogging;
         this.logInterval = builder.logInterval;
+        this.archiveEpsilonFraction = builder.archiveEpsilonFraction;
     }
 
     /**
@@ -145,6 +149,17 @@ public class NSGA2Configuration {
     }
 
     /**
+     * Epsilon-resolution of the publication archive, as a fraction of the
+     * archive's current per-objective range (0 = pure dominance archiving).
+     * Mirrors {@code GAConfiguration#getArchiveEpsilonFraction()} /
+     * {@code SAConfiguration#getArchiveEpsilonFraction()} so all seven
+     * campaign arms prune near-duplicates identically.
+     */
+    public double getArchiveEpsilonFraction() {
+        return archiveEpsilonFraction;
+    }
+
+    /**
      * Gets an array indicating which objectives are minimization.
      *
      * @return Boolean array where true = minimize, false = maximize
@@ -197,6 +212,7 @@ public class NSGA2Configuration {
         private List<int[]> seedAssignments = new ArrayList<>();
         private boolean verboseLogging = false;
         private int logInterval = 10;
+        private double archiveEpsilonFraction = 0.0;
 
         /**
          * Sets the population size.
@@ -329,6 +345,21 @@ public class NSGA2Configuration {
          */
         public Builder logInterval(int logInterval) {
             this.logInterval = logInterval;
+            return this;
+        }
+
+        /**
+         * Sets the epsilon-resolution of the publication archive used by the
+         * archive-backed MOEA wrappers (NSGA-II/SPEA-II/AMOSA and their
+         * PowerCeiling variants). 0 (default) keeps pure dominance archiving.
+         * Has no effect on wrappers that do not wire a publication archive
+         * into their problem adapter.
+         *
+         * @param fraction epsilon as a fraction of the objective ranges
+         * @return this builder
+         */
+        public Builder archiveEpsilonFraction(double fraction) {
+            this.archiveEpsilonFraction = fraction;
             return this;
         }
 

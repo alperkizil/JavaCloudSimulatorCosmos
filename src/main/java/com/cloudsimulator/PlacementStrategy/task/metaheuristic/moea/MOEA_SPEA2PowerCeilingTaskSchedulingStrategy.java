@@ -5,6 +5,7 @@ import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ConstrainedNonDominatedArchive;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
@@ -71,8 +72,17 @@ public class MOEA_SPEA2PowerCeilingTaskSchedulingStrategy implements MultiObject
             return new ParetoFront(config.getObjectiveNames(), config.getMinimizationArray());
         }
 
+        // Publication archive (Deb's constrained-domination, same class the
+        // GA/SA PowerCeiling arms publish): receives every genuinely-evaluated
+        // solution with its violation via PowerCeilingSchedulingProblem.evaluate(),
+        // so the published front follows the same "all evaluated candidates"
+        // rule instead of the final environmental-selection snapshot.
+        ConstrainedNonDominatedArchive publicationArchive = new ConstrainedNonDominatedArchive(
+            config.getMinimizationArray(), config.getArchiveEpsilonFraction());
+
         PowerCeilingSchedulingProblem problem = new PowerCeilingSchedulingProblem(
-            tasks, vms, config.getObjectives(), repairOperator, hosts, powerCapWatts
+            tasks, vms, config.getObjectives(), repairOperator, hosts, powerCapWatts,
+            publicationArchive
         );
 
         int maxEvaluations = calculateMaxEvaluations();
@@ -130,18 +140,26 @@ public class MOEA_SPEA2PowerCeilingTaskSchedulingStrategy implements MultiObject
             algorithm.step();
         }
 
+        // lastMoeaResult keeps the library's final-population snapshot for
+        // getLastMoeaResult(); the published front comes from the run-spanning
+        // constrained publication archive below.
         NondominatedPopulation result = algorithm.getResult();
         lastMoeaResult = result;
         lastEvaluationCount = algorithm.getNumberOfEvaluations();
 
-        lastParetoFront = convertToParetoFront(result, problem);
+        lastParetoFront = new ParetoFront(
+            publicationArchive.getMembers(),
+            config.getObjectiveNames(),
+            config.getMinimizationArray()
+        );
 
         if (config.isVerboseLogging()) {
             long feasibleCount = 0;
             for (Solution s : result) if (!s.violatesConstraints()) feasibleCount++;
             System.out.println("[MOEA-SPEA2-PC] Done. Final population: "
                 + result.size() + " (" + feasibleCount + " feasible at cap "
-                + powerCapWatts + " W)");
+                + powerCapWatts + " W); published archive: "
+                + lastParetoFront.size() + " solutions");
         }
 
         return lastParetoFront;
@@ -173,25 +191,6 @@ public class MOEA_SPEA2PowerCeilingTaskSchedulingStrategy implements MultiObject
             }
         }
         return 100 * config.getPopulationSize();
-    }
-
-    private ParetoFront convertToParetoFront(NondominatedPopulation population,
-                                              PowerCeilingSchedulingProblem problem) {
-        ParetoFront front = new ParetoFront(
-            config.getObjectiveNames(),
-            config.getMinimizationArray()
-        );
-        for (Solution solution : population) {
-            SchedulingSolution schedulingSolution = problem.decode(solution);
-            double[] objectives = new double[config.getNumObjectives()];
-            for (int i = 0; i < objectives.length; i++) {
-                objectives[i] = solution.getObjective(i);
-            }
-            schedulingSolution.setObjectiveValues(objectives);
-            schedulingSolution.setRank(0);
-            front.addSolution(schedulingSolution);
-        }
-        return front;
     }
 
     // ---- MultiObjectiveTaskSchedulingStrategy ----

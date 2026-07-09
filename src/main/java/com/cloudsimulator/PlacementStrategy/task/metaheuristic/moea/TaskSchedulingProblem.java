@@ -2,6 +2,7 @@ package com.cloudsimulator.PlacementStrategy.task.metaheuristic.moea;
 
 import com.cloudsimulator.model.Task;
 import com.cloudsimulator.model.VM;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NonDominatedArchive;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
@@ -41,6 +42,7 @@ public class TaskSchedulingProblem extends AbstractProblem {
     private final List<VM> vms;
     private final List<SchedulingObjective> objectives;
     private final RepairOperator repairOperator;
+    private final NonDominatedArchive publicationArchive;
 
     /**
      * Creates a task scheduling problem for MOEA Framework.
@@ -53,12 +55,37 @@ public class TaskSchedulingProblem extends AbstractProblem {
     public TaskSchedulingProblem(List<Task> tasks, List<VM> vms,
                                   List<SchedulingObjective> objectives,
                                   RepairOperator repairOperator) {
+        this(tasks, vms, objectives, repairOperator, null);
+    }
+
+    /**
+     * Creates a task scheduling problem that additionally publishes every
+     * genuinely-evaluated solution to an external archive.
+     *
+     * @param tasks              List of tasks to schedule
+     * @param vms                List of available VMs
+     * @param objectives         Scheduling objectives to optimize
+     * @param repairOperator     Repair operator for fixing invalid assignments
+     * @param publicationArchive optional {@link NonDominatedArchive} that is
+     *        offered every evaluated solution's repaired genome and raw
+     *        objective vector, mirroring the GA/SA-Dominance arms' publication
+     *        contract (every evaluated candidate gets a shot at the published
+     *        front, not just the algorithm's final search state). Passive:
+     *        {@code offer()} stores a private copy and never influences the
+     *        search. Pass {@code null} (or use the 4-arg constructor) to keep
+     *        {@code evaluate()} free of publication side effects.
+     */
+    public TaskSchedulingProblem(List<Task> tasks, List<VM> vms,
+                                  List<SchedulingObjective> objectives,
+                                  RepairOperator repairOperator,
+                                  NonDominatedArchive publicationArchive) {
         // numTasks assignment variables + 1 dispatch-order permutation
         super(tasks.size() + 1, objectives.size(), 0);
         this.tasks = tasks;
         this.vms = vms;
         this.objectives = objectives;
         this.repairOperator = repairOperator;
+        this.publicationArchive = publicationArchive;
     }
 
     @Override
@@ -80,15 +107,27 @@ public class TaskSchedulingProblem extends AbstractProblem {
         // something was actually repaired)
         repairOperator.repair(schedulingSolution);
 
-        // Evaluate each objective
+        // Evaluate each objective. The values are written onto the decoded
+        // SchedulingSolution as well as the MOEA Solution: NonDominatedArchive
+        // compares candidates by SchedulingSolution.getObjectiveValues(), which
+        // otherwise stays at its all-zero constructor default.
+        double[] rawValues = new double[objectives.size()];
         for (int i = 0; i < objectives.size(); i++) {
-            double value = objectives.get(i).evaluate(schedulingSolution, tasks, vms);
-            solution.setObjective(i, value);
+            rawValues[i] = objectives.get(i).evaluate(schedulingSolution, tasks, vms);
+            solution.setObjective(i, rawValues[i]);
         }
+        schedulingSolution.setObjectiveValues(rawValues);
 
         // Store the repaired assignment and ordering back in the solution so
         // the genotype stays in sync with the evaluated phenotype
         encodeInto(solution, schedulingSolution);
+
+        // Offer this genuinely-evaluated candidate to the publication archive,
+        // matching the GA/SA arms' "every evaluated solution is offered"
+        // contract. offer() copies; it cannot affect the search.
+        if (publicationArchive != null) {
+            publicationArchive.offer(schedulingSolution);
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NonDominatedArchive;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
@@ -208,9 +209,16 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
             return new ParetoFront(config.getObjectiveNames(), config.getMinimizationArray());
         }
 
+        // Publication archive: receives every genuinely-evaluated solution via
+        // TaskSchedulingProblem.evaluate(), so the published front follows the
+        // same "all evaluated candidates" rule as the GA/SA-Dominance arms
+        // instead of the final environmental-selection population snapshot.
+        NonDominatedArchive publicationArchive = new NonDominatedArchive(
+            config.getMinimizationArray(), config.getArchiveEpsilonFraction());
+
         // Create MOEA Framework problem adapter
         TaskSchedulingProblem problem = new TaskSchedulingProblem(
-            tasks, vms, config.getObjectives(), repairOperator
+            tasks, vms, config.getObjectives(), repairOperator, publicationArchive
         );
 
         // Calculate max evaluations
@@ -224,7 +232,7 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
                 ", Mutation: " + config.getMutationRate());
         }
 
-        return runDirect(tasks, vms, problem, maxEvaluations);
+        return runDirect(tasks, vms, problem, publicationArchive, maxEvaluations);
     }
 
     /**
@@ -239,7 +247,9 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
      * dispatch permutation) are actually evolved.
      */
     private ParetoFront runDirect(List<Task> tasks, List<VM> vms,
-                                   TaskSchedulingProblem problem, int maxEvaluations) {
+                                   TaskSchedulingProblem problem,
+                                   NonDominatedArchive publicationArchive,
+                                   int maxEvaluations) {
         List<int[]> seeds = config.getSeedAssignments();
         int numTasks = tasks.size();
 
@@ -291,6 +301,9 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
             algorithm.step();
         }
 
+        // lastMoeaResult keeps the library's final-population snapshot for
+        // getLastMoeaResult()/plotting; the published front comes from the
+        // run-spanning publication archive below.
         NondominatedPopulation result = algorithm.getResult();
         lastMoeaResult = result;
         lastEvaluationCount = algorithm.getNumberOfEvaluations();
@@ -300,7 +313,11 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
                 + lastEvaluationCount + " evaluations");
         }
 
-        lastParetoFront = convertToParetoFront(result, problem);
+        lastParetoFront = new ParetoFront(
+            publicationArchive.getMembers(),
+            config.getObjectiveNames(),
+            config.getMinimizationArray()
+        );
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-SPEA2] Pareto front contains "
@@ -475,31 +492,6 @@ public class MOEA_SPEA2TaskSchedulingStrategy implements MultiObjectiveTaskSched
         }
 
         return 100 * config.getPopulationSize();
-    }
-
-    /**
-     * Converts MOEA Framework's NondominatedPopulation to our ParetoFront.
-     */
-    private ParetoFront convertToParetoFront(NondominatedPopulation population, TaskSchedulingProblem problem) {
-        ParetoFront front = new ParetoFront(
-            config.getObjectiveNames(),
-            config.getMinimizationArray()
-        );
-
-        for (Solution solution : population) {
-            SchedulingSolution schedulingSolution = problem.decode(solution);
-
-            double[] objectives = new double[config.getNumObjectives()];
-            for (int i = 0; i < objectives.length; i++) {
-                objectives[i] = solution.getObjective(i);
-            }
-            schedulingSolution.setObjectiveValues(objectives);
-            schedulingSolution.setRank(0);
-
-            front.addSolution(schedulingSolution);
-        }
-
-        return front;
     }
 
     /**

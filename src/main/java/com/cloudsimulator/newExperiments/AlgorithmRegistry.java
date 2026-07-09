@@ -395,6 +395,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
@@ -413,6 +414,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
@@ -431,6 +433,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
@@ -463,6 +466,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
@@ -481,6 +485,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new GenerationCountTermination(p.iterationCount / p.populationSize))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
@@ -499,6 +504,7 @@ public final class AlgorithmRegistry {
             .addObjective(energy)
             .terminationCondition(new FitnessEvaluationsTermination(p.iterationCount))
             .randomSeed(seed)
+            .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
         if (waSeed != null) builder.addSeedAssignment(waSeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
