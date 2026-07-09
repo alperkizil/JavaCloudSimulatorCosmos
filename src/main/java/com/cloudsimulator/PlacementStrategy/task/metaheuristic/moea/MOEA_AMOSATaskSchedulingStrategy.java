@@ -5,6 +5,7 @@ import com.cloudsimulator.model.VM;
 import com.cloudsimulator.utils.RandomGenerator;
 import com.cloudsimulator.PlacementStrategy.task.MultiObjectiveTaskSchedulingStrategy;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NSGA2Configuration;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.NonDominatedArchive;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.ParetoFront;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.SchedulingSolution;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
@@ -337,9 +338,18 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             return new ParetoFront(config.getObjectiveNames(), config.getMinimizationArray());
         }
 
+        // Publication archive: receives every genuinely-evaluated solution via
+        // TaskSchedulingProblem.evaluate() — including the archive-initialization
+        // phase's evaluations — so the published front follows the same "all
+        // evaluated candidates" rule as the GA/SA-Dominance arms instead of
+        // AMOSA's clustered-truncated (softLimit/hardLimit) internal archive.
+        // The internal archive still drives the annealing search unchanged.
+        NonDominatedArchive publicationArchive = new NonDominatedArchive(
+            config.getMinimizationArray(), config.getArchiveEpsilonFraction());
+
         // Create MOEA Framework problem adapter
         TaskSchedulingProblem problem = new TaskSchedulingProblem(
-            tasks, vms, config.getObjectives(), repairOperator
+            tasks, vms, config.getObjectives(), repairOperator, publicationArchive
         );
 
         // Calculate max evaluations. AMOSA.initialize() unconditionally spends
@@ -404,6 +414,9 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
         if (!amosa.isTerminated()) {
             amosa.terminate();
         }
+        // lastMoeaResult keeps AMOSA's clustered internal-archive snapshot for
+        // getLastMoeaResult()/plotting; the published front comes from the
+        // run-spanning publication archive below.
         NondominatedPopulation result = amosa.getResult();
         lastMoeaResult = result;
         lastEvaluationCount = amosa.getNumberOfEvaluations();
@@ -412,8 +425,11 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             System.out.println("[MOEA-AMOSA] Optimization completed (evaluations: " + lastEvaluationCount + ")");
         }
 
-        // Convert to our ParetoFront format
-        lastParetoFront = convertToParetoFront(result, problem);
+        lastParetoFront = new ParetoFront(
+            publicationArchive.getMembers(),
+            config.getObjectiveNames(),
+            config.getMinimizationArray()
+        );
 
         if (config.isVerboseLogging()) {
             System.out.println("[MOEA-AMOSA] Pareto front contains " + lastParetoFront.size() + " solutions");
@@ -668,31 +684,6 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
 
         // Default: enough evaluations for a reasonable annealing schedule
         return 100 * iterationsPerTemperature;
-    }
-
-    /**
-     * Converts MOEA Framework's NondominatedPopulation to our ParetoFront.
-     */
-    private ParetoFront convertToParetoFront(NondominatedPopulation population, TaskSchedulingProblem problem) {
-        ParetoFront front = new ParetoFront(
-            config.getObjectiveNames(),
-            config.getMinimizationArray()
-        );
-
-        for (Solution solution : population) {
-            SchedulingSolution schedulingSolution = problem.decode(solution);
-
-            double[] objectives = new double[config.getNumObjectives()];
-            for (int i = 0; i < objectives.length; i++) {
-                objectives[i] = solution.getObjective(i);
-            }
-            schedulingSolution.setObjectiveValues(objectives);
-            schedulingSolution.setRank(0);
-
-            front.addSolution(schedulingSolution);
-        }
-
-        return front;
     }
 
     /**
