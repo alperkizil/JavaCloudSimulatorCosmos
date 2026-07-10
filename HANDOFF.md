@@ -1,7 +1,7 @@
 # Session Handoff — JavaCloudSimulatorCosmos Review, Fixes & Collaborative-Pareto Intervention
 
 For the next Claude instance (or collaborator). State as of 2026-07-10, repo `main` at
-merge of PR #220. Read `README.md` (in chunks) and `CLAUDE.md` first, as always.
+merge of PR #222. Read `README.md` (in chunks) and `CLAUDE.md` first, as always.
 
 ---
 
@@ -111,23 +111,59 @@ workload** (+0.85%/−0.43%/−0.43% per scenario, −0.004% overall). Distinct 
 classes 3 → {14,9,8,8,7}; 1-tick fraction 0.80 → 0.35. `generateTasks` (pure, RNG-free,
 lcm decoupling) untouched; never put RNG in it — it runs before `engine.setRandomSeed`.
 
-### 2.3 Validation results so far
+### 2.3 Population-arm search-quality fix (PR #222 — merged 2026-07-10)
 
-- **Makespan–Energy, full 10-seed run on all four changes**
-  (`MakespanVsEnergy_10_07_2026_13_53_14`): the front is collaborative. Per-seed
-  mean shares (the new headline metric): SA-E 45/37/27%, GA-E 27/37/29%, AMOSA
-  **15/11/27% (was ~0)**, SPEA-II 8/13/5%, SA-MS 7/10/11%, NSGA-II 5/8/2%, GA-MS 2/3/2%.
-  SA combined 53/46/38% vs 86/82/69% baseline; every arm nonzero in every scenario.
-  Universal fronts 44/65/44 points (was 21/34/16); makespan axis genuinely graded.
-  HV_fixed quality ranking: SA-E .68–.77 > GA-E .61–.68 > SA-MS/NSGA/SPEA ~.53–.61 >
-  AMOSA .33–.35 > GA-MS .14–.17 (AMOSA = low front quality but high collaboration —
-  it covers regions others don't; GA-MS = narrow makespan-corner specialist).
-  Note: the strict pooled contribution still concentrates (SA 77% of S1) — the
-  pooled-vs-per-seed divergence is diagnostic, not contradictory; report both.
-- **WaitingTime–Energy with Change 1 only** (2026-07-09 run): contributions unchanged
-  within ±2 vs the 2026-07-08 baseline — publication equalization is a fairness
-  precondition, not a number-mover, on that study; its rebalancing is expected from
-  Changes 2 (+3). No WT–E run on the full intervention exists yet.
+After the intervention, a first M–E run (`MakespanVsEnergy_10_07_2026_13_53_14`) showed
+the SA arms still out-refining every population arm. Root cause was search quality, not
+scoring; two fixes, both affecting only GA-dominance / NSGA-II / SPEA-II (SA and AMOSA
+verified **byte-identical** — bit-equal fronts across A/B variants):
+
+- `AlgorithmParameters.mutationRate` 0.05 → **0.004** (= 2/N at the studies' 500-task
+  workloads). The per-gene scan previously mutated ~25 genes per offspring — a random
+  walk that prevented convergence while SA refined with 1–4 surgical moves. 0.004 chosen
+  from a 0.002/0.004/0.008 sensitivity sweep.
+- `CrossoverOperator` UNIFORM/TWO_POINT now derive each offspring's per-VM execution
+  order from its donor parent's dispatch precedence instead of `rebuildTaskOrdering()`,
+  which had reset order genes to canonical ascending-index on ~95% of pairings, leaving
+  the order dimension evolutionarily dead (the crossover-side dual of PR #208's
+  surgical-REASSIGN fix).
+
+Budget unchanged (40k evals/arm). Tests green: `ParetoAnalyzerParityTest`,
+`CampaignReproducibilityTest`, `ExperimentObserverTest`, `GenerationalGAVerificationTest`.
+
+### 2.4 Validation results — post-#222 campaign runs (current numbers)
+
+Two full 10-seed campaigns were run by the owner on `main` after PR #222 and their
+interactive reports reviewed on 2026-07-10: `MakespanVsEnergy_10_07_2026_14_52_59` and
+`WaitingTimeVsEnergy_10_07_2026_14_52_58`. **These supersede every earlier number**,
+including the pre-#222 `MakespanVsEnergy_10_07_2026_13_53_14` run cited in previous
+handoffs. The raw CSVs are NOT in the repo yet (`newExperimentResults/` still holds the
+2026-07-03 reference runs) — ask the owner for the result folders before deeper analysis.
+
+- **Makespan–Energy** (per-seed mean shares, S1/S2/S3): GA-E 31/29/46%,
+  SA-E 27/23/13%, SPEA-II 18/12/19%, NSGA-II 15/26/13%, GA-MS 5/7/3%, SA-MS 4/5/6%,
+  **AMOSA 0/0/0**. SA combined fell to 31/28/19% (was 53/46/38% pre-#222, 86/82/69% at
+  the July-08 baseline) — the population arms now genuinely compete. Pooled universal
+  fronts 71/98/59 points (pre-#222: 44/65/44); per-seed universal fronts ~43/47/38 with
+  HV_fixed ≈ .70/.73/.68. Mean HV_fixed ranking: GA-E/SA-E/NSGA-II cluster at ~.51–.63,
+  then SPEA-II .46–.50, SA-MS .43–.51, GA-MS and AMOSA lowest (~.25–.31).
+- **WaitingTime–Energy** (first run on the full intervention; per-seed mean shares):
+  GA-E 38/15/42%, NSGA-II 27/39/25%, SPEA-II 16/25/18%, SA-WT 8/8/10%, GA-WT 7/11/4%,
+  SA-E 5/4/2%, **AMOSA 0/0/0**. The old failure mode is gone: SA-Energy fell from
+  61/43/22% (baseline) to single digits. Fronts are dense: pooled universal 215/147/181
+  points, per-seed universal ~129/88/139. Mean HV_fixed: GA-E clearly best (.64–.73),
+  then NSGA-II .60–.62 ≈ SA-E .59–.62, SPEA-II .52–.58, AMOSA .30–.42, GA-WT/SA-WT
+  lowest (dedicated wait-time arms occupy a narrow corner).
+- **AMOSA regression (new open issue).** AMOSA's contribution is exactly 0 in all six
+  scenario×study combinations, under BOTH the strict pooled cut and the near-tie
+  per-seed credit (every seed 0.000000). Pre-#222 it held 15/11/27% per-seed in M–E; its
+  own search is unchanged (#222 verified bit-equal fronts), so the improved population
+  arms now dominate the regions it used to cover. Its HV_fixed shift (.33–.35 → .25–.31)
+  is frame movement, not behavior: `recompute_hv.py` normalizes by the run's own pooled
+  ideal/nadir, so **HV_fixed is comparable across arms/seeds within a run, not across
+  campaigns**. See §3.3 for the decision this forces.
+- The pooled-vs-per-seed divergence persists and remains diagnostic (e.g. NSGA-II strict
+  pooled contribution is 0 in M–E S1 and S3 while its per-seed means are 15%/13%).
 - Tests green throughout: `ExperimentObserverTest`, `ParetoAnalyzerParityTest`,
   `CampaignReproducibilityTest` (same-seed fronts bit-identical, incl. on LOG16).
 
@@ -137,15 +173,19 @@ lcm decoupling) untouched; never put RNG in it — it runs before `engine.setRan
 
 ### 3.1 Campaign re-runs (REQUIRED before citing any results)
 
-Makespan–Energy is done (2026-07-10, above). Still needed on current `main`:
+Makespan–Energy and WaitingTime–Energy are done on post-#222 `main` (2026-07-10 14:52
+runs, §2.4). Still needed on current `main`:
 
 ```bash
 find src/main/java oldExperiments -name "*.java" -not -path "*/gui/*" \
   | xargs javac -cp "lib/*" -d target/classes
 
-java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.WaitingTimeEnergyExperiment
 java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.PowerCeilingExperiment
 ```
+
+Also outstanding: commit (or otherwise obtain) the two 14:52 result folders — only their
+interactive reports have been seen so far; the CSVs are needed for the CONTRIB_REL_EPS
+re-validation below and for the paper's tables.
 
 Each is a single-threaded JVM (one core); the three studies can safely run as separate
 concurrent JVMs (fully independent processes/results dirs). Do NOT try to parallelize
@@ -176,12 +216,22 @@ the new CSVs — it was calibrated on the pre-LOG16 campaigns.
 - Seeding: study-matched primary heuristic (LPT/WA) + EnergyAware; include the
   seed-quality probe table (PR #219 body) as the justification; note the EnergyAware
   calibration fix is dimensional-consistency only (behaviorally inert, measured).
+- Operator settings (PR #222): mutation rate 2/N (0.004 at N=500) and order-preserving
+  crossover belong in the method section; cite the 0.002/0.004/0.008 sensitivity sweep.
+  Also state that HV_fixed's normalization frame is per-run (pooled ideal/nadir), so
+  HV_fixed values must not be compared across differently-configured campaigns.
 - Workload: LOG16 rationale + mass-matching (so cross-workload comparisons aren't
   confounded); pooled per-arm fronts are 10-seed unions (already owed disclosure).
 - Speed–power law: incremental power ∝ (clamped VM speed / host-median)^1.5.
 
 ### 3.3 Known-open items (deliberately not done — decide or disclose)
 
+- **AMOSA contributes zero everywhere post-#222** (§2.4) — the "7-arm collaborative
+  front" is currently a 6-arm front. Decide with the owner: (a) present AMOSA as an
+  honest negative result (it was only ever competitive against the pre-#222 weakened
+  population arms), or (b) attempt AMOSA-side tuning (e.g. its neighborhood/cooling —
+  its 40k+10 200-eval budget is already the largest). Do NOT retune the other arms to
+  re-admit AMOSA; that would undo PR #222's premise.
 - `experiment_summary.csv` has no `HV_fixed` column (only `performance_metrics.csv`).
 - `metric_hv.png` is legacy-HV-only (see §3.2).
 - The `"LPT"` standalone baseline label exists in `AlgorithmRegistry` but is not part of
@@ -196,9 +246,10 @@ the new CSVs — it was calibrated on the pre-LOG16 campaigns.
 
 ### 3.4 Practical notes for the next instance
 
-- Branch workflow: feature branch `claude/collaborative-pareto-evidence-n2wy0h`; its PRs
-  #218, #219, #220 are all MERGED — restart the branch from latest `main` before any new
-  work (`git fetch origin main && git checkout -B <branch> origin/main`).
+- Branch workflow: PRs #218–#220 (branch `claude/collaborative-pareto-evidence-n2wy0h`),
+  #221 (handoff update) and #222 (branch `claude/nsgaii-speaii-search-quality-en581n`)
+  are all MERGED — always restart a work branch from latest `main`
+  (`git fetch origin main && git checkout -B <branch> origin/main`).
 - Owner preferences: sub-agents on Sonnet; discuss/propose before changing code; verify
   claims against code, not docs.
 - Campaign outputs land in `results/<experimentId>/`; the owner's committed reference
