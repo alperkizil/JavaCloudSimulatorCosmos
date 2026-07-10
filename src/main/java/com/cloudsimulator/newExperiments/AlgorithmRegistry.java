@@ -7,6 +7,7 @@ import com.cloudsimulator.model.VM;
 
 import com.cloudsimulator.PlacementStrategy.task.TaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStrategy;
+import com.cloudsimulator.PlacementStrategy.task.LPTTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.ShortestQueueTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.WorkloadAwareTaskAssignmentStrategy;
 import com.cloudsimulator.PlacementStrategy.task.EnergyAwareTaskAssignmentStrategy;
@@ -46,8 +47,11 @@ import java.util.Map;
  * WaitingTime studies (the labels {@code GA_<primary>} substitute accordingly).
  *
  * <p>The metaheuristic warm-start seeds are computed from the <em>placed</em>
- * context via the same greedy heuristics ({@code WorkloadAware}/{@code EnergyAware});
- * those heuristics are RNG-free, so seeding does not perturb reproducibility.</p>
+ * context via two greedy heuristics: a study-matched primary-objective
+ * heuristic ({@code LPT} for the Makespan study, {@code WorkloadAware} for the
+ * WaitingTime study — see {@link #newPrimarySeedHeuristic()}) and the
+ * host-calibrated {@code EnergyAware}. All are RNG-free, so seeding does not
+ * perturb reproducibility.</p>
  */
 public final class AlgorithmRegistry {
 
@@ -123,17 +127,20 @@ public final class AlgorithmRegistry {
             return new WorkloadAwareTaskAssignmentStrategy();
         }
         if (label.equals("EnergyAware")) {
-            return new EnergyAwareTaskAssignmentStrategy();
+            return new EnergyAwareTaskAssignmentStrategy(hosts);
+        }
+        if (label.equals("LPT")) {
+            return new LPTTaskAssignmentStrategy();
         }
         if (label.equals("RoundRobin")) {
             return new RoundRobinTaskAssignmentStrategy();
         }
         if (label.equals("GA_" + P)) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            return createGAStrategy(primary.newObjective(), createEnergyObjective(hosts), waSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            return createGAStrategy(primary.newObjective(), createEnergyObjective(hosts), primarySeed);
         }
         if (label.equals("GA_Energy")) {
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
             return createGAStrategy(createEnergyObjective(hosts), primary.newObjective(), eaSeed);
         }
         if (label.equals("SA_" + P)) {
@@ -143,35 +150,35 @@ public final class AlgorithmRegistry {
             return createSAStrategy(createEnergyObjective(hosts), primary.newObjective(), null);
         }
         if (label.equals("GA_" + P + "_Dominance")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            return createGADominanceStrategy(primary.newObjective(), createEnergyObjective(hosts), waSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            return createGADominanceStrategy(primary.newObjective(), createEnergyObjective(hosts), primarySeed);
         }
         if (label.equals("GA_Energy_Dominance")) {
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
             return createGADominanceStrategy(createEnergyObjective(hosts), primary.newObjective(), eaSeed);
         }
         if (label.equals("SA_" + P + "_Dominance")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            return createSADominanceStrategy(primary.newObjective(), createEnergyObjective(hosts), waSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            return createSADominanceStrategy(primary.newObjective(), createEnergyObjective(hosts), primarySeed);
         }
         if (label.equals("SA_Energy_Dominance")) {
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
             return createSADominanceStrategy(createEnergyObjective(hosts), primary.newObjective(), eaSeed);
         }
         if (label.equals("NSGA-II")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createNSGA2Strategy(hosts, seed, waSeed, eaSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createNSGA2Strategy(hosts, seed, primarySeed, eaSeed);
         }
         if (label.equals("SPEA-II")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createSPEA2Strategy(hosts, seed, waSeed, eaSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createSPEA2Strategy(hosts, seed, primarySeed, eaSeed);
         }
         if (label.equals("AMOSA")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createAMOSAStrategy(hosts, seed, waSeed, eaSeed);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createAMOSAStrategy(hosts, seed, primarySeed, eaSeed);
         }
 
         // ---- Power-ceiling (constrained) variants: label suffix "_PC_<cap>kW" ----
@@ -201,37 +208,37 @@ public final class AlgorithmRegistry {
         List<Host> hosts = context.getHosts();
         String P = primary.csvName();
         if (core.equals("NSGA-II")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createNSGA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createNSGA2PowerCeilingStrategy(hosts, seed, primarySeed, eaSeed, capWatts);
         }
         if (core.equals("SPEA-II")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createSPEA2PowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createSPEA2PowerCeilingStrategy(hosts, seed, primarySeed, eaSeed, capWatts);
         }
         if (core.equals("AMOSA")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
-            return createAMOSAPowerCeilingStrategy(hosts, seed, waSeed, eaSeed, capWatts);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
+            return createAMOSAPowerCeilingStrategy(hosts, seed, primarySeed, eaSeed, capWatts);
         }
         if (core.equals("GA_" + P + "_Dominance")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
             return createGADominancePowerCeilingStrategy(
-                primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, capWatts);
+                primary.newObjective(), createEnergyObjective(hosts), primarySeed, hosts, capWatts);
         }
         if (core.equals("GA_Energy_Dominance")) {
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
             return createGADominancePowerCeilingStrategy(
                 createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, capWatts);
         }
         if (core.equals("SA_" + P + "_Dominance")) {
-            int[] waSeed = computeHeuristicSeed(new WorkloadAwareTaskAssignmentStrategy(), context);
+            int[] primarySeed = computeHeuristicSeed(newPrimarySeedHeuristic(), context);
             return createSADominancePowerCeilingStrategy(
-                primary.newObjective(), createEnergyObjective(hosts), waSeed, hosts, capWatts);
+                primary.newObjective(), createEnergyObjective(hosts), primarySeed, hosts, capWatts);
         }
         if (core.equals("SA_Energy_Dominance")) {
-            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(), context);
+            int[] eaSeed = computeHeuristicSeed(new EnergyAwareTaskAssignmentStrategy(hosts), context);
             return createSADominancePowerCeilingStrategy(
                 createEnergyObjective(hosts), primary.newObjective(), eaSeed, hosts, capWatts);
         }
@@ -271,6 +278,21 @@ public final class AlgorithmRegistry {
 
         context.resetForRescheduling();
         return seed;
+    }
+
+    /**
+     * The primary-objective-matched seed heuristic, chosen per study: LPT
+     * (Longest-Processing-Time-first) for the Makespan study, where it
+     * strictly dominates the arrival-order WorkloadAware greedy on both the
+     * makespan and energy axes; WorkloadAware for the WaitingTime study,
+     * where its arrival-order dispatch yields roughly 2x lower average wait
+     * than LPT's giants-first packing. Both are RNG-free, so seeding stays
+     * reproducible.
+     */
+    private TaskAssignmentStrategy newPrimarySeedHeuristic() {
+        return primary == PrimaryObjective.MAKESPAN
+            ? new LPTTaskAssignmentStrategy()
+            : new WorkloadAwareTaskAssignmentStrategy();
     }
 
     private EnergyObjective createEnergyObjective(List<Host> hosts) {
@@ -385,7 +407,7 @@ public final class AlgorithmRegistry {
             buildSAConfig(primaryObjective, tiebreakerObjective, heuristicSeed));
     }
 
-    private TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed, int[] waSeed, int[] eaSeed) {
+    private TaskAssignmentStrategy createNSGA2Strategy(List<Host> hosts, long seed, int[] primarySeed, int[] eaSeed) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(p.populationSize)
@@ -397,14 +419,14 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         MOEA_NSGA2TaskSchedulingStrategy strategy = new MOEA_NSGA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_NSGA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
-    private TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed, int[] waSeed, int[] eaSeed) {
+    private TaskAssignmentStrategy createSPEA2Strategy(List<Host> hosts, long seed, int[] primarySeed, int[] eaSeed) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(p.populationSize)
@@ -416,14 +438,14 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         MOEA_SPEA2TaskSchedulingStrategy strategy = new MOEA_SPEA2TaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_SPEA2TaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
         return strategy;
     }
 
-    private TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed, int[] waSeed, int[] eaSeed) {
+    private TaskAssignmentStrategy createAMOSAStrategy(List<Host> hosts, long seed, int[] primarySeed, int[] eaSeed) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
             .populationSize(p.amosaSoftLimit)
@@ -435,7 +457,7 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         MOEA_AMOSATaskSchedulingStrategy strategy = new MOEA_AMOSATaskSchedulingStrategy(builder.build());
         strategy.setSelectionMethod(MOEA_AMOSATaskSchedulingStrategy.SolutionSelectionMethod.KNEE_POINT);
@@ -455,7 +477,7 @@ public final class AlgorithmRegistry {
     // (Deb) domination, matching the legacy runner.
 
     private TaskAssignmentStrategy createNSGA2PowerCeilingStrategy(List<Host> hosts, long seed,
-                                                                  int[] waSeed, int[] eaSeed,
+                                                                  int[] primarySeed, int[] eaSeed,
                                                                   double powerCapWatts) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
@@ -468,13 +490,13 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         return new MOEA_NSGA2PowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
     }
 
     private TaskAssignmentStrategy createSPEA2PowerCeilingStrategy(List<Host> hosts, long seed,
-                                                                  int[] waSeed, int[] eaSeed,
+                                                                  int[] primarySeed, int[] eaSeed,
                                                                   double powerCapWatts) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
@@ -487,13 +509,13 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         return new MOEA_SPEA2PowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
     }
 
     private TaskAssignmentStrategy createAMOSAPowerCeilingStrategy(List<Host> hosts, long seed,
-                                                                  int[] waSeed, int[] eaSeed,
+                                                                  int[] primarySeed, int[] eaSeed,
                                                                   double powerCapWatts) {
         EnergyObjective energy = createEnergyObjective(hosts);
         NSGA2Configuration.Builder builder = NSGA2Configuration.builder()
@@ -506,7 +528,7 @@ public final class AlgorithmRegistry {
             .randomSeed(seed)
             .archiveEpsilonFraction(p.archiveEpsilonFraction)
             .verboseLogging(p.verboseLogging);
-        if (waSeed != null) builder.addSeedAssignment(waSeed);
+        if (primarySeed != null) builder.addSeedAssignment(primarySeed);
         if (eaSeed != null) builder.addSeedAssignment(eaSeed);
         MOEA_AMOSAPowerCeilingTaskSchedulingStrategy strategy =
             new MOEA_AMOSAPowerCeilingTaskSchedulingStrategy(builder.build(), powerCapWatts, hosts);
