@@ -562,6 +562,7 @@ def render_points_figure(fig_id, df, front_df, scenario_num, scenario_name,
 # MEAN row's total-across-seeds semantics (see plot_scenario_pareto.py).
 METRIC_SPECS = [
     ('HV', 'Hypervolume (higher is better)', 'HV (mean)', False),
+    ('HV_fixed', 'Fixed-Reference Hypervolume (higher is better; the only HV formula comparable across arms)', 'HV_fixed (mean)', False),
     ('GD', 'Generational Distance (lower is better)', 'GD (mean)', False),
     ('IGD', 'Inverted Generational Distance (lower is better)', 'IGD (mean)',
      False),
@@ -1577,6 +1578,7 @@ def process_directory(reports_dir, out_path=None):
         return 1
 
     all_pareto, all_metrics, all_metrics_str, all_fronts = {}, {}, {}, {}
+    all_collab_str = {}
     x_col = y_col = None
     for s in scenarios:
         pf = os.path.join(reports_dir, f'scenario_{s}_pareto_graph_data.csv')
@@ -1594,6 +1596,10 @@ def process_directory(reports_dir, out_path=None):
         if os.path.exists(ff):
             all_fronts[s] = pd.read_csv(ff)
             print(f'  Loaded: {os.path.basename(ff)}')
+        cf = os.path.join(reports_dir, f'scenario_{s}_seed_collaboration.csv')
+        if os.path.exists(cf):
+            all_collab_str[s] = pd.read_csv(cf, dtype=str)
+            print(f'  Loaded: {os.path.basename(cf)}')
 
     print(f'  Objectives detected: X={x_col}, Y={y_col}')
     bounds = psp.compute_global_bounds(all_pareto, x_col, y_col)
@@ -1740,7 +1746,8 @@ def process_directory(reports_dir, out_path=None):
             tables.append(f'<h3 class="scen">Scenario {s}'
                           f'{": " + esc(name) if name else ""}</h3>')
             df = all_metrics_str[s]
-            hv_cols = [c for c in ('Algorithm', 'Seed', 'HV') if c in df.columns]
+            hv_cols = [c for c in ('Algorithm', 'Seed', 'HV', 'HV_fixed')
+                       if c in df.columns]
             gd_cols = [c for c in ('Algorithm', 'Seed', 'GD', 'IGD')
                        if c in df.columns]
             pc_cols = [c for c in ('Algorithm', 'Seed', 'ParetoContribution')
@@ -1763,7 +1770,7 @@ def process_directory(reports_dir, out_path=None):
             tables.append(f'<h4>Hypervolume (HV) <button class="small dl-xlsx" '
                           f'data-table="tbl-hv-{s}">&#8595; XLSX</button></h4>')
             tables.append(build_metric_table(
-                df, ['Algorithm', 'Seed', 'HV'], styles, f'tbl-hv-{s}'))
+                df, hv_cols, styles, f'tbl-hv-{s}'))
             tables.append('<h4>Generational Distance (GD) &amp; Inverted '
                           'Generational Distance (IGD) '
                           f'<button class="small dl-xlsx" '
@@ -1779,6 +1786,26 @@ def process_directory(reports_dir, out_path=None):
                 tables.append(build_metric_table(
                     df, ['Algorithm', 'Seed', 'ParetoContribution'], styles,
                     f'tbl-pc-{s}'))
+            if s in all_collab_str:
+                cdf = all_collab_str[s]
+                collab_cols = list(cdf.columns)
+                tables_manifest.append({'id': f'tbl-collab-{s}',
+                                        'sheet': f'S{s} Collab',
+                                        'cols': collab_cols,
+                                        'rows': table_rows(cdf, collab_cols)})
+                tables.append('<h4>Seed Collaboration (per-seed universal '
+                              'front sharing, near-tie credit) '
+                              f'<button class="small dl-xlsx" '
+                              f'data-table="tbl-collab-{s}">&#8595; XLSX'
+                              '</button></h4>')
+                tables.append('<p class="note">Each seed&#39;s own all-arms '
+                              'universal front and each algorithm&#39;s share '
+                              'of it (near-tie credit at 0.3% relative '
+                              'tolerance, nearest-match) — distributional '
+                              'collaboration evidence, unlike the pooled '
+                              'best-of-all-seeds universal front above.</p>')
+                tables.append(build_metric_table(
+                    cdf, collab_cols, styles, f'tbl-collab-{s}'))
             tables.append(
                 f'<details class="rawcsv"><summary>Full metrics table '
                 f'(scenario_{s}_performance_metrics.csv, verbatim)</summary>'

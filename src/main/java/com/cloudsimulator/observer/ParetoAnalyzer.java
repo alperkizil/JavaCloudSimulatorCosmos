@@ -47,6 +47,22 @@ public final class ParetoAnalyzer {
     /** De-duplication tolerance used by the runners for raw objective points. */
     public static final double DEDUP_EPS = 1e-9;
 
+    /**
+     * Relative near-tie tolerance for the seed-collaboration CONTRIBUTION
+     * CREDIT only (0.3%) — NOT used by union construction, de-duplication, or
+     * the exact-match {@code ParetoContribution} columns, which all keep their
+     * {@code DEDUP_EPS} semantics untouched. Empirically calibrated against
+     * the committed campaign CSVs: 1e-4 recovers zero real near-ties across
+     * all scenarios, 1e-3 essentially none; 3e-3 is the smallest value that
+     * credits genuine floating-point/equally-good-schedule ties without
+     * moving the dominant arms' counts. Re-validate against a fresh campaign
+     * before publication.
+     */
+    public static final double CONTRIB_REL_EPS = 3e-3;
+
+    /** Absolute floor for the near-tie tolerance, avoids collapse at values near 0. */
+    private static final double CONTRIB_ABS_FLOOR = 1e-9;
+
     /** Floor applied to a normalization range (matches recompute_hv.py). */
     private static final double RANGE_FLOOR = 1e-12;
 
@@ -181,6 +197,17 @@ public final class ParetoAnalyzer {
     }
 
     /**
+     * HV_fixed of an already-normalized point set (the recompute_hv.py math:
+     * sweep-line HV against {@code (1.1, 1.1)} divided by {@code 1.21}).
+     * Shared by {@link #computeFixedIndicators} and the universal-front /
+     * per-seed-front HV_fixed values emitted by {@link #analyzeScenario} and
+     * {@link #analyzeSeedCollaboration}.
+     */
+    private static double hvFixedFromNormalized(List<double[]> normalizedPoints) {
+        return hv2d(normalizedPoints, REF_NORM, REF_NORM) / HV_MAX;
+    }
+
+    /**
      * Additive epsilon indicator I_eps+(A, R): the minimum eps such that every
      * point in R is weakly dominated by some {@code (a - eps)} for {@code a} in A.
      * Inputs are expected normalized; minimization. Clamped at 0 and returns
@@ -223,8 +250,7 @@ public final class ParetoAnalyzer {
         List<double[]> univNorm = universalPoints.isEmpty()
             ? new ArrayList<>() : normalize(universalPoints, bounds);
 
-        double hv = hv2d(runNorm, REF_NORM, REF_NORM);
-        double hvFixed = hv / HV_MAX;
+        double hvFixed = hvFixedFromNormalized(runNorm);
 
         double epsPlus = univNorm.isEmpty() ? Double.NaN : epsilonPlus(runNorm, univNorm);
 
@@ -533,6 +559,135 @@ public final class ParetoAnalyzer {
     }
 
     // =========================================================================
+    // Per-seed collaboration (near-tie credit) — additive, new report only
+    // =========================================================================
+
+    /**
+     * Index of the nearest universal point within {@link #CONTRIB_REL_EPS}
+     * relative tolerance on BOTH objectives (each objective's tolerance scaled
+     * to that universal point's own magnitude, floored at
+     * {@code CONTRIB_ABS_FLOOR}), or {@code null} if none is within tolerance.
+     *
+     * <p>Nearest-match — not first-match in iteration order — is required to
+     * keep contribution credit monotonic in the tolerance: under first-match,
+     * widening the tolerance can steal credit from an index a point used to
+     * match exactly, because the widened search finds an earlier, unrelated
+     * universal point first and stops.</p>
+     */
+    private static Integer nearestWithinRelEps(double[] p, List<double[]> universal, double relEps) {
+        Integer bestIdx = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < universal.size(); i++) {
+            double[] u = universal.get(i);
+            boolean withinTolerance = true;
+            double score = 0.0;
+            for (int k = 0; k < 2; k++) {
+                double tol = Math.max(Math.abs(u[k]) * relEps, CONTRIB_ABS_FLOOR);
+                double d = Math.abs(p[k] - u[k]);
+                if (d > tol) {
+                    withinTolerance = false;
+                    break;
+                }
+                double r = d / tol;
+                score += r * r;
+            }
+            if (withinTolerance && score < bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
+    }
+
+    /**
+     * Near-tie CONTRIBUTION CREDIT for the seed-collaboration scoreboard ONLY:
+     * counts the distinct universal points that some run point lies within
+     * {@link #CONTRIB_REL_EPS} of on both objectives (nearest-match). Does NOT
+     * affect union construction or the exact-match
+     * {@code ParetoContribution}/{@code ParetoContribution_pct} columns, which
+     * keep their 1e-9 semantics untouched.
+     */
+    public static int paretoContributionCountEps(List<double[]> runPoints, List<double[]> universal) {
+        Set<Integer> matched = new HashSet<>();
+        for (double[] sol : runPoints) {
+            if (isFailureSentinel(sol)) {
+                continue;
+            }
+            Integer idx = nearestWithinRelEps(sol, universal, CONTRIB_REL_EPS);
+            if (idx != null) {
+                matched.add(idx);
+            }
+        }
+        return matched.size();
+    }
+
+    /** One seed's all-arms universal front and each label's near-tie credit against it. */
+    public static final class SeedCollaboration {
+        public final long seed;
+        public final List<double[]> seedUniversalFront;
+        /** HV_fixed of this seed's universal front (scenario-wide union bounds). */
+        public final double seedUniversalHvFixed;
+        /** Algorithm label &rarr; near-tie-credited contribution count to THIS seed's front. */
+        public final Map<String, Integer> contributionCounts;
+        /** Algorithm label &rarr; {@code 100 * count / seedUniversalFront.size()}. */
+        public final Map<String, Double> contributionPct;
+
+        SeedCollaboration(long seed, List<double[]> seedUniversalFront, double seedUniversalHvFixed,
+                          Map<String, Integer> contributionCounts, Map<String, Double> contributionPct) {
+            this.seed = seed;
+            this.seedUniversalFront = seedUniversalFront;
+            this.seedUniversalHvFixed = seedUniversalHvFixed;
+            this.contributionCounts = contributionCounts;
+            this.contributionPct = contributionPct;
+        }
+    }
+
+    /**
+     * Per-seed collaboration analysis: groups {@code scenarioRuns} by
+     * {@link AlgorithmRunResult#getSeed()} (all arms share seed values) and,
+     * for each seed, builds THAT seed's all-arms universal front by reusing
+     * {@link #computeUniversalPareto} — the same strict-dominance, 1e-9-dedup
+     * union as the scenario-wide front, just scoped to one seed's runs — then
+     * credits each label's contribution with near-tie matching
+     * ({@link #paretoContributionCountEps}).
+     *
+     * <p>Unlike the scenario-wide universal front (a best-of-all-seeds
+     * envelope that one lucky seed can colonize), this yields a per-seed
+     * contribution share whose mean&plusmn;std across seeds is distributional
+     * evidence of collaboration.</p>
+     *
+     * @param scenarioRuns all runs of one scenario
+     * @param bounds       scenario-wide union bounds (for HV_fixed of each
+     *                     seed front), or {@code null} to skip HV_fixed
+     */
+    public static List<SeedCollaboration> analyzeSeedCollaboration(
+            List<AlgorithmRunResult> scenarioRuns, double[] bounds) {
+        Map<Long, List<AlgorithmRunResult>> bySeed = new LinkedHashMap<>();
+        for (AlgorithmRunResult run : scenarioRuns) {
+            bySeed.computeIfAbsent(run.getSeed(), k -> new ArrayList<>()).add(run);
+        }
+        List<SeedCollaboration> out = new ArrayList<>();
+        for (Map.Entry<Long, List<AlgorithmRunResult>> e : bySeed.entrySet()) {
+            List<double[]> seedUniv = computeUniversalPareto(e.getValue());
+            double hvFixed = (bounds == null || seedUniv.isEmpty())
+                ? Double.NaN : hvFixedFromNormalized(normalize(seedUniv, bounds));
+            Map<String, Integer> counts = new LinkedHashMap<>();
+            for (AlgorithmRunResult run : e.getValue()) {
+                counts.merge(run.getLabel(),
+                    paretoContributionCountEps(run.getFront(), seedUniv), Integer::sum);
+            }
+            int univSize = seedUniv.size();
+            Map<String, Double> pct = new LinkedHashMap<>();
+            for (Map.Entry<String, Integer> ce : counts.entrySet()) {
+                pct.put(ce.getKey(), univSize > 0 ? 100.0 * ce.getValue() / univSize : Double.NaN);
+            }
+            out.add(new SeedCollaboration(e.getKey(), seedUniv, hvFixed, counts, pct));
+        }
+        out.sort((x, y) -> Long.compare(x.seed, y.seed));
+        return out;
+    }
+
+    // =========================================================================
     // Scenario-level analysis (live path)
     // =========================================================================
 
@@ -542,12 +697,20 @@ public final class ParetoAnalyzer {
         public final double universalHV;
         /** Algorithm label &rarr; that algorithm's aggregate (union-over-seeds) front. */
         public final Map<String, List<double[]>> algorithmFronts;
+        /** Per-seed all-arms collaboration (near-tie credit), sorted by seed. */
+        public final List<SeedCollaboration> seedCollaboration;
+        /** HV_fixed of the scenario-wide universal front (NaN if empty). */
+        public final double universalHvFixed;
 
         ScenarioAnalysis(List<double[]> universalFront, double universalHV,
-                         Map<String, List<double[]>> algorithmFronts) {
+                         Map<String, List<double[]>> algorithmFronts,
+                         List<SeedCollaboration> seedCollaboration,
+                         double universalHvFixed) {
             this.universalFront = universalFront;
             this.universalHV = universalHV;
             this.algorithmFronts = algorithmFronts;
+            this.seedCollaboration = seedCollaboration;
+            this.universalHvFixed = universalHvFixed;
         }
     }
 
@@ -588,9 +751,13 @@ public final class ParetoAnalyzer {
         double universalHV = universalHV(universal);
         if (allPoints.isEmpty()) {
             // Nothing to analyse; leave indicator defaults in place.
-            return new ScenarioAnalysis(universal, universalHV, algorithmFronts);
+            return new ScenarioAnalysis(universal, universalHV, algorithmFronts,
+                analyzeSeedCollaboration(scenarioRuns, null), Double.NaN);
         }
         double[] bounds = unionBounds(allPoints);
+        List<SeedCollaboration> seedCollaboration = analyzeSeedCollaboration(scenarioRuns, bounds);
+        double universalHvFixed = universal.isEmpty()
+            ? Double.NaN : hvFixedFromNormalized(normalize(universal, bounds));
 
         for (AlgorithmRunResult run : scenarioRuns) {
             List<double[]> front = run.getFront();
@@ -611,6 +778,7 @@ public final class ParetoAnalyzer {
             run.setParetoContributionCount(paretoContributionCount(front, universal));
         }
 
-        return new ScenarioAnalysis(universal, universalHV, algorithmFronts);
+        return new ScenarioAnalysis(universal, universalHV, algorithmFronts,
+            seedCollaboration, universalHvFixed);
     }
 }
