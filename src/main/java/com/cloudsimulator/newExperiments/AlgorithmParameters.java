@@ -4,8 +4,9 @@ package com.cloudsimulator.newExperiments;
  * All metaheuristic hyperparameters, mutable so a Main file can tweak them.
  * {@link #defaults()} returns values <b>identical</b> to the constants in the
  * legacy {@code *ExperimentRunner} classes — change a field after calling it to
- * deviate. (Sole exception: {@link #verboseLogging} defaults to off here; it is
- * output-only and does not affect results.)
+ * deviate. (Two exceptions: {@link #verboseLogging} defaults to off here, which
+ * is output-only and does not affect results; and {@link #mutationRate}, retuned
+ * 0.05 → 0.004 in the 2026-07 population-arm search-quality fix — see its javadoc.)
  *
  * <p>These three studies share the same default parameter block.</p>
  */
@@ -36,9 +37,19 @@ public final class AlgorithmParameters {
      */
     public double archiveEpsilonFraction = 0.01;
 
-    // ---- GA ----
+    // ---- GA + NSGA-II/SPEA-II (shared domain operators) ----
     public double crossoverRate = 0.95;
-    public double mutationRate = 0.05;
+    /**
+     * Per-task-gene mutation probability for the population arms (GA dominance,
+     * NSGA-II, SPEA-II; AMOSA has its own {@link #amosaMutationRate}). 0.004 =
+     * an expected 2 mutation moves per offspring at the studies' 500-task
+     * workloads (the standard c/N setting, c=2). The former 0.05 mutated an
+     * expected 25 genes per offspring - a random walk that made fine
+     * convergence impossible for every population arm while SA refined with
+     * 1-4 temperature-scaled moves; it is the root cause of the SA-dominated
+     * fronts in the pre-2026-07-10 campaigns.
+     */
+    public double mutationRate = 0.004;
     public double gaElitePercentage = 0.20;
     public int gaTournamentSize = 5;
 
