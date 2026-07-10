@@ -12,6 +12,14 @@ import java.util.Random;
  * 2. Two-Point Crossover: Segments from parents are combined
  * 3. Order Crossover (OX): Preserves relative ordering from parents
  *
+ * UNIFORM and TWO_POINT mix only the assignment genes; each offspring's
+ * per-VM execution order is then derived from ONE parent's dispatch
+ * precedence (offspring1 from parent1, offspring2 from parent2), so the
+ * order dimension is heritable. A canonical rebuildTaskOrdering() here
+ * would silently discard every SWAP_ORDER improvement the parents had
+ * accumulated, making the order genes evolutionarily dead under any
+ * crossover rate close to 1.
+ *
  * The offspring may be invalid after crossover and should be repaired.
  */
 public class CrossoverOperator {
@@ -94,8 +102,8 @@ public class CrossoverOperator {
             }
         }
 
-        offspring1.rebuildTaskOrdering();
-        offspring2.rebuildTaskOrdering();
+        inheritTaskOrdering(offspring1, parent1);
+        inheritTaskOrdering(offspring2, parent2);
 
         return new SchedulingSolution[]{offspring1, offspring2};
     }
@@ -138,10 +146,38 @@ public class CrossoverOperator {
             }
         }
 
-        offspring1.rebuildTaskOrdering();
-        offspring2.rebuildTaskOrdering();
+        inheritTaskOrdering(offspring1, parent1);
+        inheritTaskOrdering(offspring2, parent2);
 
         return new SchedulingSolution[]{offspring1, offspring2};
+    }
+
+    /**
+     * Builds the offspring's per-VM execution order from a parent's dispatch
+     * precedence: tasks on each offspring VM run in the same relative order
+     * they held in the parent (VM-by-VM concatenation order, matching the
+     * problem encoding, where only within-VM relative order is semantic).
+     * Tasks absent from the parent's order lists (possible only for an
+     * unrepaired parent) fall to the back in ascending-index order.
+     */
+    private void inheritTaskOrdering(SchedulingSolution offspring, SchedulingSolution parent) {
+        int numTasks = offspring.getNumTasks();
+        int[] priority = new int[numTasks];
+        for (int t = 0; t < numTasks; t++) {
+            priority[t] = numTasks + t;
+        }
+        int pos = 0;
+        for (int vmIdx = 0; vmIdx < parent.getNumVMs(); vmIdx++) {
+            for (int taskIdx : parent.getTaskOrderForVM(vmIdx)) {
+                priority[taskIdx] = pos++;
+            }
+        }
+
+        offspring.rebuildTaskOrdering();
+        for (int vmIdx = 0; vmIdx < offspring.getNumVMs(); vmIdx++) {
+            offspring.getTaskOrderForVM(vmIdx)
+                .sort(java.util.Comparator.comparingInt(taskIdx -> priority[taskIdx]));
+        }
     }
 
     /**
