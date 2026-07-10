@@ -103,10 +103,21 @@ public final class ExperimentConfig {
     public WorkloadType[] gpuWorkloads = {
         WorkloadType.FURMARK, WorkloadType.IMAGE_GEN_GPU, WorkloadType.LLM_GPU
     };
+    // LOG16 workload: 16 log-spaced instruction lengths (consecutive ratios
+    // ~1.30). The bottom is pinned at 0.5G — exactly the slowest effective
+    // lane speed, i.e. the one-tick threshold — and the top was re-fit
+    // (~25.16G) so total instruction mass matches the previous bimodal array
+    // ({100,200,300,500}M x2 + 25G/40G) within +0.85%/-0.43%/-0.43% per
+    // scenario (-0.004% overall). The old array made 80% of tasks
+    // makespan-invisible (every length <= 0.5G costs exactly 1 tick on every
+    // lane), collapsing the makespan axis to ~3 plateaus; this grading yields
+    // 7-14 distinct per-lane tick classes (1-tick fraction 0.80 -> 0.35) so
+    // makespan-primary arms have a real axis to differentiate on.
     public long[] instructionLengths = {
-        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
-        100_000_000L, 200_000_000L, 300_000_000L, 500_000_000L,
-        25_000_000_000L, 40_000_000_000L
+        500_000_000L, 650_000_000L, 840_000_000L, 1_090_000_000L,
+        1_420_000_000L, 1_850_000_000L, 2_400_000_000L, 3_110_000_000L,
+        4_040_000_000L, 5_250_000_000L, 6_810_000_000L, 8_850_000_000L,
+        11_490_000_000L, 14_920_000_000L, 19_370_000_000L, 25_160_000_000L
     };
     public int[][] scenarioTaskCounts = {
         {250, 250},  // Scenario 1: Balanced

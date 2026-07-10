@@ -179,7 +179,8 @@ public final class CampaignRunner {
             ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenarioRuns);
             ExperimentReporter.ScenarioReport report = new ExperimentReporter.ScenarioReport(
                 s + 1, infra.scenarioNames[s], spec.getObjectiveNames(), groupByLabel(scenarioRuns),
-                analysis.universalFront, analysis.universalHV, analysis.algorithmFronts);
+                analysis.universalFront, analysis.universalHV, analysis.algorithmFronts,
+                analysis.seedCollaboration, analysis.universalHvFixed);
             reports.add(report);
             ConsoleReporter.printScenarioSummary(report);
         }
