@@ -413,15 +413,20 @@ def build_scatter_figure(exp, scn, styles, opts):
         if opts.get('show_clouds'):
             pts = scn.points[scn.points['Algorithm'] == algo]
             if len(pts):
-                ax.scatter(pts[ox], pts[oy], s=(ms * 0.55) ** 2, alpha=0.22,
-                           color=st['color'], marker=st['marker'],
-                           linewidths=0, zorder=2)
+                # gid drives the GUI's click-to-details lookup; the cloud is
+                # plotted in file order so point index i within this algorithm
+                # equals (seed, solutionIndex) row order of the CSV.
+                coll = ax.scatter(pts[ox], pts[oy], s=(ms * 0.55) ** 2, alpha=0.22,
+                                  color=st['color'], marker=st['marker'],
+                                  linewidths=0, zorder=2)
+                coll.set_gid(f'cloud::{algo}')
         if opts.get('show_fronts', True) and algo in scn.fronts:
             fr = scn.fronts[algo].sort_values(ox)
-            ax.plot(fr[ox], fr[oy], color=st['color'], marker=st['marker'],
-                    markersize=ms, markerfacecolor=mfc,
-                    markeredgecolor=st['color'], linewidth=1.4, alpha=0.9,
-                    label=st['display'], zorder=4)
+            line, = ax.plot(fr[ox], fr[oy], color=st['color'], marker=st['marker'],
+                            markersize=ms, markerfacecolor=mfc,
+                            markeredgecolor=st['color'], linewidth=1.4, alpha=0.9,
+                            label=st['display'], zorder=4)
+            line.set_gid(f'front::{algo}')
             if opts.get('show_labels') and len(fr):
                 mid = fr.iloc[len(fr) // 2]
                 ax.annotate(st['display'], (mid[ox], mid[oy]),
@@ -444,10 +449,11 @@ def build_scatter_figure(exp, scn, styles, opts):
     return fig
 
 
+# Mirrors plot_scenario_pareto.AXIS_LABEL (Energy is kWh in every CSV).
 AXIS_UNITS = {
     'Makespan': 'Makespan (s)',
-    'WaitingTime': 'Avg. Wait Time (s)',
-    'Energy': 'Energy (Wh)',
+    'WaitingTime': 'Average Waiting Time (s)',
+    'Energy': 'Energy (kWh)',
 }
 
 
@@ -627,55 +633,71 @@ def details_solutions(scn):
 def details_summary_rows(sol, scn):
     """Aggregate figures of one solution as (name, value-string) pairs."""
     rows = []
-    for obj, val in (sol.get('objectives') or {}).items():
-        rows.append((f'Objective {axis_label(obj)}', f'{val:.6f}'))
+    obj_names = (scn.details or {}).get('objectives', scn.obj_names)
+    for name, val in zip(obj_names, sol.get('objectives') or []):
+        rows.append((f'Objective: {axis_label(name)}', f'{val:.6f}'))
     for key, label, fmt in [
             ('makespanSeconds', 'Makespan (s)', '{:.4f}'),
             ('avgWaitSeconds', 'Avg wait time (s)', '{:.4f}'),
-            ('totalEnergyWh', 'Total energy (Wh)', '{:.6f}'),
+            ('totalEnergyKWh', 'Total energy (kWh)', '{:.6f}'),
             ('peakPowerWatts', 'Peak total power (W)', '{:.2f}'),
             ('avgQueueSizeAllVms', 'Avg queue size (all VMs)', '{:.2f}'),
             ('avgQueueSizeActiveVms', 'Avg queue size (active VMs)', '{:.2f}')]:
         if sol.get(key) is not None:
             rows.append((label, fmt.format(sol[key])))
-    order = sol.get('vmTaskOrder')
-    if order is not None:
-        rows.append(('Active VMs', f'{sum(1 for q in order if q)} / {len(order)}'))
+    queues = sol.get('vmQueues')
+    if queues is not None:
+        active = sol.get('activeVmCount', sum(1 for q in queues if q))
+        rows.append(('Active VMs', f'{active} / {len(queues)}'))
+    if sol.get('roles'):
+        rows.append(('Representative roles', ', '.join(sol['roles'])))
     return rows
 
 
 def details_vm_table(sol, scn):
     """Per-VM queue table rows from a solution dict."""
     vms = {v['index']: v for v in (scn.details.get('vms') or [])}
-    order = sol.get('vmTaskOrder') or []
     rows = []
-    for idx, queue in enumerate(order):
+    for idx, queue in enumerate(sol.get('vmQueues') or []):
         meta = vms.get(idx, {})
         preview = ','.join(str(t) for t in queue[:12]) + (',…' if len(queue) > 12 else '')
-        rows.append((idx, meta.get('id', ''), meta.get('computeType', ''),
-                     meta.get('hostIndex', ''), len(queue), preview))
+        rows.append((idx, meta.get('computeType', ''), meta.get('vcpus', ''),
+                     meta.get('gpus', ''), meta.get('hostIndex', ''),
+                     len(queue), preview))
     return rows
 
 
 def details_host_table(sol, scn):
     hosts = {h['index']: h for h in (scn.details.get('hosts') or [])}
-    energy = sol.get('hostEnergyWh') or []
     rows = []
-    for idx, wh in enumerate(energy):
+    for idx, kwh in enumerate(sol.get('hostEnergyKWh') or []):
         meta = hosts.get(idx, {})
-        rows.append((idx, meta.get('id', ''), meta.get('computeType', ''),
-                     f'{wh:.6f}'))
+        rows.append((idx, meta.get('computeType', ''), meta.get('cores', ''),
+                     meta.get('gpus', ''), f'{kwh:.9f}'))
     return rows
 
 
-def details_task_table(sol):
+def details_task_table(sol, scn):
+    tasks = {t['index']: t for t in (scn.details.get('tasks') or [])}
     assign = sol.get('taskVmIndex') or []
     waits = sol.get('taskWaitSeconds') or []
     rows = []
     for tid, vm in enumerate(assign):
+        meta = tasks.get(tid, {})
         wait = f'{waits[tid]:.3f}' if tid < len(waits) else ''
-        rows.append((tid, vm, wait))
+        rows.append((tid, meta.get('lengthInstructions', ''),
+                     meta.get('workload', ''), vm, wait))
     return rows
+
+
+def solution_label(sol, obj_names):
+    """Human-readable identity of one solution for pickers/status lines."""
+    objs = sol.get('objectives') or []
+    parts = [f'#{sol.get("solutionIndex", "?")}']
+    parts += [f'{n}={v:.6g}' for n, v in zip(obj_names, objs)]
+    if sol.get('roles'):
+        parts.append('[' + ', '.join(sol['roles']) + ']')
+    return '  '.join(parts)
 
 
 # =============================================================================
@@ -755,18 +777,24 @@ def build_claude_bundle(exp):
                 L.append(_df_to_csv_block(fr[scn.obj_names], float_format='%.9g'))
         sols = details_solutions(scn)
         if sols:
-            L.append(f'### Representative solution details (scenario {n})')
-            L.append('Aggregates per representative solution (task→VM maps omitted '
-                     'for size; see scenario_N_solution_details.json in the result '
-                     'folder for full assignments):')
+            reps = [s for s in sols if s.get('roles')] or sols
+            L.append(f'### Solution schedule details (scenario {n}) — '
+                     f'{len(sols)} front solutions captured, aggregates below for '
+                     f'the {len(reps)} representative (best-per-objective / knee) ones')
+            L.append('Full per-solution task→VM maps, per-VM queues and per-host '
+                     'energy are in scenario_N_solution_details.json.gz in the '
+                     'result folder.')
             L.append('')
+            obj_names = (scn.details or {}).get('objectives', scn.obj_names)
             rows = []
-            for sol in sols:
+            for sol in reps:
                 row = {'algorithm': sol.get('algorithm'),
-                       'seed': sol.get('seed'), 'role': sol.get('role')}
-                row.update({f'obj_{k}': v for k, v in (sol.get('objectives') or {}).items()})
-                for k in ('makespanSeconds', 'avgWaitSeconds', 'totalEnergyWh',
-                          'peakPowerWatts', 'avgQueueSizeAllVms'):
+                       'seed': sol.get('seed'),
+                       'roles': '+'.join(sol.get('roles') or [])}
+                row.update({f'obj_{k}': v for k, v in
+                            zip(obj_names, sol.get('objectives') or [])})
+                for k in ('makespanSeconds', 'avgWaitSeconds', 'totalEnergyKWh',
+                          'peakPowerWatts', 'avgQueueSizeAllVms', 'activeVmCount'):
                     if sol.get(k) is not None:
                         row[k] = sol[k]
                 rows.append(row)
@@ -828,5 +856,798 @@ def export_all(exp, outdir, dpi=300):
     written.append(p)
     return written
 
-# === APPEND: GUI ===
+# =============================================================================
+# GUI — Tkinter is imported only inside launch_gui() so headless use
+# (--export-all) works on machines without a display or python3-tk.
+# =============================================================================
+
+PLOT_TABS = ('scatter', 'metrics', 'runtime')
+
+
+class ResultsExplorerApp:
+    """Main window. Composition over tk.Tk so the module imports headlessly."""
+
+    def __init__(self, tkmod, folder=None):
+        # tkmod bundles the lazily imported tkinter modules (see launch_gui).
+        self.tk = tkmod['tk']
+        self.ttk = tkmod['ttk']
+        self.filedialog = tkmod['filedialog']
+        self.colorchooser = tkmod['colorchooser']
+        self.messagebox = tkmod['messagebox']
+        self.FigureCanvasTkAgg = tkmod['FigureCanvasTkAgg']
+        self.NavigationToolbar2Tk = tkmod['NavigationToolbar2Tk']
+
+        self.exp = None
+        self.styles = {}
+        self.hidden = set()
+        self.custom_titles = {}       # tab key -> custom title ('' = default)
+        self.figures = {}             # tab key -> current Figure
+        self.canvases = {}            # tab key -> FigureCanvasTkAgg
+        self.current_table = None     # (DataFrame, info) shown in Tables tab
+        self._details_sols = []       # solutions of the current details filter
+
+        root = self.tk.Tk()
+        self.root = root
+        root.title('COSMOS Results Explorer')
+        root.geometry('1420x880')
+        self._build_ui()
+        if folder:
+            self.load_folder(folder)
+
+    def run(self):
+        self.root.mainloop()
+
+    # ---- UI skeleton -----------------------------------------------------
+
+    def _build_ui(self):
+        tk, ttk = self.tk, self.ttk
+
+        top = ttk.Frame(self.root, padding=(8, 6))
+        top.pack(side='top', fill='x')
+        ttk.Button(top, text='Open experiment…', command=self.open_dialog).pack(side='left')
+        self.exp_label = ttk.Label(top, text='No experiment loaded', foreground='#666')
+        self.exp_label.pack(side='left', padx=12)
+
+        body = ttk.Frame(self.root)
+        body.pack(fill='both', expand=True)
+
+        side = ttk.Frame(body, padding=(8, 4), width=260)
+        side.pack(side='left', fill='y')
+        side.pack_propagate(False)
+        self._build_sidebar(side)
+
+        main = ttk.Frame(body)
+        main.pack(side='left', fill='both', expand=True)
+        self.notebook = ttk.Notebook(main)
+        self.notebook.pack(fill='both', expand=True, padx=4, pady=4)
+        self.tabs = {}
+        for key, title in (('scatter', 'Scatter'), ('metrics', 'Metrics'),
+                           ('runtime', 'Runtime'), ('tables', 'Tables'),
+                           ('details', 'Details')):
+            frame = ttk.Frame(self.notebook)
+            self.notebook.add(frame, text=title)
+            self.tabs[key] = frame
+        self.notebook.bind('<<NotebookTabChanged>>', lambda e: self._on_tab_changed())
+
+        self._build_metrics_controls()
+        self._build_tables_tab()
+        self._build_details_tab()
+
+        self.status = ttk.Label(self.root, text='Open a results/<ExperimentId> folder to begin.',
+                                anchor='w', padding=(8, 3))
+        self.status.pack(side='bottom', fill='x')
+
+    def _build_sidebar(self, side):
+        tk, ttk = self.tk, self.ttk
+
+        def header(text):
+            ttk.Label(side, text=text.upper(), foreground='#888',
+                      font=('TkDefaultFont', 8, 'bold')).pack(anchor='w', pady=(10, 2))
+
+        header('Scenario')
+        self.scenario_var = tk.IntVar(value=1)
+        self.scenario_frame = ttk.Frame(side)
+        self.scenario_frame.pack(anchor='w', fill='x')
+
+        header('Algorithms — color & visibility')
+        self.algo_frame = ttk.Frame(side)
+        self.algo_frame.pack(anchor='w', fill='x')
+
+        header('Display')
+        self.legend_var = tk.BooleanVar(value=True)
+        self.labels_var = tk.BooleanVar(value=False)
+        self.clouds_var = tk.BooleanVar(value=False)
+        self.swap_var = tk.BooleanVar(value=False)
+        for var, text in ((self.legend_var, 'Show legend'),
+                          (self.labels_var, 'Algorithm name labels'),
+                          (self.clouds_var, 'Per-seed point clouds'),
+                          (self.swap_var, 'Swap X / Y axes')):
+            ttk.Checkbutton(side, text=text, variable=var,
+                            command=self.refresh_plots).pack(anchor='w')
+
+        ttk.Label(side, text='Title (empty = default):').pack(anchor='w', pady=(8, 0))
+        self.title_entry = ttk.Entry(side)
+        self.title_entry.pack(fill='x')
+        self.title_entry.bind('<Return>', lambda e: self._apply_title())
+        self.title_entry.bind('<FocusOut>', lambda e: self._apply_title())
+
+        row = ttk.Frame(side)
+        row.pack(anchor='w', pady=(8, 0))
+        ttk.Label(row, text='Marker').pack(side='left')
+        self.marker_var = tk.StringVar(value='7')
+        tk.Spinbox(row, from_=2, to=20, width=4, textvariable=self.marker_var,
+                   command=self.refresh_plots).pack(side='left', padx=(4, 10))
+        ttk.Label(row, text='Save DPI').pack(side='left')
+        self.dpi_var = tk.StringVar(value='300')
+        tk.Spinbox(row, from_=72, to=600, increment=25, width=5,
+                   textvariable=self.dpi_var).pack(side='left', padx=4)
+
+        actions = ttk.Frame(side)
+        actions.pack(side='bottom', fill='x', pady=8)
+        for text, cmd in (('Save figure…', self.save_figure),
+                          ('Save table…', self.save_table),
+                          ('Export all…', self.export_all_dialog),
+                          ('Save for Claude', self.save_for_claude)):
+            ttk.Button(actions, text=text, command=cmd).pack(fill='x', pady=2)
+
+    def _build_metrics_controls(self):
+        ttk = self.ttk
+        bar = ttk.Frame(self.tabs['metrics'])
+        bar.pack(side='top', fill='x', padx=4, pady=4)
+        ttk.Label(bar, text='Indicator:').pack(side='left')
+        self.metric_var = self.tk.StringVar()
+        self.metric_combo = ttk.Combobox(bar, textvariable=self.metric_var,
+                                         state='readonly', width=48)
+        self.metric_combo.pack(side='left', padx=6)
+        self.metric_combo.bind('<<ComboboxSelected>>',
+                               lambda e: self._refresh_tab('metrics'))
+
+    def _build_tables_tab(self):
+        ttk = self.ttk
+        frame = self.tabs['tables']
+        bar = ttk.Frame(frame)
+        bar.pack(side='top', fill='x', padx=4, pady=4)
+        ttk.Label(bar, text='Table:').pack(side='left')
+        self.table_kind_var = self.tk.StringVar()
+        self.table_kind_combo = ttk.Combobox(bar, textvariable=self.table_kind_var,
+                                             state='readonly', width=44)
+        self.table_kind_combo.pack(side='left', padx=6)
+        self.table_kind_combo.bind('<<ComboboxSelected>>',
+                                   lambda e: self._refresh_tab('tables'))
+
+        holder = ttk.Frame(frame)
+        holder.pack(fill='both', expand=True, padx=4)
+        self.table_tree = ttk.Treeview(holder, show='headings')
+        ysb = ttk.Scrollbar(holder, orient='vertical', command=self.table_tree.yview)
+        xsb = ttk.Scrollbar(holder, orient='horizontal', command=self.table_tree.xview)
+        self.table_tree.configure(yscroll=ysb.set, xscroll=xsb.set)
+        self.table_tree.grid(row=0, column=0, sticky='nsew')
+        ysb.grid(row=0, column=1, sticky='ns')
+        xsb.grid(row=1, column=0, sticky='ew')
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+        self.table_tree.tag_configure('agg', background='#dde8f0')
+
+        self.table_info = ttk.Label(frame, text='', foreground='#666', padding=(6, 4))
+        self.table_info.pack(anchor='w')
+
+    def _build_details_tab(self):
+        ttk = self.ttk
+        frame = self.tabs['details']
+
+        self.details_msg = ttk.Label(
+            frame, padding=14, foreground='#666', wraplength=900, text=(
+                'No solution details in this run.\n\n'
+                'scenario_N_solution_details.json.gz is written by campaigns run '
+                'on a build that includes the SolutionDetailsCollector exporter '
+                '(every published Pareto-front solution is captured). Re-run the '
+                'campaign to get this view.'))
+
+        self.details_body = ttk.Frame(frame)
+
+        bar = ttk.Frame(self.details_body)
+        bar.pack(side='top', fill='x', padx=4, pady=4)
+        self.d_algo_var = self.tk.StringVar()
+        self.d_seed_var = self.tk.StringVar()
+        self.d_sol_var = self.tk.StringVar()
+        ttk.Label(bar, text='Algorithm:').pack(side='left')
+        self.d_algo_combo = ttk.Combobox(bar, textvariable=self.d_algo_var,
+                                         state='readonly', width=26)
+        self.d_algo_combo.pack(side='left', padx=(2, 8))
+        ttk.Label(bar, text='Seed:').pack(side='left')
+        self.d_seed_combo = ttk.Combobox(bar, textvariable=self.d_seed_var,
+                                         state='readonly', width=7)
+        self.d_seed_combo.pack(side='left', padx=(2, 8))
+        ttk.Label(bar, text='Solution:').pack(side='left')
+        self.d_sol_combo = ttk.Combobox(bar, textvariable=self.d_sol_var,
+                                        state='readonly', width=52)
+        self.d_sol_combo.pack(side='left', padx=2, fill='x', expand=True)
+        self.d_algo_combo.bind('<<ComboboxSelected>>', lambda e: self._details_filter_changed())
+        self.d_seed_combo.bind('<<ComboboxSelected>>', lambda e: self._details_filter_changed())
+        self.d_sol_combo.bind('<<ComboboxSelected>>', lambda e: self._details_show_selected())
+
+        grids = ttk.Frame(self.details_body)
+        grids.pack(fill='both', expand=True, padx=4, pady=4)
+        grids.columnconfigure(0, weight=1)
+        grids.columnconfigure(1, weight=1)
+        grids.rowconfigure(1, weight=1)
+        grids.rowconfigure(3, weight=2)
+
+        def make_tree(parent, columns, widths):
+            holder = ttk.Frame(parent)
+            tree = ttk.Treeview(holder, show='headings', columns=columns)
+            for col, w in zip(columns, widths):
+                tree.heading(col, text=col)
+                tree.column(col, width=w, anchor='e' if col not in
+                            ('Queue (dispatch order)', 'Type', 'Workload') else 'w')
+            ysb = ttk.Scrollbar(holder, orient='vertical', command=tree.yview)
+            tree.configure(yscroll=ysb.set)
+            tree.grid(row=0, column=0, sticky='nsew')
+            ysb.grid(row=0, column=1, sticky='ns')
+            holder.rowconfigure(0, weight=1)
+            holder.columnconfigure(0, weight=1)
+            return holder, tree
+
+        ttk.Label(grids, text='Solution summary').grid(row=0, column=0, sticky='w')
+        holder, self.d_summary_tree = make_tree(
+            grids, ('Metric', 'Value'), (220, 160))
+        holder.grid(row=1, column=0, sticky='nsew', padx=(0, 6))
+        self.d_summary_tree.column('Metric', anchor='w')
+
+        ttk.Label(grids, text='Per-host energy').grid(row=0, column=1, sticky='w')
+        holder, self.d_host_tree = make_tree(
+            grids, ('Host', 'Type', 'Cores', 'GPUs', 'Energy (kWh)'),
+            (50, 130, 55, 50, 120))
+        holder.grid(row=1, column=1, sticky='nsew')
+        self.d_host_tree.column('Type', anchor='w')
+
+        ttk.Label(grids, text='Per-VM queues').grid(row=2, column=0, sticky='w', pady=(8, 0))
+        holder, self.d_vm_tree = make_tree(
+            grids, ('VM', 'Type', 'vCPUs', 'GPUs', 'Host', 'Queue size',
+                    'Queue (dispatch order)'),
+            (44, 70, 55, 48, 48, 80, 420))
+        holder.grid(row=3, column=0, sticky='nsew', padx=(0, 6))
+
+        ttk.Label(grids, text='Task assignments').grid(row=2, column=1, sticky='w', pady=(8, 0))
+        holder, self.d_task_tree = make_tree(
+            grids, ('Task', 'Length (instr.)', 'Workload', '→ VM', 'Wait (s)'),
+            (55, 110, 130, 55, 80))
+        holder.grid(row=3, column=1, sticky='nsew')
+
+        self.details_msg.pack(fill='both', expand=True)
+
+    # ---- loading -----------------------------------------------------------
+
+    def open_dialog(self):
+        folder = self.filedialog.askdirectory(
+            title='Select an experiment results folder',
+            initialdir=self._initial_dir())
+        if folder:
+            self.load_folder(folder)
+
+    def _initial_dir(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for cand in (os.path.join(here, 'results'),
+                     os.path.join(here, 'newExperimentResults'), here):
+            if os.path.isdir(cand):
+                return cand
+        return os.getcwd()
+
+    def load_folder(self, folder):
+        try:
+            exp = ExperimentData.load(folder)
+        except Exception as e:
+            self.messagebox.showerror('Could not load experiment', str(e))
+            return
+        self.exp = exp
+        self.styles = resolve_styles(exp.algorithms)
+        self.hidden = set()
+        self.custom_titles = {}
+        objs = exp.objective_names
+        n_scen = len(exp.scenarios)
+        n_seeds = 0
+        first = next(iter(exp.scenarios.values()))
+        if first.metrics_seed is not None:
+            n_seeds = first.metrics_seed['Seed'].nunique()
+        self.exp_label.config(text=(
+            f'{exp.name}   ·   {objs[0]} vs {objs[1]} · {n_scen} scenarios · '
+            f'{len(exp.algorithms)} algorithms · {n_seeds} seeds'))
+        self._rebuild_scenario_controls()
+        self._rebuild_algo_controls()
+        self._rebuild_metric_choices()
+        self._rebuild_table_choices()
+        self.refresh_all()
+        self.set_status(f'Loaded {exp.folder}')
+
+    def _rebuild_scenario_controls(self):
+        for w in self.scenario_frame.winfo_children():
+            w.destroy()
+        nums = sorted(self.exp.scenarios)
+        self.scenario_var.set(nums[0])
+        for n in nums:
+            self.ttk.Radiobutton(
+                self.scenario_frame, text=f'{n} — {self.exp.scenarios[n].name}',
+                value=n, variable=self.scenario_var,
+                command=self._scenario_changed).pack(anchor='w')
+
+    def _scenario_changed(self):
+        self._refresh_tab('scatter')
+        self._refresh_tab('tables')
+        self._refresh_details_tab()
+
+    def _rebuild_algo_controls(self):
+        tk = self.tk
+        for w in self.algo_frame.winfo_children():
+            w.destroy()
+        self._algo_vars = {}
+        for algo in self.exp.algorithms:
+            st = self.styles[algo]
+            row = self.ttk.Frame(self.algo_frame)
+            row.pack(anchor='w', fill='x')
+            var = tk.BooleanVar(value=True)
+            self._algo_vars[algo] = var
+            self.ttk.Checkbutton(row, variable=var,
+                                 command=self._visibility_changed).pack(side='left')
+            btn = tk.Button(row, width=2, bg=st['color'],
+                            activebackground=st['color'], relief='raised',
+                            command=lambda a=algo: self.pick_color(a))
+            btn.pack(side='left', padx=(0, 6))
+            st['_swatch'] = btn
+            self.ttk.Label(row, text=st['display']).pack(side='left')
+
+    def _visibility_changed(self):
+        self.hidden = {a for a, v in self._algo_vars.items() if not v.get()}
+        self.refresh_plots()
+
+    def pick_color(self, algo):
+        st = self.styles[algo]
+        rgb, hexcolor = self.colorchooser.askcolor(
+            color=st['color'], title=f'Color for {st["display"]}')
+        if hexcolor:
+            st['color'] = hexcolor
+            st['_swatch'].config(bg=hexcolor, activebackground=hexcolor)
+            self.refresh_plots()
+
+    def _rebuild_metric_choices(self):
+        self._metric_defs = {display: (key, ylabel, source)
+                             for key, display, ylabel, source in available_metrics(self.exp)}
+        values = list(self._metric_defs)
+        self.metric_combo['values'] = values
+        if values:
+            self.metric_var.set(values[0])
+
+    def _rebuild_table_choices(self):
+        scn = next(iter(self.exp.scenarios.values()))
+        kinds = []
+        if scn.metrics_seed is not None:
+            metric_cols = [c for c in scn.metrics_seed.columns
+                           if c not in ('Algorithm', 'Seed')]
+            kinds += [f'Per-seed metrics — {c}' for c in metric_cols]
+        if any(s.collab_seed is not None for s in self.exp.scenarios.values()):
+            kinds.append('Seed-collaboration share % (near-tie)')
+        self.table_kind_combo['values'] = kinds
+        if kinds:
+            default = next((k for k in kinds if 'HV_fixed' in k), kinds[0])
+            self.table_kind_var.set(default)
+
+    # ---- refresh -----------------------------------------------------------
+
+    def set_status(self, text):
+        self.status.config(text=text)
+
+    def _current_tab(self):
+        idx = self.notebook.index(self.notebook.select())
+        return list(self.tabs)[idx]
+
+    def _on_tab_changed(self):
+        tab = self._current_tab()
+        self.title_entry.delete(0, 'end')
+        self.title_entry.insert(0, self.custom_titles.get(tab, ''))
+
+    def _apply_title(self):
+        tab = self._current_tab()
+        if tab in PLOT_TABS:
+            self.custom_titles[tab] = self.title_entry.get().strip()
+            self._refresh_tab(tab)
+
+    def _opts(self, tab):
+        try:
+            ms = float(self.marker_var.get())
+        except ValueError:
+            ms = 7.0
+        return {
+            'swap': self.swap_var.get(),
+            'title': self.custom_titles.get(tab, ''),
+            'show_legend': self.legend_var.get(),
+            'show_labels': self.labels_var.get(),
+            'show_clouds': self.clouds_var.get(),
+            'hidden': self.hidden,
+            'marker_size': ms,
+        }
+
+    def refresh_all(self):
+        self.refresh_plots()
+        self._refresh_tab('tables')
+        self._refresh_details_tab()
+
+    def refresh_plots(self):
+        for tab in PLOT_TABS:
+            self._refresh_tab(tab)
+
+    def _refresh_tab(self, tab):
+        if self.exp is None:
+            return
+        if tab == 'scatter':
+            scn = self.exp.scenarios[self.scenario_var.get()]
+            fig = build_scatter_figure(self.exp, scn, self.styles, self._opts(tab))
+            self._mount_figure(tab, fig, pickable=True)
+        elif tab == 'metrics':
+            display = self.metric_var.get()
+            if display in self._metric_defs:
+                key, ylabel, source = self._metric_defs[display]
+                fig = build_metric_figure(self.exp, key, display, ylabel, source,
+                                          self.styles, self._opts(tab))
+                self._mount_figure(tab, fig)
+        elif tab == 'runtime':
+            fig = build_runtime_figure(self.exp, self.styles, self._opts(tab))
+            self._mount_figure(tab, fig)
+        elif tab == 'tables':
+            self._refresh_table()
+
+    def _mount_figure(self, tab, fig, pickable=False):
+        frame = self.tabs[tab]
+        old = self.canvases.get(tab)
+        if old is not None:
+            old.get_tk_widget().master.destroy()
+        holder = self.ttk.Frame(frame)
+        holder.pack(fill='both', expand=True)
+        canvas = self.FigureCanvasTkAgg(fig, master=holder)
+        canvas.draw()
+        toolbar = self.NavigationToolbar2Tk(canvas, holder, pack_toolbar=False)
+        toolbar.update()
+        toolbar.pack(side='bottom', fill='x')
+        canvas.get_tk_widget().pack(fill='both', expand=True)
+        canvas.mpl_connect('scroll_event', self._on_scroll)
+        if pickable:
+            for artist in fig.axes[0].get_children():
+                if artist.get_gid():
+                    artist.set_picker(5)
+            canvas.mpl_connect('pick_event', self._on_pick)
+        self.figures[tab] = fig
+        self.canvases[tab] = canvas
+
+    def _on_scroll(self, event):
+        ax = event.inaxes
+        if ax is None:
+            return
+        factor = 1 / 1.25 if event.button == 'up' else 1.25
+        for lim, get, set_, coord in (
+                ('x', ax.get_xlim, ax.set_xlim, event.xdata),
+                ('y', ax.get_ylim, ax.set_ylim, event.ydata)):
+            lo, hi = get()
+            if coord is None:
+                coord = (lo + hi) / 2
+            set_(coord - (coord - lo) * factor, coord + (hi - coord) * factor)
+        event.canvas.draw_idle()
+
+    # ---- scatter pick -> details -------------------------------------------
+
+    def _on_pick(self, event):
+        gid = event.artist.get_gid()
+        if not gid or self.exp is None or not len(event.ind):
+            return
+        scn = self.exp.scenarios[self.scenario_var.get()]
+        if not scn.details:
+            self.set_status('No solution details in this run — Details tab unavailable.')
+            return
+        kind, algo = gid.split('::', 1)
+        idx = event.ind[0]
+        if kind == 'cloud':
+            pts = scn.points[scn.points['Algorithm'] == algo].reset_index()
+            if idx >= len(pts):
+                return
+            row = pts.iloc[idx]
+            seed = int(row['Seed'])
+            sol_idx = int(row['index'] -
+                          pts[pts['Seed'] == row['Seed']]['index'].min())
+            self._select_details(algo, seed, sol_idx)
+        elif kind == 'front':
+            fr = scn.fronts.get(algo)
+            if fr is None:
+                return
+            # Must mirror the builder's plot order (sorted by the CURRENT x axis).
+            ox = scn.obj_names[1] if self.swap_var.get() else scn.obj_names[0]
+            fr = fr.sort_values(ox).reset_index(drop=True)
+            if idx >= len(fr):
+                return
+            target = fr.iloc[idx][scn.obj_names].to_numpy(dtype=float)
+            self._select_details_by_objectives(algo, target, scn)
+
+    def _select_details_by_objectives(self, algo, target, scn):
+        best, best_err = None, None
+        for sol in details_solutions(scn):
+            if sol.get('algorithm') != algo:
+                continue
+            objs = np.asarray(sol.get('objectives', []), dtype=float)
+            if len(objs) != len(target):
+                continue
+            scale = np.maximum(np.abs(target), 1e-12)
+            err = float(np.max(np.abs(objs - target) / scale))
+            if best_err is None or err < best_err:
+                best, best_err = sol, err
+        if best is None or best_err > 1e-4:
+            self.set_status(f'No matching captured solution for this {algo} point.')
+            return
+        self._select_details(algo, best['seed'], best['solutionIndex'])
+
+    def _select_details(self, algo, seed, sol_idx):
+        self.notebook.select(self.tabs['details'])
+        self.d_algo_var.set(algo)
+        self._details_fill_seeds()
+        self.d_seed_var.set(str(seed))
+        self._details_fill_solutions()
+        for label in self.d_sol_combo['values']:
+            if label.startswith(f'#{sol_idx} ') or label.startswith(f'#{sol_idx} '):
+                self.d_sol_var.set(label)
+                break
+        else:
+            values = self.d_sol_combo['values']
+            if sol_idx < len(values):
+                self.d_sol_var.set(values[sol_idx])
+        self._details_show_selected()
+
+    # ---- details tab ---------------------------------------------------------
+
+    def _refresh_details_tab(self):
+        scn = self.exp.scenarios[self.scenario_var.get()] if self.exp else None
+        if scn is None or not scn.details:
+            self.details_body.pack_forget()
+            self.details_msg.pack(fill='both', expand=True)
+            return
+        self.details_msg.pack_forget()
+        self.details_body.pack(fill='both', expand=True)
+        algos = sorted({s.get('algorithm') for s in details_solutions(scn)})
+        self.d_algo_combo['values'] = algos
+        if self.d_algo_var.get() not in algos and algos:
+            self.d_algo_var.set(algos[0])
+        self._details_fill_seeds()
+        self._details_fill_solutions()
+        self._details_show_selected()
+
+    def _details_filter_changed(self):
+        self._details_fill_seeds()
+        self._details_fill_solutions()
+        self._details_show_selected()
+
+    def _details_fill_seeds(self):
+        scn = self.exp.scenarios[self.scenario_var.get()]
+        seeds = sorted({s.get('seed') for s in details_solutions(scn)
+                        if s.get('algorithm') == self.d_algo_var.get()})
+        self.d_seed_combo['values'] = [str(s) for s in seeds]
+        if self.d_seed_var.get() not in self.d_seed_combo['values'] and seeds:
+            self.d_seed_var.set(str(seeds[0]))
+
+    def _details_fill_solutions(self):
+        scn = self.exp.scenarios[self.scenario_var.get()]
+        obj_names = (scn.details or {}).get('objectives', scn.obj_names)
+        try:
+            seed = int(self.d_seed_var.get())
+        except ValueError:
+            seed = None
+        self._details_sols = [
+            s for s in details_solutions(scn)
+            if s.get('algorithm') == self.d_algo_var.get() and s.get('seed') == seed]
+        self._details_sols.sort(key=lambda s: s.get('solutionIndex', 0))
+        labels = [solution_label(s, obj_names) for s in self._details_sols]
+        self.d_sol_combo['values'] = labels
+        if labels and self.d_sol_var.get() not in labels:
+            self.d_sol_var.set(labels[0])
+
+    def _details_show_selected(self):
+        if not self._details_sols:
+            for tree in (self.d_summary_tree, self.d_vm_tree,
+                         self.d_host_tree, self.d_task_tree):
+                tree.delete(*tree.get_children())
+            return
+        try:
+            idx = list(self.d_sol_combo['values']).index(self.d_sol_var.get())
+        except ValueError:
+            idx = 0
+        sol = self._details_sols[idx]
+        scn = self.exp.scenarios[self.scenario_var.get()]
+
+        for tree, rows in (
+                (self.d_summary_tree, details_summary_rows(sol, scn)),
+                (self.d_vm_tree, details_vm_table(sol, scn)),
+                (self.d_host_tree, details_host_table(sol, scn)),
+                (self.d_task_tree, details_task_table(sol, scn))):
+            tree.delete(*tree.get_children())
+            for row in rows:
+                tree.insert('', 'end', values=row)
+        total = sum(sol.get('hostEnergyKWh') or [])
+        self.d_host_tree.insert('', 'end',
+                                values=('TOTAL', '', '', '', f'{total:.9f}'))
+        self.set_status(
+            f'Details: {sol.get("algorithm")} seed {sol.get("seed")} '
+            f'solution #{sol.get("solutionIndex")}')
+
+    # ---- tables tab ------------------------------------------------------------
+
+    def _refresh_table(self):
+        scn = self.exp.scenarios[self.scenario_var.get()]
+        kind = self.table_kind_var.get()
+        if kind.startswith('Per-seed metrics — '):
+            metric = kind.split('— ', 1)[1]
+            df, info = pivot_metric_table(scn, metric)
+        elif kind.startswith('Seed-collaboration'):
+            df, info = collab_table(scn)
+        else:
+            df, info = None, ''
+        self.current_table = (df, info)
+        tree = self.table_tree
+        tree.delete(*tree.get_children())
+        if df is None:
+            self.table_info.config(text='Not available in this run.')
+            return
+        cols = ['Seed'] + [self.styles.get(c, {'display': c})['display']
+                           for c in df.columns]
+        tree['columns'] = cols
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, width=max(90, 9 * len(col)), anchor='e')
+        tree.column('Seed', width=70, anchor='w')
+        for seed, row in df.iterrows():
+            tags = ('agg',) if seed in ('MEAN', 'STDDEV') else ()
+            vals = [seed] + ['' if pd.isna(v) else f'{v:.6f}' for v in row]
+            tree.insert('', 'end', values=vals, tags=tags)
+        self.table_info.config(text=info or '')
+
+    # ---- saving -----------------------------------------------------------------
+
+    def save_figure(self):
+        tab = self._current_tab()
+        if tab not in PLOT_TABS or tab not in self.figures:
+            self.messagebox.showinfo(
+                'Save figure', 'Switch to a plot tab (Scatter / Metrics / Runtime) first.')
+            return
+        path = self.filedialog.asksaveasfilename(
+            defaultextension='.png',
+            initialfile=f'{tab}_{self.exp.name}.png',
+            filetypes=[('PNG', '*.png'), ('SVG', '*.svg'), ('PDF', '*.pdf')])
+        if not path:
+            return
+        try:
+            dpi = float(self.dpi_var.get())
+        except ValueError:
+            dpi = 300
+        self.figures[tab].savefig(path, dpi=dpi, bbox_inches='tight')
+        self.set_status(f'Saved {path}')
+
+    def save_table(self):
+        tab = self._current_tab()
+        if tab == 'details' and self._details_sols:
+            self._save_details_tables()
+            return
+        if self.current_table is None or self.current_table[0] is None:
+            self.messagebox.showinfo('Save table', 'Open the Tables tab first.')
+            return
+        df, info = self.current_table
+        path = self.filedialog.asksaveasfilename(
+            defaultextension='.csv', initialfile=f'table_{self.exp.name}.csv',
+            filetypes=[('CSV', '*.csv')])
+        if not path:
+            return
+        with open(path, 'w') as fh:
+            df.to_csv(fh, index_label='Seed', float_format='%.6f')
+            if info:
+                fh.write(f'\n# {info}\n')
+        self.set_status(f'Saved {path}')
+
+    def _save_details_tables(self):
+        outdir = self.filedialog.askdirectory(
+            title='Directory for the four detail CSVs of the selected solution')
+        if not outdir:
+            return
+        try:
+            idx = list(self.d_sol_combo['values']).index(self.d_sol_var.get())
+        except ValueError:
+            idx = 0
+        sol = self._details_sols[idx]
+        scn = self.exp.scenarios[self.scenario_var.get()]
+        stem = (f'{sol.get("algorithm")}_seed{sol.get("seed")}'
+                f'_sol{sol.get("solutionIndex")}')
+        pd.DataFrame(details_summary_rows(sol, scn),
+                     columns=['Metric', 'Value']).to_csv(
+            os.path.join(outdir, f'{stem}_summary.csv'), index=False)
+        pd.DataFrame(details_vm_table(sol, scn),
+                     columns=['VM', 'Type', 'vCPUs', 'GPUs', 'Host',
+                              'QueueSize', 'QueueOrder']).to_csv(
+            os.path.join(outdir, f'{stem}_vm_queues.csv'), index=False)
+        pd.DataFrame(details_host_table(sol, scn),
+                     columns=['Host', 'Type', 'Cores', 'GPUs',
+                              'EnergyKWh']).to_csv(
+            os.path.join(outdir, f'{stem}_host_energy.csv'), index=False)
+        pd.DataFrame(details_task_table(sol, scn),
+                     columns=['Task', 'LengthInstructions', 'Workload', 'VM',
+                              'WaitSeconds']).to_csv(
+            os.path.join(outdir, f'{stem}_task_assignments.csv'), index=False)
+        self.set_status(f'Saved 4 detail CSVs to {outdir}')
+
+    def export_all_dialog(self):
+        if self.exp is None:
+            return
+        outdir = self.filedialog.askdirectory(title='Export all figures + tables to…')
+        if not outdir:
+            return
+        try:
+            dpi = float(self.dpi_var.get())
+        except ValueError:
+            dpi = 300
+        written = export_all(self.exp, outdir, dpi=dpi)
+        self.set_status(f'Exported {len(written)} files to {outdir}')
+
+    def save_for_claude(self):
+        if self.exp is None:
+            return
+        path = self.filedialog.asksaveasfilename(
+            defaultextension='.md',
+            initialfile=f'claude_bundle_{self.exp.name}.md',
+            filetypes=[('Markdown', '*.md'), ('Gzipped Markdown', '*.md.gz')])
+        if not path:
+            return
+        text = build_claude_bundle(self.exp)
+        if path.endswith('.gz'):
+            with gzip.open(path, 'wt') as fh:
+                fh.write(text)
+        else:
+            with open(path, 'w') as fh:
+                fh.write(text)
+        self.set_status(f'Saved Claude bundle: {path} '
+                        f'({os.path.getsize(path) / 1024:.0f} KB)')
+
+
+def launch_gui(folder=None):
+    try:
+        import tkinter as tk
+        from tkinter import ttk, filedialog, colorchooser, messagebox
+    except ImportError:
+        print('tkinter is not available. Install python3-tk, or use '
+              '--export-all <dir> for headless export.', file=sys.stderr)
+        return 2
+    from matplotlib.backends.backend_tkagg import (
+        FigureCanvasTkAgg, NavigationToolbar2Tk)
+    app = ResultsExplorerApp({
+        'tk': tk, 'ttk': ttk, 'filedialog': filedialog,
+        'colorchooser': colorchooser, 'messagebox': messagebox,
+        'FigureCanvasTkAgg': FigureCanvasTkAgg,
+        'NavigationToolbar2Tk': NavigationToolbar2Tk,
+    }, folder=folder)
+    app.run()
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Interactive explorer for campaign experiment results '
+                    '(manual tool; never auto-run by the pipeline).')
+    parser.add_argument('folder', nargs='?',
+                        help='experiment results folder (results/<ExperimentId>)')
+    parser.add_argument('--export-all', metavar='DIR',
+                        help='headless: export all figures/tables/bundle to DIR and exit')
+    parser.add_argument('--dpi', type=float, default=300.0,
+                        help='DPI for --export-all figures (default 300)')
+    args = parser.parse_args(argv)
+
+    if args.export_all:
+        if not args.folder:
+            parser.error('--export-all requires a results folder argument')
+        exp = ExperimentData.load(args.folder)
+        written = export_all(exp, args.export_all, dpi=args.dpi)
+        print(f'Exported {len(written)} files to {args.export_all}')
+        return 0
+    return launch_gui(args.folder)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
 
