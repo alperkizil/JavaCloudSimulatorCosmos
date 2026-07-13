@@ -252,8 +252,7 @@ RAM/network/storage setters and the configured power model:
 | `numberOfCpuCores`, `numberOfGpus` | from config; also installs one `CpuCore` per core and one `Gpu` per GPU for exclusive 1:1 VM binding (§6.4) |
 | `computeType` | from config: `CPU_ONLY` / `GPU_ONLY` / `CPU_GPU_MIXED` |
 | `ramCapacityMB`, `networkCapacityMbps`, `hardDriveCapacityMB` | from config (overriding constructor defaults 2 TB / 2 Tbps / 20 TB) |
-| `powerModel` (legacy) | `PowerModelFactory.createPowerModel(powerModelName)` — only role: the power-budget projection at host placement (§4.2) |
-| `measurementBasedPowerModel` | default-installed on **every** host; drives all per-tick power (§7) regardless of the configured model name |
+| Power model | `MeasurementBasedPowerModel` — installed on every host and drives all per-tick power (§7); the campaign config pins `powerModelName` to it (`toExperimentConfiguration` throws on anything else). Its 75.79 W idle draw also feeds the placement power projection (§4.2) |
 | `assignedDatacenterId` | `null` |
 | Energy/power counters, per-tick series | 0 / empty |
 
@@ -331,7 +330,7 @@ All strategies consider only datacenters passing `canAccommodateHost`
 | Check | Condition |
 |---|---|
 | Slot capacity | `hosts.size() < maxHostCapacity` |
-| Power projection | member hosts' current draw + candidate's draw ≤ `totalMaxPowerDraw`. A host that has never run reports its **idle draw** from the legacy power model: 75.79 W (`MeasurementBasedPowerModel` wrapper), 180 W (`StandardPowerModel`) |
+| Power projection | member hosts' current draw + candidate's draw ≤ `totalMaxPowerDraw`. A host that has never run reports its **idle draw** (75.79 W under `MeasurementBasedPowerModel`) |
 
 Since placement runs before the first tick, every host still reports 0 W,
 so the projection reduces to "candidate's idle draw ≤ budget" — a per-host
@@ -740,5 +739,5 @@ All of it is recorded as `energy.*` metrics and flows into the
 | VM → Host step + strategies | `steps/VMPlacementStep.java`, `PlacementStrategy/VMPlacement/` |
 | Tick loop | `steps/VMExecutionStep.java` |
 | Measurement-based power model | `model/MeasurementBasedPowerModel.java`, `model/EmpiricalWorkloadProfile.java` |
-| Legacy power model + factory | `model/PowerModel.java`, `factory/PowerModelFactory.java` |
+| Power-model factory | `factory/PowerModelFactory.java` |
 | Post-run energy aggregation | `steps/EnergyCalculationStep.java` |
