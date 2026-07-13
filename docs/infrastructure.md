@@ -554,6 +554,19 @@ later.
 
 ## 7. Power Calculation on Hosts
 
+With the default measurement-based model, a host's power draw for each
+1-second tick is
+
+$$
+P_{\text{host}} \;=\; P_{\text{idle}} \;+\; \sum_{\ell \,\in\, \text{busy lanes}} P_{\text{inc}}(w_\ell) \cdot \left(\frac{\text{IPS}_{\text{eff}}(\ell)}{\text{IPS}_{\text{ref}}}\right)^{1.5}
+$$
+
+— the measured idle baseline plus, for every busy vCPU lane $\ell$ on the
+host, the measured incremental power of the workload $w_\ell$ running on
+that lane, scaled by the lane's relative speed. A host with no busy lane
+draws 0 W that tick. §7.1 shows when this is evaluated during the
+simulation loop; §7.2 unpacks each term.
+
 ### 7.1 When power is computed: the tick loop
 
 `VMExecutionStep` (`steps/VMExecutionStep.java`) advances simulated time in
@@ -610,29 +623,28 @@ behind all published energy numbers. It is calibrated from **wall-plug
 measurements of a real machine** (Dell Precision 7920 workstation + Nvidia
 5080 GPU, WellHise PM004 power meter, Oct–Nov 2025).
 
-Host power for a tick (`Host.updatePowerConsumptionWorkloadAware`):
+`Host.updatePowerConsumptionWorkloadAware` implements the formula from the
+top of §7, summing over every busy vCPU lane of every VM on the host. Each
+term:
 
-```
-hostPower = scaledIdlePower + Σ (over every busy vCPU lane of every VM)  lanePower
-
-lanePower = incrementalPower(workload) × speedFactor(VM)
-speedFactor = (effectiveIpsPerVcpu / referenceIps) ^ 1.5
-```
-
-- **Idle baseline**: `baseIdlePowerWatts = 75.79 W` × `hardwareScaleFactor`
-  (default 1.0). Drawn once per host (not per VM) on busy ticks.
-- **Per-lane incremental power**: each busy vCPU lane runs exactly one task;
+- **Idle baseline** ($P_{\text{idle}}$): `baseIdlePowerWatts = 75.79 W` ×
+  `hardwareScaleFactor` (default 1.0). Drawn once per host (not per VM) on
+  busy ticks.
+- **Per-lane incremental power** ($P_{\text{inc}}(w_\ell)$): each busy vCPU
+  lane runs exactly one task;
   the lane contributes the *measured incremental power* of that task's
   workload type (the wall-plug delta above idle at the workload's typical
   utilization). A VM running several tasks at once contributes the sum of
   its lane powers; an idle VM contributes nothing.
-- **Speed scaling**: `POWER_SCALING_EXPONENT = 1.5` (compile-time constant).
+- **Speed scaling** (the $(\text{IPS}_{\text{eff}}/\text{IPS}_{\text{ref}})^{1.5}$
+  factor): `POWER_SCALING_EXPONENT = 1.5` (compile-time constant).
   Faster VMs draw super-linearly more power per second, so energy *per
   instruction* scales as speed^0.5 — the speed–energy trade-off the
   multi-objective studies explore. The exponent models full-range CPU DVFS
   behaviour (linear-in-frequency below ~2 GHz where voltage is pinned,
   steeper in the boost region).
-- **Reference IPS**: `referenceVmIps` defaults to 3 G. When an experiment
+- **Reference IPS** ($\text{IPS}_{\text{ref}}$): `referenceVmIps` defaults
+  to 3 G. When an experiment
   wires `EnergyObjective.setHosts(hosts)` (the campaign path), the reference
   is recomputed as the **median per-core IPS of the host fleet**
   (`calculateReferenceIpsFromHosts`) and propagated to every host's model,
