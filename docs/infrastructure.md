@@ -306,68 +306,38 @@ before execution starts (**offline scheduling**):
 
 ## 4. Host → Datacenter Assignment (`HostPlacementStep`)
 
-`steps/HostPlacementStep.java` walks **all hosts in creation order** and,
-for each host not already in a datacenter, asks a pluggable
-`HostPlacementStrategy` to pick one:
-
-```java
-Optional<CloudDatacenter> selected = strategy.selectDatacenter(host, datacenters);
-if (selected.isPresent()) {
-    selected.get().addHost(host);   // sets host.assignedDatacenterId = dc.id
-    hostsPlaced++;
-} else {
-    hostsFailed++;                  // host stays unassigned
-}
-```
-
-`CloudDatacenter.addHost` re-checks only the slot capacity and throws
-`IllegalStateException` if the datacenter is full (counted as a failure —
-a belt-and-braces guard; a correct strategy never triggers it).
-
-**A host that fails placement is not an error** — the step records
-`hostPlacement.hostsFailed` and moves on. But an unplaced host is inert for
-the whole run: the execution loop only updates hosts with
-`assignedDatacenterId != null` (§7.1), so it executes nothing and draws no
-power.
+`steps/HostPlacementStep.java` walks all hosts in creation order (skipping
+any already assigned); a pluggable `HostPlacementStrategy` picks the
+datacenter, and `addHost` sets `host.assignedDatacenterId`. A host no
+strategy can place is only counted in `hostPlacement.hostsFailed` — the run
+continues, but that host never executes anything and never draws power
+(§7.1).
 
 ### 4.1 The three strategies
 
-All three live in `PlacementStrategy/hostPlacement/` and share the eligibility
-test `datacenter.canAccommodateHost(host)` (§4.2):
+All strategies consider only datacenters passing `canAccommodateHost`
+(§4.2) and pick among them:
 
-| Strategy | Selection rule |
-|----------|----------------|
-| `FirstFitHostPlacementStrategy` *(default)* | First datacenter (in list order) that can accommodate the host. |
-| `SlotBasedBestFitHostPlacementStrategy` | Among eligible datacenters, the one with the **fewest remaining host slots** after placement (tightest capacity fit — fills datacenters up). |
-| `PowerAwareLoadBalancingHostPlacementStrategy` | Among eligible datacenters, the one with the **lowest power-utilization ratio** `totalMomentaryPowerDraw / totalMaxPowerDraw` (spreads power load; a datacenter with `totalMaxPowerDraw <= 0` is treated as fully utilized). Used by the research campaigns — note that with the campaign's single datacenter every host lands in it regardless. |
+| Strategy | Picks the datacenter that... |
+|---|---|
+| `FirstFitHostPlacementStrategy` *(default)* | comes first in list order |
+| `SlotBasedBestFitHostPlacementStrategy` | has the fewest host slots left after placement (fills datacenters up) |
+| `PowerAwareLoadBalancingHostPlacementStrategy` *(used by the campaigns)* | has the lowest power utilization `momentaryDraw ÷ maxDraw` (spreads load; moot at the campaign's single datacenter) |
 
-### 4.2 The admission check: capacity + power budget
+### 4.2 The admission check
 
-`CloudDatacenter.canAccommodateHost(host)` requires **both**:
+`CloudDatacenter.canAccommodateHost(host)` requires both:
 
-1. **Slot capacity**: `hosts.size() < maxHostCapacity`.
-2. **Power projection**: `currentTotalDraw + hostPower <= totalMaxPowerDraw`,
-   where
-   - `currentTotalDraw` is refreshed as the sum of `getCurrentTotalPowerDraw()`
-     over the hosts already in the datacenter, and
-   - `hostPower` is the candidate's current draw, falling back to its **idle
-     draw** `powerModel.calculateTotalPower(0.0, 0.0)` (the *legacy* model:
-     idle CPU + idle GPU + other-components power) when the host has never
-     drawn power yet.
+| Check | Condition |
+|---|---|
+| Slot capacity | `hosts.size() < maxHostCapacity` |
+| Power projection | member hosts' current draw + candidate's draw ≤ `totalMaxPowerDraw`. A host that has never run reports its **idle draw** from the legacy power model: 75.79 W (`MeasurementBasedPowerModel` wrapper), 180 W (`StandardPowerModel`) |
 
-Timing nuance worth knowing: in the standard pipeline, host placement happens
-**before any simulation tick**, so every host's `getCurrentTotalPowerDraw()`
-is still `0.0` — including hosts already placed. The projection therefore
-evaluates to "candidate host's idle draw ≤ total budget" rather than a
-cumulative fill-up of the budget. The power budget consequently acts as a
-*per-host* idle-draw admission gate at placement time, not as a running total
-across placements (and the execution loop itself never enforces the budget —
-power-capped scheduling is handled at the task-assignment level by the
-PowerCeiling study, outside this document's scope).
-
-For reference, the idle fallback per legacy model: `StandardPowerModel`
-50+30+100 = 180 W; the `MeasurementBasedPowerModel` wrapper 25+15+35.79 =
-75.79 W (matching the measured idle of the reference machine, §7.2).
+Since placement runs before the first tick, every host still reports 0 W,
+so the projection reduces to "candidate's idle draw ≤ budget" — a per-host
+gate, not a cumulative fill-up. The execution loop never enforces the
+budget either; power capping is a scheduling-level concern (the
+PowerCeiling study).
 
 ---
 
