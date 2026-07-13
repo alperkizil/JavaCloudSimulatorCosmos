@@ -676,39 +676,6 @@ FURMARK lanes: 2 × 352.18 × (3.0/2.8)^1.5 = 2 × 352.18 × 1.1090 ≈ 781.16 W
 hostPower ≈ 935.60 W
 ```
 
-### 7.3 Legacy path: the utilization-based `PowerModel`
-
-If a host's measurement-based model is removed
-(`setMeasurementBasedPowerModel(null)`), `updatePowerConsumption()` falls
-back to the linear `PowerModel` (`model/PowerModel.java`):
-
-```
-cpuPower  = idleCpuPower + (maxCpuPower − idleCpuPower) × avgCpuUtil
-gpuPower  = idleGpuPower + (maxGpuPower − idleGpuPower) × avgGpuUtil
-hostPower = cpuPower + gpuPower + otherComponentsPower
-```
-
-where `avgCpuUtil`/`avgGpuUtil` are the VM utilizations averaged over the
-host's VMs (clamped to 1.0). The incremental part (cpu+gpu) is attributed
-across VMs by utilization weight so per-VM series stay meaningful.
-
-`PowerModelFactory` (`factory/PowerModelFactory.java`) supplies named presets
-for this model — this is what `HostConfig.powerModelName` selects:
-
-| Name | maxCPU | maxGPU | idleCPU | idleGPU | other (W) |
-|---|---|---|---|---|---|
-| `StandardPowerModel` | 300 | 250 | 50 | 30 | 100 |
-| `HighPerformancePowerModel` | 500 | 400 | 80 | 50 | 150 |
-| `LowPowerModel` | 200 | 150 | 30 | 20 | 60 |
-| `EfficientPowerModel` | 250 | 200 | 35 | 25 | 70 |
-| `ServerPowerModel` | 400 | 350 | 70 | 40 | 120 |
-| `MeasurementBasedPowerModel[:scale]` | 158.76·s | 367.18·s | 25·s | 15·s | 35.79·s |
-
-An unknown name logs a warning and falls back to the measurement-derived
-wrapper. Remember (§3.2): in the standard pipeline this named model does
-**not** drive per-tick power (the measurement-based model takes precedence);
-its live roles are the idle-draw fallback in the datacenter power-budget
-admission check (§4.2) and utility calculations that explicitly call it.
 
 ### 7.4 From power to energy
 
