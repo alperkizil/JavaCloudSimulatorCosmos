@@ -227,127 +227,80 @@ creation order.
 
 ### 3.1 CloudDatacenter
 
-For each `DatacenterConfig`:
+One per `DatacenterConfig` — `new CloudDatacenter(name, maxHostCapacity,
+totalMaxPowerDraw)`:
 
-```java
-new CloudDatacenter(name, maxHostCapacity, totalMaxPowerDraw)
-```
-
-A datacenter starts empty: no hosts, no customers, `totalMomentaryPowerDraw
-= 0`, inactive. Its two hard limits are set at construction and never change
-during a run:
-
-- `maxHostCapacity` — maximum number of hosts it may contain;
-- `totalMaxPowerDraw` — its power budget in watts (used as an admission
-  check during host placement, §4.2).
+| Attribute | At creation |
+|---|---|
+| `id` | auto-generated |
+| `name` | from config |
+| `maxHostCapacity` | from config — hard host-count limit (§4) |
+| `totalMaxPowerDraw` | from config — power budget (W), checked at host placement (§4.2) |
+| `hosts`, `customers` | empty |
+| `totalMomentaryPowerDraw` | 0 W |
+| `isActive` | `false` |
 
 ### 3.2 Host
 
-For each `HostConfig`:
+One per `HostConfig` — `new Host(ips, cpuCores, computeType, gpus)` plus
+RAM/network/storage setters and the configured power model:
 
-```java
-Host host = new Host(ips, cpuCores, computeType, gpus);
-host.setRamCapacityMB(...);          // config values override the
-host.setNetworkCapacityMbps(...);    // constructor defaults
-host.setHardDriveCapacityMB(...);    //   (2 TB RAM / 2 Tbps / 20 TB)
-host.setPowerModel(PowerModelFactory.createPowerModel(config.getPowerModelName()));
-```
-
-Notes on what the constructor itself does (`model/Host.java`):
-
-- `instructionsPerSecond` is the **per-core** speed of the host. It later
-  caps the effective speed of every vCPU placed on this host (§6.4).
-- The host installs **physical identity objects**: one `Gpu` object per GPU
-  and one `Processor` holding one `CpuCore` object per core. These enforce
-  exclusive 1:1 bindings to VMs (§6.4). They are bookkeeping alongside — not
-  a replacement for — the numeric capacity checks.
-- **Two power models are attached to every host:**
-  1. `powerModel` — a legacy utilization-based `PowerModel`. The constructor
-     installs a default (`StandardPowerModel` values) and
-     `InitializationStep` replaces it with whatever
-     `HostConfig.powerModelName` names via `PowerModelFactory`
-     (`factory/PowerModelFactory.java`).
-  2. `measurementBasedPowerModel` — a `MeasurementBasedPowerModel`
-     constructed **by default for every host**. Because
-     `Host.updatePowerConsumption()` prefers this model whenever it is
-     non-null, per-tick power is workload-aware measurement-based **by
-     default**, regardless of which name the config specified. The legacy
-     `powerModel` still matters for the datacenter power-budget projection
-     during host placement (§4.2).
-- All counters (energy, per-tick series, busy/idle seconds) start at zero.
-  `assignedDatacenterId` is `null` — the host belongs to no datacenter yet.
+| Attribute | At creation |
+|---|---|
+| `id` | auto-generated |
+| `instructionsPerSecond` | from config — **per-core** speed; caps every hosted vCPU (§6.4) |
+| `numberOfCpuCores`, `numberOfGpus` | from config; also installs one `CpuCore` per core and one `Gpu` per GPU for exclusive 1:1 VM binding (§6.4) |
+| `computeType` | from config: `CPU_ONLY` / `GPU_ONLY` / `CPU_GPU_MIXED` |
+| `ramCapacityMB`, `networkCapacityMbps`, `hardDriveCapacityMB` | from config (overriding constructor defaults 2 TB / 2 Tbps / 20 TB) |
+| `powerModel` (legacy) | `PowerModelFactory.createPowerModel(powerModelName)` — only role: the power-budget projection at host placement (§4.2) |
+| `measurementBasedPowerModel` | default-installed on **every** host; drives all per-tick power (§7) regardless of the configured model name |
+| `assignedDatacenterId` | `null` |
+| Energy/power counters, per-tick series | 0 / empty |
 
 ### 3.3 User
 
-For each `UserConfig`:
+One per `UserConfig` — `new User(name)`; configured datacenter *names* are
+resolved to datacenter *IDs* here (first half of user→DC matching,
+finalized in §5):
 
-```java
-User user = new User(config.getName());
-for (String datacenterName : config.getSelectedDatacenterNames()) {
-    CloudDatacenter dc = context.getDatacenterByName(datacenterName);
-    if (dc != null) {
-        user.addSelectedDatacenter(dc.getId());  // preference stored as DC *id*
-        dc.addCustomer(user.getName());          // reverse link on the DC
-    }
-}
-```
-
-This is the **first half of user-to-datacenter matching**: the configured
-datacenter *names* are resolved to datacenter *IDs* at creation time.
-A name that matches no datacenter is **silently skipped** (no error, no
-metric) — such a user may end up with fewer preferences than configured, or
-none at all, which the mapping step later repairs (§5). The datacenter also
-records the user in its `customers` list (duplicates ignored).
-
-A `User` starts with empty VM/task lists and null session timestamps.
+| Attribute | At creation |
+|---|---|
+| `id` | auto-generated |
+| `name` | from config |
+| `userSelectedDatacenters` | IDs of the resolved datacenter names; a name matching no datacenter is **silently skipped** (§5 repairs empty sets). Each resolved datacenter also adds the user to its `customers` list |
+| `virtualMachines`, `tasks` | empty — filled by §3.4 / §3.5 |
+| `startTimestamp`, `finishTimestamp` | `null` — the session starts in §5 |
 
 ### 3.4 VM
 
-For each `VMConfig`:
+One per `VMConfig`. A VM is a resource *request* — nothing is reserved
+until a host accepts it (§6.4):
 
-```java
-VM vm = new VM(userName, ipsPerVcpu, vcpus, gpus, ramMB, storageMB,
-               bandwidthMbps, computeType);
-User owner = context.getUserByName(config.getUserName());
-if (owner != null) owner.addVirtualMachine(vm);
-context.addVM(vm);
-```
-
-Key facts from `model/VM.java`:
-
-- A VM is a **request** for resources: `requestedIpsPerVcpu`,
-  `requestedVcpuCount`, `requestedGpuCount`, `requestedRamMB`,
-  `requestedStorageMB`, `requestedBandwidthMbps`. Nothing is reserved until
-  a host accepts the VM (§6.4).
-- Initial state is `VmState.CREATED`; `assignedHostId` is `null`.
-- `effectiveIpsPerVcpu` — the speed a vCPU will actually run at — initially
-  equals the request; host placement may clamp it down (§6.4).
-- Ownership is denormalized: the VM stores `userId` (the owner's name) and
-  the owner's `virtualMachines` list stores the VM.
+| Attribute | At creation |
+|---|---|
+| `id` | auto-generated |
+| `userId` | owner's name from config; the VM is also added to the owner's `virtualMachines` (lookup by name — an unknown owner leaves the VM unlinked, and it fails placement, §6.2) |
+| `requestedIpsPerVcpu`, `requestedVcpuCount`, `requestedGpuCount`, `requestedRamMB`, `requestedStorageMB`, `requestedBandwidthMbps`, `computeType` | from config |
+| `effectiveIpsPerVcpu` | = requested; clamped to the host's per-core speed at placement (§6.4) |
+| `vmState` | `CREATED` |
+| `assignedHostId` | `null` |
+| `assignedTasks`, `finishedTasks` | empty |
 
 ### 3.5 Task
 
-For each `TaskConfig`:
+One per `TaskConfig`, all created at t = 0 — the whole workload is known
+before execution starts (**offline scheduling**):
 
-```java
-long creationTime = context.getCurrentTime();  // 0: clock hasn't ticked yet
-Task task = new Task(name, userName, instructionLength, workloadType, creationTime);
-User owner = context.getUserByName(config.getUserName());
-if (owner != null) owner.addTask(task);
-context.addTask(task);
-```
-
-Key facts from `model/Task.java`:
-
-- A task is `instructionLength` instructions of a given `WorkloadType`
-  (the workload type determines its utilization/power profile, §7.2).
-- All tasks are created at time 0 (**offline scheduling**: the whole
-  workload is known before execution starts).
-- Initial status `NOT_EXECUTED`; `assignedVmId`, assignment/start/end
-  timestamps all `null`. Timing metrics (waiting time = start − creation,
-  turnaround = end − creation) are derived from these later.
-- Like VMs, tasks are linked both ways: task stores the owner's name, the
-  owner's `tasks` list stores the task.
+| Attribute | At creation |
+|---|---|
+| `id` | auto-generated |
+| `name` | from config |
+| `userId` | owner's name from config; the task is also added to the owner's `tasks` |
+| `instructionLength` | from config — total instructions to execute |
+| `workloadType` | from config — sets the utilization and power profile (§7.2) |
+| `taskCreationTime` | 0 |
+| `taskExecutionStatus` | `NOT_EXECUTED` |
+| `assignedVmId`; assignment / start / end timestamps | `null` — waiting time (start − creation) and turnaround (end − creation) derive from these |
 
 ---
 
