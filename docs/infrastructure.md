@@ -676,33 +676,6 @@ FURMARK lanes: 2 × 352.18 × (3.0/2.8)^1.5 = 2 × 352.18 × 1.1090 ≈ 781.16 W
 hostPower ≈ 935.60 W
 ```
 
-
-### 7.4 From power to energy
-
-`Host.updateEnergyConsumption()` runs every tick, after the power update.
-With 1-second ticks, watts and joules-per-tick coincide:
-
-```
-totalEnergyConsumedJoules += currentTotalPowerDraw     // P × 1 s
-cpuEnergyConsumedJoules   += currentCpuPowerDraw       // per-component split,
-gpuEnergyConsumedJoules   += currentGpuPowerDraw       // sums exactly to total
-otherEnergyConsumedJoules += otherComponentsPowerDraw
-peakTotalPowerDraw = max(peakTotalPowerDraw, currentTotalPowerDraw)
-```
-
-It also appends this tick to the host's histories:
-
-- `powerSeriesWatts` — host total power per tick (sums to total energy);
-- `vmPowerSeriesWatts` / `vmEnergyJoules` — each VM's *incremental* power per
-  tick and cumulative energy (zero on ticks where the VM was idle; series are
-  zero-padded for ticks before a VM joined). Σ over VMs equals the host's
-  cpu+gpu (incremental) energy; the idle baseline is attributed to no VM;
-- `busySeries` — the per-tick busy flag consumed by datacenter aggregation.
-
-Conversion helper: `getTotalEnergyConsumedKWh() = joules / 3,600,000`.
-
----
-
 ## 8. Power and Energy on Datacenters
 
 A datacenter never computes power of its own — **everything is aggregated
