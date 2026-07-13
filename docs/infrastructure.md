@@ -252,8 +252,7 @@ RAM/network/storage setters and the configured power model:
 | `numberOfCpuCores`, `numberOfGpus` | from config; also installs one `CpuCore` per core and one `Gpu` per GPU for exclusive 1:1 VM binding (§6.4) |
 | `computeType` | from config: `CPU_ONLY` / `GPU_ONLY` / `CPU_GPU_MIXED` |
 | `ramCapacityMB`, `networkCapacityMbps`, `hardDriveCapacityMB` | from config (overriding constructor defaults 2 TB / 2 Tbps / 20 TB) |
-| `powerModel` (legacy) | `PowerModelFactory.createPowerModel(powerModelName)` — only role: the power-budget projection at host placement (§4.2) |
-| `measurementBasedPowerModel` | default-installed on **every** host; drives all per-tick power (§7) regardless of the configured model name |
+| Power model | `MeasurementBasedPowerModel` — installed on every host and drives all per-tick power (§7); the campaign config pins `powerModelName` to it (`toExperimentConfiguration` throws on anything else). Its 75.79 W idle draw also feeds the placement power projection (§4.2) |
 | `assignedDatacenterId` | `null` |
 | Energy/power counters, per-tick series | 0 / empty |
 
@@ -306,202 +305,109 @@ before execution starts (**offline scheduling**):
 
 ## 4. Host → Datacenter Assignment (`HostPlacementStep`)
 
-`steps/HostPlacementStep.java` walks **all hosts in creation order** and,
-for each host not already in a datacenter, asks a pluggable
-`HostPlacementStrategy` to pick one:
-
-```java
-Optional<CloudDatacenter> selected = strategy.selectDatacenter(host, datacenters);
-if (selected.isPresent()) {
-    selected.get().addHost(host);   // sets host.assignedDatacenterId = dc.id
-    hostsPlaced++;
-} else {
-    hostsFailed++;                  // host stays unassigned
-}
-```
-
-`CloudDatacenter.addHost` re-checks only the slot capacity and throws
-`IllegalStateException` if the datacenter is full (counted as a failure —
-a belt-and-braces guard; a correct strategy never triggers it).
-
-**A host that fails placement is not an error** — the step records
-`hostPlacement.hostsFailed` and moves on. But an unplaced host is inert for
-the whole run: the execution loop only updates hosts with
-`assignedDatacenterId != null` (§7.1), so it executes nothing and draws no
-power.
+`steps/HostPlacementStep.java` walks all hosts in creation order (skipping
+any already assigned); a pluggable `HostPlacementStrategy` picks the
+datacenter, and `addHost` sets `host.assignedDatacenterId`. A host no
+strategy can place is only counted in `hostPlacement.hostsFailed` — the run
+continues, but that host never executes anything and never draws power
+(§7.1).
 
 ### 4.1 The three strategies
 
-All three live in `PlacementStrategy/hostPlacement/` and share the eligibility
-test `datacenter.canAccommodateHost(host)` (§4.2):
+All strategies consider only datacenters passing `canAccommodateHost`
+(§4.2) and pick among them:
 
-| Strategy | Selection rule |
-|----------|----------------|
-| `FirstFitHostPlacementStrategy` *(default)* | First datacenter (in list order) that can accommodate the host. |
-| `SlotBasedBestFitHostPlacementStrategy` | Among eligible datacenters, the one with the **fewest remaining host slots** after placement (tightest capacity fit — fills datacenters up). |
-| `PowerAwareLoadBalancingHostPlacementStrategy` | Among eligible datacenters, the one with the **lowest power-utilization ratio** `totalMomentaryPowerDraw / totalMaxPowerDraw` (spreads power load; a datacenter with `totalMaxPowerDraw <= 0` is treated as fully utilized). Used by the research campaigns — note that with the campaign's single datacenter every host lands in it regardless. |
+| Strategy | Picks the datacenter that... |
+|---|---|
+| `FirstFitHostPlacementStrategy` *(default)* | comes first in list order |
+| `SlotBasedBestFitHostPlacementStrategy` | has the fewest host slots left after placement (fills datacenters up) |
+| `PowerAwareLoadBalancingHostPlacementStrategy` *(used by the campaigns)* | has the lowest power utilization `momentaryDraw ÷ maxDraw` (spreads load; moot at the campaign's single datacenter) |
 
-### 4.2 The admission check: capacity + power budget
+### 4.2 The admission check
 
-`CloudDatacenter.canAccommodateHost(host)` requires **both**:
+`CloudDatacenter.canAccommodateHost(host)` requires both:
 
-1. **Slot capacity**: `hosts.size() < maxHostCapacity`.
-2. **Power projection**: `currentTotalDraw + hostPower <= totalMaxPowerDraw`,
-   where
-   - `currentTotalDraw` is refreshed as the sum of `getCurrentTotalPowerDraw()`
-     over the hosts already in the datacenter, and
-   - `hostPower` is the candidate's current draw, falling back to its **idle
-     draw** `powerModel.calculateTotalPower(0.0, 0.0)` (the *legacy* model:
-     idle CPU + idle GPU + other-components power) when the host has never
-     drawn power yet.
+| Check | Condition |
+|---|---|
+| Slot capacity | `hosts.size() < maxHostCapacity` |
+| Power projection | member hosts' current draw + candidate's draw ≤ `totalMaxPowerDraw`. A host that has never run reports its **idle draw** (75.79 W under `MeasurementBasedPowerModel`) |
 
-Timing nuance worth knowing: in the standard pipeline, host placement happens
-**before any simulation tick**, so every host's `getCurrentTotalPowerDraw()`
-is still `0.0` — including hosts already placed. The projection therefore
-evaluates to "candidate host's idle draw ≤ total budget" rather than a
-cumulative fill-up of the budget. The power budget consequently acts as a
-*per-host* idle-draw admission gate at placement time, not as a running total
-across placements (and the execution loop itself never enforces the budget —
-power-capped scheduling is handled at the task-assignment level by the
-PowerCeiling study, outside this document's scope).
-
-For reference, the idle fallback per legacy model: `StandardPowerModel`
-50+30+100 = 180 W; the `MeasurementBasedPowerModel` wrapper 25+15+35.79 =
-75.79 W (matching the measured idle of the reference machine, §7.2).
+Since placement runs before the first tick, every host still reports 0 W,
+so the projection reduces to "candidate's idle draw ≤ budget" — a per-host
+gate, not a cumulative fill-up. The execution loop never enforces the
+budget either; power capping is a scheduling-level concern (the
+PowerCeiling study).
 
 ---
 
 ## 5. User → Datacenter Matching (`UserDatacenterMappingStep`)
 
-Users were *initially* matched to datacenters at creation time (§3.3) by
-resolving their configured datacenter names. `UserDatacenterMappingStep`
-(`steps/UserDatacenterMappingStep.java`) runs **after host placement** and
-finalizes that matching, because only now is it known which datacenters
-actually contain hosts.
+Creation already resolved each user's datacenter names to IDs (§3.3);
+`steps/UserDatacenterMappingStep.java` runs **after host placement** and
+finalizes the matching now that it is known which datacenters actually have
+hosts. If no datacenter has any, it throws and the simulation aborts.
+Per user, in order:
 
-For the whole step: if **no datacenter has any hosts**, it throws a
-`RuntimeException` and the simulation aborts — there is nothing to run on.
+| Action | What happens |
+|---|---|
+| Prune | preferred datacenters without hosts are removed from the user's set |
+| Repair | a user left with no valid datacenter gets one host-holding datacenter, picked uniformly at random with the **seeded** `RandomGenerator` (reproducible; counted in `userMapping.reassignedUsers`) |
+| Estimate demand | the user's VM *requests* (vCPUs, GPUs, RAM, storage, bandwidth) are summed |
+| Advisory check | demand vs. free capacity across the user's datacenters — failure only sets `userMapping.insufficientResources`; real enforcement is per-VM at placement (§6) |
+| Start session | `user.startSession(t)` at t = 0 |
 
-Then, per user (`processUser`):
-
-1. **Prune invalid preferences.** Every preferred datacenter that has no
-   hosts is removed from the user's list
-   (`user.removeSelectedDatacenter(id)`).
-2. **Repair empty preference sets.** A user left with zero valid datacenters
-   (bad names in the config, or all their DCs ended up hostless) is assigned
-   one **uniformly at random** among the datacenters that do have hosts:
-   `RandomGenerator.getInstance().randomElement(datacentersWithHosts)`.
-   Because the generator was seeded by the engine, this repair is
-   reproducible run-to-run. The user is registered as a customer of that
-   datacenter, and the `userMapping.reassignedUsers` metric counts it.
-3. **Estimate resource demand.** The user's total demand is summed over
-   their VMs' *requests* (vCPUs, GPUs, RAM, storage, bandwidth) into a
-   `UserResourceRequirements` record.
-4. **Advisory feasibility check.** The demand is compared against the free
-   RAM/cores/GPUs summed across all hosts of the user's selected
-   datacenters. Failure does **not** block anything — it only increments the
-   `userMapping.insufficientResources` metric. (Actual enforcement happens
-   per-VM at placement time, §6.)
-5. **Start the session.** `user.startSession(currentTime)` stamps the
-   session start (time 0 in the standard pipeline).
-
-After this step, every user has ≥ 1 datacenter that contains hosts, and
-those preference sets are exactly what constrains VM placement next.
+Afterwards every user has ≥ 1 datacenter with hosts — exactly the sets that
+constrain VM placement next (§6.2).
 
 ---
 
 ## 6. VM → Host Placement (`VMPlacementStep`)
 
-`steps/VMPlacementStep.java` places every VM onto a concrete host, honoring
-three constraints (in this order):
-
-1. **User datacenter preference** — candidate hosts come only from
-   datacenters the VM's owner selected.
-2. **Compute-type compatibility** — VM and host compute types must be
-   compatible (§6.2).
-3. **Resource capacity** — the chosen host must fit the VM's full request
-   (§6.4).
+`steps/VMPlacementStep.java` places every VM onto a host that is in one of
+its owner's datacenters, compute-type compatible (§6.2), and big enough for
+the full request (§6.4). Failures (missing owner, no candidates, no
+capacity) are recorded per VM (`failedVMReasons`,
+`vmPlacement.vmsFailed`) — the run continues; tasks whose only compatible
+VMs never placed simply can't be assigned later.
 
 ### 6.1 Placement order: most constrained first
 
-VMs are sorted by a flexibility score of their compute type and placed in
-ascending order:
+So that flexible VMs don't occupy the hosts constrained VMs need:
 
-| VM compute type | Score | Rationale |
-|-----------------|-------|-----------|
-| `CPU_GPU_MIXED` | 0 (placed first) | can only run on MIXED hosts |
-| `GPU_ONLY`      | 1 | runs on GPU_ONLY or MIXED hosts |
-| `CPU_ONLY`      | 2 (placed last) | runs on CPU_ONLY or MIXED hosts |
-
-This prevents flexible CPU VMs from occupying MIXED hosts that the
-constrained MIXED VMs will need.
+| Placed | VM compute type | Runs on |
+|---|---|---|
+| 1st | `CPU_GPU_MIXED` | MIXED hosts only |
+| 2nd | `GPU_ONLY` | GPU_ONLY or MIXED hosts |
+| last | `CPU_ONLY` | CPU_ONLY or MIXED hosts |
 
 ### 6.2 Candidate host filtering
 
-For each VM, `getCandidateHosts` collects the hosts of every datacenter in
-the owner's preference list, keeping those whose compute type is compatible
-(`isComputeTypeCompatible`):
-
-- a `CPU_GPU_MIXED` **host** accepts every VM type;
-- a `CPU_GPU_MIXED` **VM** requires a `CPU_GPU_MIXED` host;
-- otherwise the types must match exactly (`CPU_ONLY`→`CPU_ONLY`,
-  `GPU_ONLY`→`GPU_ONLY`).
-
-A VM whose owner cannot be found, or with zero candidate hosts, fails
-placement immediately (with a recorded reason).
+Candidates = all hosts of the owner's selected datacenters whose compute
+type is compatible (the "Runs on" column above). No owner or no candidates
+→ the VM fails immediately with a recorded reason.
 
 ### 6.3 The three strategies
 
-The `VMPlacementStrategy` picks one host among the candidates
-(`PlacementStrategy/VMPlacement/`); every strategy only considers candidates
-passing `host.hasCapacityForVM(vm)`:
+Among candidates with capacity (`hasCapacityForVM`), the strategy picks:
 
-| Strategy | Selection rule |
-|----------|----------------|
-| `FirstFitVMPlacementStrategy` *(default)* | First candidate host (in order) with capacity. |
-| `BestFitVMPlacementStrategy` | Host with the **lowest remaining-capacity score** after placement: mean of remaining-CPU and remaining-RAM ratios (plus remaining-GPU ratio, averaged over 3, on hosts that have GPUs). Packs VMs tightly. Used by the research campaigns. |
-| `LoadBalancingVMPlacementStrategy` | Host with the **lowest current utilization**, where the utilization formula depends on what the VM needs: CPU-only VMs → `cpuUtil + 0.1·ramUtil`; GPU-only VMs → `gpuUtil + 0.1·cpuUtil + 0.05·ramUtil`; mixed → `(cpuUtil+gpuUtil)/2 + 0.1·ramUtil` (utilizations are allocated/total ratios). Spreads VMs out. |
+| Strategy | Picks the host that... |
+|---|---|
+| `FirstFitVMPlacementStrategy` *(default)* | comes first with capacity |
+| `BestFitVMPlacementStrategy` *(used by the campaigns)* | would keep the least remaining capacity — mean of remaining CPU/RAM (and GPU, if present) ratios; packs tightly |
+| `LoadBalancingVMPlacementStrategy` | has the lowest current utilization of the resources the VM needs (CPU, GPU, or both; RAM as a small tiebreaker); spreads out |
 
 ### 6.4 What "placing a VM" actually does
 
-On success, the step calls `host.assignVM(vm)` followed by `vm.start()`:
+On success the step calls `host.assignVM(vm)`, then `vm.start()` — the VM
+becomes `RUNNING` and stays so for the whole simulation:
 
-`Host.assignVM(vm)` (`model/Host.java`):
-
-1. **Capacity check** (`hasCapacityForVM`): the request must fit in the
-   host's *remaining* RAM, CPU cores (1 vCPU ⇔ 1 physical core), free GPUs,
-   storage, and network bandwidth. If not, it throws — the step catches
-   this and counts the VM as failed.
-2. **Reservation** (`allocateResources`): the requested RAM, cores, storage,
-   and bandwidth are added to the host's allocated counters. Because
-   admission is on *requested* (not used) amounts and 1 vCPU maps to 1 core,
-   **oversubscription is impossible by construction**.
-3. **Physical binding**: `bindCores` marks `requestedVcpuCount` free
-   `CpuCore` objects as bound to this VM (1:1), `bindGpus` does the same for
-   `requestedGpuCount` `Gpu` objects. These bindings matter at runtime: a
-   VM can concurrently run at most as many GPU tasks as it has bound GPUs.
-4. **Back-reference**: `vm.assignedHostId = host.id`.
-5. **Speed clamping (rule "A2")**: the VM's effective per-vCPU speed is
-   capped by the host's per-core speed:
-
-   ```java
-   vm.setEffectiveIpsPerVcpu(Math.min(vm.getRequestedIpsPerVcpu(),
-                                      host.getInstructionsPerSecond()));
-   ```
-
-   A vCPU can never run faster than the physical core underneath it. E.g.
-   a "fast" 5 G IPS/vCPU VM placed on a 2.5 G IPS/core CPU host runs its
-   lanes at 2.5 G. This effective speed drives both task execution time and
-   the speed-scaled power draw (§7.2).
-
-`vm.start()` then flips the VM to `VmState.RUNNING`. VMs stay RUNNING for
-the entire simulation (there is no per-VM shutdown in the pipeline).
-
-Failures (owner missing, no candidates, no host with capacity, capacity
-race) are recorded per-VM in `failedVMReasons` and as metrics
-(`vmPlacement.vmsFailed`); like host placement, they don't abort the run —
-tasks whose only compatible VMs were never placed simply can't be assigned
-later.
+| Step | Effect |
+|---|---|
+| Capacity check | request must fit the host's *remaining* RAM, cores (1 vCPU ⇔ 1 physical core), GPUs, storage, bandwidth. Admission is on **requested** amounts ⇒ no oversubscription, by construction |
+| Reservation | the requested amounts are added to the host's allocated counters |
+| Physical binding | `requestedVcpuCount` cores and `requestedGpuCount` GPUs bound 1:1 to the VM; the bound-GPU count caps its concurrent GPU tasks at runtime |
+| Back-reference | `vm.assignedHostId = host.id` |
+| Speed clamp ("A2") | `effectiveIpsPerVcpu = min(requested, host per-core IPS)` — a vCPU can't outrun its core; e.g. a 5 G VM on a 2.5 G-core host runs at 2.5 G. Drives both execution time and power (§7.2) |
 
 ---
 
@@ -770,5 +676,5 @@ All of it is recorded as `energy.*` metrics and flows into the
 | VM → Host step + strategies | `steps/VMPlacementStep.java`, `PlacementStrategy/VMPlacement/` |
 | Tick loop | `steps/VMExecutionStep.java` |
 | Measurement-based power model | `model/MeasurementBasedPowerModel.java`, `model/EmpiricalWorkloadProfile.java` |
-| Legacy power model + factory | `model/PowerModel.java`, `factory/PowerModelFactory.java` |
+| Power-model factory | `factory/PowerModelFactory.java` |
 | Post-run energy aggregation | `steps/EnergyCalculationStep.java` |
