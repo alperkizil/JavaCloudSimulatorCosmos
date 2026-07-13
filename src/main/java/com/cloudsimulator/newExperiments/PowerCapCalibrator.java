@@ -15,14 +15,14 @@ import java.util.List;
  * peak percentile that corresponds to a target feasibility fraction: by definition,
  * a cap placed at the <em>t</em>-th percentile of the peaks makes ~<em>t%</em> of
  * solutions feasible. With {@link #DEFAULT_FEASIBILITY_TARGETS} this yields the
- * ~90 / 75 / 50 / 25% tiers, computed globally (pooled across all scenarios).</p>
+ * ~90 / 60 / 30% tiers, computed globally (pooled across all scenarios).</p>
  */
 public final class PowerCapCalibrator {
 
     private PowerCapCalibrator() {}
 
-    /** Default target feasibility fractions (%) for the four cap tiers, loose→tight. */
-    public static final double[] DEFAULT_FEASIBILITY_TARGETS = {90.0, 75.0, 50.0, 25.0};
+    /** Default target feasibility fractions (%) for the three cap tiers, loose→tight. */
+    public static final double[] DEFAULT_FEASIBILITY_TARGETS = {90.0, 60.0, 30.0};
 
     /**
      * Pools every non-null coincident peak across the given runs and returns the cap
