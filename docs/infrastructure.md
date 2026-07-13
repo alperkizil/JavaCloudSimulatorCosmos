@@ -363,96 +363,51 @@ constrain VM placement next (§6.2).
 
 ## 6. VM → Host Placement (`VMPlacementStep`)
 
-`steps/VMPlacementStep.java` places every VM onto a concrete host, honoring
-three constraints (in this order):
-
-1. **User datacenter preference** — candidate hosts come only from
-   datacenters the VM's owner selected.
-2. **Compute-type compatibility** — VM and host compute types must be
-   compatible (§6.2).
-3. **Resource capacity** — the chosen host must fit the VM's full request
-   (§6.4).
+`steps/VMPlacementStep.java` places every VM onto a host that is in one of
+its owner's datacenters, compute-type compatible (§6.2), and big enough for
+the full request (§6.4). Failures (missing owner, no candidates, no
+capacity) are recorded per VM (`failedVMReasons`,
+`vmPlacement.vmsFailed`) — the run continues; tasks whose only compatible
+VMs never placed simply can't be assigned later.
 
 ### 6.1 Placement order: most constrained first
 
-VMs are sorted by a flexibility score of their compute type and placed in
-ascending order:
+So that flexible VMs don't occupy the hosts constrained VMs need:
 
-| VM compute type | Score | Rationale |
-|-----------------|-------|-----------|
-| `CPU_GPU_MIXED` | 0 (placed first) | can only run on MIXED hosts |
-| `GPU_ONLY`      | 1 | runs on GPU_ONLY or MIXED hosts |
-| `CPU_ONLY`      | 2 (placed last) | runs on CPU_ONLY or MIXED hosts |
-
-This prevents flexible CPU VMs from occupying MIXED hosts that the
-constrained MIXED VMs will need.
+| Placed | VM compute type | Runs on |
+|---|---|---|
+| 1st | `CPU_GPU_MIXED` | MIXED hosts only |
+| 2nd | `GPU_ONLY` | GPU_ONLY or MIXED hosts |
+| last | `CPU_ONLY` | CPU_ONLY or MIXED hosts |
 
 ### 6.2 Candidate host filtering
 
-For each VM, `getCandidateHosts` collects the hosts of every datacenter in
-the owner's preference list, keeping those whose compute type is compatible
-(`isComputeTypeCompatible`):
-
-- a `CPU_GPU_MIXED` **host** accepts every VM type;
-- a `CPU_GPU_MIXED` **VM** requires a `CPU_GPU_MIXED` host;
-- otherwise the types must match exactly (`CPU_ONLY`→`CPU_ONLY`,
-  `GPU_ONLY`→`GPU_ONLY`).
-
-A VM whose owner cannot be found, or with zero candidate hosts, fails
-placement immediately (with a recorded reason).
+Candidates = all hosts of the owner's selected datacenters whose compute
+type is compatible (the "Runs on" column above). No owner or no candidates
+→ the VM fails immediately with a recorded reason.
 
 ### 6.3 The three strategies
 
-The `VMPlacementStrategy` picks one host among the candidates
-(`PlacementStrategy/VMPlacement/`); every strategy only considers candidates
-passing `host.hasCapacityForVM(vm)`:
+Among candidates with capacity (`hasCapacityForVM`), the strategy picks:
 
-| Strategy | Selection rule |
-|----------|----------------|
-| `FirstFitVMPlacementStrategy` *(default)* | First candidate host (in order) with capacity. |
-| `BestFitVMPlacementStrategy` | Host with the **lowest remaining-capacity score** after placement: mean of remaining-CPU and remaining-RAM ratios (plus remaining-GPU ratio, averaged over 3, on hosts that have GPUs). Packs VMs tightly. Used by the research campaigns. |
-| `LoadBalancingVMPlacementStrategy` | Host with the **lowest current utilization**, where the utilization formula depends on what the VM needs: CPU-only VMs → `cpuUtil + 0.1·ramUtil`; GPU-only VMs → `gpuUtil + 0.1·cpuUtil + 0.05·ramUtil`; mixed → `(cpuUtil+gpuUtil)/2 + 0.1·ramUtil` (utilizations are allocated/total ratios). Spreads VMs out. |
+| Strategy | Picks the host that... |
+|---|---|
+| `FirstFitVMPlacementStrategy` *(default)* | comes first with capacity |
+| `BestFitVMPlacementStrategy` *(used by the campaigns)* | would keep the least remaining capacity — mean of remaining CPU/RAM (and GPU, if present) ratios; packs tightly |
+| `LoadBalancingVMPlacementStrategy` | has the lowest current utilization of the resources the VM needs (CPU, GPU, or both; RAM as a small tiebreaker); spreads out |
 
 ### 6.4 What "placing a VM" actually does
 
-On success, the step calls `host.assignVM(vm)` followed by `vm.start()`:
+On success the step calls `host.assignVM(vm)`, then `vm.start()` — the VM
+becomes `RUNNING` and stays so for the whole simulation:
 
-`Host.assignVM(vm)` (`model/Host.java`):
-
-1. **Capacity check** (`hasCapacityForVM`): the request must fit in the
-   host's *remaining* RAM, CPU cores (1 vCPU ⇔ 1 physical core), free GPUs,
-   storage, and network bandwidth. If not, it throws — the step catches
-   this and counts the VM as failed.
-2. **Reservation** (`allocateResources`): the requested RAM, cores, storage,
-   and bandwidth are added to the host's allocated counters. Because
-   admission is on *requested* (not used) amounts and 1 vCPU maps to 1 core,
-   **oversubscription is impossible by construction**.
-3. **Physical binding**: `bindCores` marks `requestedVcpuCount` free
-   `CpuCore` objects as bound to this VM (1:1), `bindGpus` does the same for
-   `requestedGpuCount` `Gpu` objects. These bindings matter at runtime: a
-   VM can concurrently run at most as many GPU tasks as it has bound GPUs.
-4. **Back-reference**: `vm.assignedHostId = host.id`.
-5. **Speed clamping (rule "A2")**: the VM's effective per-vCPU speed is
-   capped by the host's per-core speed:
-
-   ```java
-   vm.setEffectiveIpsPerVcpu(Math.min(vm.getRequestedIpsPerVcpu(),
-                                      host.getInstructionsPerSecond()));
-   ```
-
-   A vCPU can never run faster than the physical core underneath it. E.g.
-   a "fast" 5 G IPS/vCPU VM placed on a 2.5 G IPS/core CPU host runs its
-   lanes at 2.5 G. This effective speed drives both task execution time and
-   the speed-scaled power draw (§7.2).
-
-`vm.start()` then flips the VM to `VmState.RUNNING`. VMs stay RUNNING for
-the entire simulation (there is no per-VM shutdown in the pipeline).
-
-Failures (owner missing, no candidates, no host with capacity, capacity
-race) are recorded per-VM in `failedVMReasons` and as metrics
-(`vmPlacement.vmsFailed`); like host placement, they don't abort the run —
-tasks whose only compatible VMs were never placed simply can't be assigned
-later.
+| Step | Effect |
+|---|---|
+| Capacity check | request must fit the host's *remaining* RAM, cores (1 vCPU ⇔ 1 physical core), GPUs, storage, bandwidth. Admission is on **requested** amounts ⇒ no oversubscription, by construction |
+| Reservation | the requested amounts are added to the host's allocated counters |
+| Physical binding | `requestedVcpuCount` cores and `requestedGpuCount` GPUs bound 1:1 to the VM; the bound-GPU count caps its concurrent GPU tasks at runtime |
+| Back-reference | `vm.assignedHostId = host.id` |
+| Speed clamp ("A2") | `effectiveIpsPerVcpu = min(requested, host per-core IPS)` — a vCPU can't outrun its core; e.g. a 5 G VM on a 2.5 G-core host runs at 2.5 G. Drives both execution time and power (§7.2) |
 
 ---
 
