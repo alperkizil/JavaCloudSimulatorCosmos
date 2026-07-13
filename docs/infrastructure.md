@@ -185,22 +185,14 @@ workload):
 | 9–12 | 4.04, 5.25, 6.81, 8.85 |
 | 13–16 | 11.49, 14.92, 19.37, 25.16 |
 
-**Tasks per length.** Each length gets an almost equal share of a pool's
-tasks; the count depends only on the pool's size. (`generateTasks` cycles
-task *i* through the lengths as `instructionLengths[(i + i/block) % 16]`
-with `block = lcm(#types, 16) = 48` for both pools, so every full 48-task
-block hits each length exactly 3 times and the `count mod 48` leftovers
-land one-each on a consecutive run of lengths.)
+**Tasks per length** — each pool spreads its tasks almost evenly across the
+16 lengths (pool ÷ 16 each, ±1; identical for every seed and algorithm arm):
 
-| Pool size | Which pools | Tasks per length | Lengths getting one extra |
-|---:|---|---:|---|
-| 250 | Balanced CPU and GPU | 15 | #6–#15 (→ 16) |
-| 100 | GPU_Stress CPU; CPU_Stress GPU | 6 | #3–#6 (→ 7) |
-| 400 | GPU_Stress GPU; CPU_Stress CPU | 25 | none — exactly uniform |
-
-So every pool is uniform to within one task per length (each length appears
-30–32 times per 500-task scenario), deterministically and identically for
-every seed and algorithm arm.
+| Scenario | CPU pool | GPU pool |
+|---|---:|---:|
+| Balanced | 15–16 | 15–16 |
+| GPU_Stress | 6–7 | 25 |
+| CPU_Stress | 25 | 6–7 |
 
 ### 2.3 Random seed
 
