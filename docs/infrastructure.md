@@ -650,9 +650,20 @@ five effective lane speeds, giving these factors:
 | 2.8 G | 1.00 | 1.000 | 1.00 |
 | 3.0 G | 1.07 | 1.109 | 1.04 |
 
-A 3.0 G lane thus draws ≈ 14.7× the power of a 0.5 G lane but spends only
-≈ 2.4× the energy per instruction — running slow saves energy, running fast
-saves time. The worked example below uses the 2.0 G and 3.0 G rows.
+Comparing two speeds directly, the reference cancels: a lane draws
+(speedA ÷ speedB)^1.5 times the power of the same workload on a speedB
+lane. Relative to the slowest (0.5 G) lane:
+
+| Lane speed | Power (vs 0.5 G) | Energy per instruction (vs 0.5 G) |
+|---:|---:|---:|
+| 0.5 G | 1.0× | 1.00× |
+| 2.0 G | 8.0× | 2.00× |
+| 2.5 G | 11.2× | 2.24× |
+| 2.8 G | 13.3× | 2.37× |
+| 3.0 G | 14.7× | 2.45× |
+
+Running slow saves energy, running fast saves time. The worked example
+below uses the 2.0 G and 3.0 G rows of the factor table.
 
 The measured profiles (`initializeDefaultProfiles`, incremental W above idle
 at the workload's typical utilization):
