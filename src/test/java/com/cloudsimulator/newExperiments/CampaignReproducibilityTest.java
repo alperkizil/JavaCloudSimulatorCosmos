@@ -181,21 +181,21 @@ public class CampaignReproducibilityTest {
     }
 
     /**
-     * PowerCapCalibrator sanity: on peaks {0,10,...,100}, the {90,75,50,25}
-     * feasibility targets must map exactly to caps {90,75,50,25} (in W here).
+     * PowerCapCalibrator sanity: on peaks {0,10,...,100}, the {90,60,30}
+     * feasibility targets must map exactly to caps {90,60,30} (in W here).
      */
     private static void assertCalibratorPercentiles() {
         List<Double> peaks = new ArrayList<>();
         for (int v = 0; v <= 100; v += 10) peaks.add((double) v);
         double[] caps = PowerCapCalibrator.deriveCapsFromPeaks(
             peaks, PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS);
-        double[] expected = {90, 75, 50, 25};
+        double[] expected = {90, 60, 30};
         boolean ok = caps.length == expected.length;
         for (int i = 0; ok && i < expected.length; i++) {
             if (Math.abs(caps[i] - expected[i]) > 1e-9) ok = false;
         }
         if (ok) {
-            System.out.println("  ok:   PowerCapCalibrator percentiles {90,75,50,25} -> "
+            System.out.println("  ok:   PowerCapCalibrator percentiles {90,60,30} -> "
                 + java.util.Arrays.toString(caps));
         } else {
             fail("PowerCapCalibrator", "percentiles wrong: got " + java.util.Arrays.toString(caps)

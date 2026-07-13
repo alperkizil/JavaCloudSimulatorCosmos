@@ -11,7 +11,7 @@ import com.cloudsimulator.observer.ExperimentSpec;
  * <b>Phase 1</b> runs the 7 base metaheuristics <em>uncapped</em>, captures each
  * solution's <em>coincident</em> Step-8 peak, and derives the power-cap tiers from
  * that distribution ({@link PowerCapCalibrator}: peak percentiles for the
- * ~90/75/50/25% feasibility targets, pooled globally across scenarios).
+ * ~90/60/30% feasibility targets, pooled globally across scenarios).
  * <b>Phase 2</b> re-runs each base arm as a constrained {@code _PC<tier>} variant
  * under each derived cap. The combined report (uncapped baselines + constrained
  * arms) plus the {@code PowerCapFeasibility} CSVs
