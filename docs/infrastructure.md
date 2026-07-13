@@ -265,7 +265,8 @@ Notes on what the constructor itself does (`model/Host.java`):
   1. `powerModel` — a legacy utilization-based `PowerModel`. The constructor
      installs a default (`StandardPowerModel` values) and
      `InitializationStep` replaces it with whatever
-     `HostConfig.powerModelName` names via `PowerModelFactory` (§7.3).
+     `HostConfig.powerModelName` names via `PowerModelFactory`
+     (`factory/PowerModelFactory.java`).
   2. `measurementBasedPowerModel` — a `MeasurementBasedPowerModel`
      constructed **by default for every host**. Because
      `Host.updatePowerConsumption()` prefers this model whenever it is
@@ -581,12 +582,14 @@ skipped entirely.
 Inside `Host.updateState()`:
 
 1. `activeSeconds++` (the host's powered-on clock).
-2. `updatePowerConsumption()` — computes this tick's draw (§7.2/§7.3).
+2. `updatePowerConsumption()` — computes this tick's draw (§7.2).
 3. **Busy/idle classification**: the host is *busy* if any of its VMs has at
    least one busy vCPU lane this tick. Busy ticks increment
    `secondsExecuting`; idle ticks increment `secondsIDLE` **and force the
    host's power to 0 W** for that tick (see below).
-4. `updateEnergyConsumption()` — integrates power into energy (§7.4).
+4. `updateEnergyConsumption()` — adds this tick's draw to the host's energy
+   counters and per-tick history (1-second ticks, so watts double as joules
+   per tick; `getTotalEnergyConsumedKWh()` = joules / 3,600,000).
 
 **Idle-host power gating.** An idle host (no lane executing this tick) is
 modeled as *suspended*: its draw this tick is overwritten to 0 W (all
@@ -721,7 +724,7 @@ simulation-wide energy picture:
 
 - **IT energy**: `totalITEnergyJoules` = Σ over all hosts of their total
   energy, with per-host and per-datacenter breakdown maps, plus the
-  CPU/GPU/other component split integrated during the run (§7.4).
+  CPU/GPU/other component split integrated during the run.
 - **Facility energy**: `totalITEnergyJoules × PUE` (Power Usage
   Effectiveness, default **1.5**, configurable via `setPUE`).
 - **Peaks — two distinct notions**:
