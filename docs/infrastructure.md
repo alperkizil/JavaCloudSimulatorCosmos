@@ -173,9 +173,9 @@ occurs. All tasks belong to `ExperimentUser` and are created at t = 0.
 | 2 — GPU_Stress | 100 | 400 | 500 |
 | 3 — CPU_Stress | 400 | 100 | 500 |
 
-LOG16 instruction lengths per task (consecutive ratio ≈ 1.30; the bottom is
-pinned at 0.5 G — the one-tick threshold on the slowest effective lane — and
-the top re-fit to 25.16 G so total instruction mass matches the previous
+The 16 log-spaced instruction lengths (consecutive ratio ≈ 1.30; the bottom
+is pinned at 0.5 G — the one-tick threshold on the slowest effective lane —
+and the top re-fit to 25.16 G so total instruction mass matches the previous
 workload):
 
 | # | Lengths (G instructions) |
@@ -184,6 +184,23 @@ workload):
 | 5–8 | 1.42, 1.85, 2.40, 3.11 |
 | 9–12 | 4.04, 5.25, 6.81, 8.85 |
 | 13–16 | 11.49, 14.92, 19.37, 25.16 |
+
+**Tasks per length.** Each length gets an almost equal share of a pool's
+tasks; the count depends only on the pool's size. (`generateTasks` cycles
+task *i* through the lengths as `instructionLengths[(i + i/block) % 16]`
+with `block = lcm(#types, 16) = 48` for both pools, so every full 48-task
+block hits each length exactly 3 times and the `count mod 48` leftovers
+land one-each on a consecutive run of lengths.)
+
+| Pool size | Which pools | Tasks per length | Lengths getting one extra |
+|---:|---|---:|---|
+| 250 | Balanced CPU and GPU | 15 | #6–#15 (→ 16) |
+| 100 | GPU_Stress CPU; CPU_Stress GPU | 6 | #3–#6 (→ 7) |
+| 400 | GPU_Stress GPU; CPU_Stress CPU | 25 | none — exactly uniform |
+
+So every pool is uniform to within one task per length (each length appears
+30–32 times per 500-task scenario), deterministically and identically for
+every seed and algorithm arm.
 
 ### 2.3 Random seed
 
