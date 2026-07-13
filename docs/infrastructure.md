@@ -9,7 +9,7 @@ JavaCloudSimulatorCosmos: how datacenters, hosts, VMs, users, and tasks are
 Everything below is derived directly from the source code (class and method
 names are cited throughout). Task-to-VM scheduling (the heuristics and
 metaheuristics that decide which VM runs which task) is deliberately out of
-scope here — it deserves its own document.
+scope here — it has its own document: `docs/MetaheuristicTaskScheduler.md`.
 
 ---
 
@@ -25,7 +25,7 @@ in this fixed order:
 2. HostPlacementStep           assigns hosts  -> datacenters
 3. UserDatacenterMappingStep   validates/repairs users -> datacenters, starts sessions
 4. VMPlacementStep             assigns VMs    -> hosts
-5. TaskAssignmentStep          assigns tasks  -> VMs   (separate document)
+5. TaskAssignmentStep          assigns tasks  -> VMs   (see MetaheuristicTaskScheduler.md)
 6. VMExecutionStep             tick loop: tasks execute, hosts compute power/energy
 7. TaskExecutionStep           post-run task timing analysis
 8. EnergyCalculationStep       aggregates energy, PUE, carbon, cost
