@@ -265,7 +265,8 @@ Notes on what the constructor itself does (`model/Host.java`):
   1. `powerModel` — a legacy utilization-based `PowerModel`. The constructor
      installs a default (`StandardPowerModel` values) and
      `InitializationStep` replaces it with whatever
-     `HostConfig.powerModelName` names via `PowerModelFactory` (§7.3).
+     `HostConfig.powerModelName` names via `PowerModelFactory`
+     (`factory/PowerModelFactory.java`).
   2. `measurementBasedPowerModel` — a `MeasurementBasedPowerModel`
      constructed **by default for every host**. Because
      `Host.updatePowerConsumption()` prefers this model whenever it is
@@ -553,6 +554,19 @@ later.
 
 ## 7. Power Calculation on Hosts
 
+With the default measurement-based model, a host's power draw for each
+1-second tick is
+
+$$
+P_{\text{host}} \;=\; P_{\text{idle}} \;+\; \sum_{\ell \,\in\, \text{busy lanes}} P_{\text{inc}}(w_\ell) \cdot \left(\frac{\text{IPS}_{\text{eff}}(\ell)}{\text{IPS}_{\text{ref}}}\right)^{1.5}
+$$
+
+— the measured idle baseline plus, for every busy vCPU lane $\ell$ on the
+host, the measured incremental power of the workload $w_\ell$ running on
+that lane, scaled by the lane's relative speed. A host with no busy lane
+draws 0 W that tick. §7.1 shows when this is evaluated during the
+simulation loop; §7.2 unpacks each term.
+
 ### 7.1 When power is computed: the tick loop
 
 `VMExecutionStep` (`steps/VMExecutionStep.java`) advances simulated time in
@@ -581,12 +595,14 @@ skipped entirely.
 Inside `Host.updateState()`:
 
 1. `activeSeconds++` (the host's powered-on clock).
-2. `updatePowerConsumption()` — computes this tick's draw (§7.2/§7.3).
+2. `updatePowerConsumption()` — computes this tick's draw (§7.2).
 3. **Busy/idle classification**: the host is *busy* if any of its VMs has at
    least one busy vCPU lane this tick. Busy ticks increment
    `secondsExecuting`; idle ticks increment `secondsIDLE` **and force the
    host's power to 0 W** for that tick (see below).
-4. `updateEnergyConsumption()` — integrates power into energy (§7.4).
+4. `updateEnergyConsumption()` — adds this tick's draw to the host's energy
+   counters and per-tick history (1-second ticks, so watts double as joules
+   per tick; `getTotalEnergyConsumedKWh()` = joules / 3,600,000).
 
 **Idle-host power gating.** An idle host (no lane executing this tick) is
 modeled as *suspended*: its draw this tick is overwritten to 0 W (all
@@ -607,33 +623,59 @@ behind all published energy numbers. It is calibrated from **wall-plug
 measurements of a real machine** (Dell Precision 7920 workstation + Nvidia
 5080 GPU, WellHise PM004 power meter, Oct–Nov 2025).
 
-Host power for a tick (`Host.updatePowerConsumptionWorkloadAware`):
+`Host.updatePowerConsumptionWorkloadAware` implements the formula from the
+top of §7, summing over every busy vCPU lane of every VM on the host. Each
+term:
 
-```
-hostPower = scaledIdlePower + Σ (over every busy vCPU lane of every VM)  lanePower
-
-lanePower = incrementalPower(workload) × speedFactor(VM)
-speedFactor = (effectiveIpsPerVcpu / referenceIps) ^ 1.5
-```
-
-- **Idle baseline**: `baseIdlePowerWatts = 75.79 W` × `hardwareScaleFactor`
-  (default 1.0). Drawn once per host (not per VM) on busy ticks.
-- **Per-lane incremental power**: each busy vCPU lane runs exactly one task;
+- **Idle baseline** ($P_{\text{idle}}$): `baseIdlePowerWatts = 75.79 W` ×
+  `hardwareScaleFactor` (default 1.0). Drawn once per host (not per VM) on
+  busy ticks.
+- **Per-lane incremental power** ($P_{\text{inc}}(w_\ell)$): each busy vCPU
+  lane runs exactly one task;
   the lane contributes the *measured incremental power* of that task's
   workload type (the wall-plug delta above idle at the workload's typical
   utilization). A VM running several tasks at once contributes the sum of
   its lane powers; an idle VM contributes nothing.
-- **Speed scaling**: `POWER_SCALING_EXPONENT = 1.5` (compile-time constant).
+- **Speed scaling** (the $(\text{IPS}_{\text{eff}}/\text{IPS}_{\text{ref}})^{1.5}$
+  factor): `POWER_SCALING_EXPONENT = 1.5` (compile-time constant).
   Faster VMs draw super-linearly more power per second, so energy *per
   instruction* scales as speed^0.5 — the speed–energy trade-off the
   multi-objective studies explore. The exponent models full-range CPU DVFS
   behaviour (linear-in-frequency below ~2 GHz where voltage is pinned,
   steeper in the boost region).
-- **Reference IPS**: `referenceVmIps` defaults to 3 G. When an experiment
+- **Reference IPS** ($\text{IPS}_{\text{ref}}$): `referenceVmIps` defaults
+  to 3 G. When an experiment
   wires `EnergyObjective.setHosts(hosts)` (the campaign path), the reference
   is recomputed as the **median per-core IPS of the host fleet**
   (`calculateReferenceIpsFromHosts`) and propagated to every host's model,
   so simulation and objective predictions use the same basis.
+
+For the default campaign fleet the reference is **2.8 G** (median of
+16 × 2.5 G, 12 × 2.8 G, 12 × 3.0 G hosts), and speed clamping (§6.4) leaves
+five effective lane speeds, giving these factors:
+
+| Effective lane speed | ÷ reference (2.8 G) | Power factor (ratio^1.5) | Energy per instruction (ratio^0.5) |
+|---:|---:|---:|---:|
+| 0.5 G | 0.18 | 0.075 | 0.42 |
+| 2.0 G | 0.71 | 0.604 | 0.85 |
+| 2.5 G | 0.89 | 0.844 | 0.94 |
+| 2.8 G | 1.00 | 1.000 | 1.00 |
+| 3.0 G | 1.07 | 1.109 | 1.04 |
+
+Comparing two speeds directly, the reference cancels: a lane draws
+(speedA ÷ speedB)^1.5 times the power of the same workload on a speedB
+lane. Relative to the slowest (0.5 G) lane:
+
+| Lane speed | Power (vs 0.5 G) | Energy per instruction (vs 0.5 G) |
+|---:|---:|---:|
+| 0.5 G | 1.0× | 1.00× |
+| 2.0 G | 8.0× | 2.00× |
+| 2.5 G | 11.2× | 2.24× |
+| 2.8 G | 13.3× | 2.37× |
+| 3.0 G | 14.7× | 2.45× |
+
+Running slow saves energy, running fast saves time. The worked example
+below uses the 2.0 G and 3.0 G rows of the factor table.
 
 The measured profiles (`initializeDefaultProfiles`, incremental W above idle
 at the workload's typical utilization):
@@ -665,16 +707,16 @@ always sum to the lane power, so this changes the breakdown, never the total.
 The host accumulates them as `currentCpuPowerDraw` / `currentGpuPowerDraw`,
 with the idle baseline reported under `otherComponentsPowerDraw`.
 
-**Worked example.** A MIXED host (scale 1.0) whose VMs run, this tick, one
-`SEVEN_ZIP` lane on a 2 G-effective VM and two `FURMARK` lanes on a
-3 G-effective VM, with reference IPS 2.8 G:
+**Worked example.** A MIXED host (scale 1.0, reference 2.8 G) whose VMs run,
+this tick, one `SEVEN_ZIP` lane on a 2 G-effective VM and two `FURMARK`
+lanes on a 3 G-effective VM:
 
-```
-idle                                      = 75.79 W
-SEVEN_ZIP lane: 130.29 × (2.0/2.8)^1.5    = 130.29 × 0.6037 ≈  78.65 W
-FURMARK lanes: 2 × 352.18 × (3.0/2.8)^1.5 = 2 × 352.18 × 1.1090 ≈ 781.16 W
-hostPower ≈ 935.60 W
-```
+| Contribution | Measured power | × speed factor | = draw this tick |
+|---|---:|---:|---:|
+| Idle baseline | 75.79 W | — | 75.79 W |
+| `SEVEN_ZIP` lane at 2.0 G | 130.29 W | 0.6037 | 78.65 W |
+| `FURMARK` lanes at 3.0 G (×2) | 352.18 W each | 1.1090 | 781.16 W |
+| **Host total** | | | **935.60 W** |
 
 ## 8. Power and Energy on Datacenters
 
@@ -721,7 +763,7 @@ simulation-wide energy picture:
 
 - **IT energy**: `totalITEnergyJoules` = Σ over all hosts of their total
   energy, with per-host and per-datacenter breakdown maps, plus the
-  CPU/GPU/other component split integrated during the run (§7.4).
+  CPU/GPU/other component split integrated during the run.
 - **Facility energy**: `totalITEnergyJoules × PUE` (Power Usage
   Effectiveness, default **1.5**, configurable via `setPUE`).
 - **Peaks — two distinct notions**:
