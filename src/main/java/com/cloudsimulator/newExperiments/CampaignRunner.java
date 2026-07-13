@@ -22,10 +22,13 @@ import com.cloudsimulator.steps.VMExecutionStep;
 import com.cloudsimulator.steps.TaskExecutionStep;
 import com.cloudsimulator.steps.EnergyCalculationStep;
 
+import com.cloudsimulator.model.Task;
+
 import com.cloudsimulator.observer.AlgorithmRunResult;
 import com.cloudsimulator.observer.ExperimentReporter;
 import com.cloudsimulator.observer.ExperimentSpec;
 import com.cloudsimulator.observer.ParetoAnalyzer;
+import com.cloudsimulator.observer.SolutionDetailsCollector;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -59,6 +62,14 @@ public final class CampaignRunner {
     private final ExperimentConfig infra;
     private final AlgorithmParameters params;
     private final List<String> labels;
+
+    /**
+     * Captures per-solution schedule details during the Pareto re-simulation
+     * loop (see {@link SolutionDetailsCollector}); null when disabled via
+     * {@link ExperimentConfig#exportSolutionDetails}. Additive only: it reads
+     * getters off the already-executed steps and never touches the RNG.
+     */
+    private SolutionDetailsCollector detailsCollector;
 
     public CampaignRunner(ExperimentSpec spec, PrimaryObjective primary, ExperimentConfig infra,
                           AlgorithmParameters params, String[] labels) {
@@ -99,6 +110,9 @@ public final class CampaignRunner {
         double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
+
+        detailsCollector = infra.exportSolutionDetails
+            ? new SolutionDetailsCollector(spec.getObjectiveNames()) : null;
 
         // One progress-bar line per run (in place of the detailed per-run output,
         // which quiet mode swallows — see runOne). Phase 2 is planned at one
@@ -188,6 +202,9 @@ public final class CampaignRunner {
         try {
             Path dir = new ExperimentReporter()
                 .writeExperiment(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId, reports);
+            if (detailsCollector != null) {
+                detailsCollector.writeAll(dir, experimentId);
+            }
             if (twoPhase) {
                 // Feasibility of every arm (uncapped + constrained) against the derived caps.
                 PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
@@ -287,7 +304,13 @@ public final class CampaignRunner {
 
         List<double[]> front;
         if (strategy instanceof MultiObjectiveTaskSchedulingStrategy) {
+            if (detailsCollector != null) {
+                detailsCollector.beginRun(scenarioNum, scenarioName, label, seed);
+            }
             front = simulateAllParetoSolutions(strategy, context, peaks);
+            if (detailsCollector != null) {
+                detailsCollector.endRun();
+            }
             if (front.isEmpty()) {
                 front = new ArrayList<>();
                 front.add(new double[] {selectedPrimary, selectedEnergy});
@@ -341,7 +364,8 @@ public final class CampaignRunner {
                 dc.setTotalMomentaryPowerDraw(0.0);
             }
 
-            moStrategy.applySolution(solution, context.getTasks(), runningVMs, context.getCurrentTime());
+            Map<Task, VM> assignment = moStrategy.applySolution(
+                solution, context.getTasks(), runningVMs, context.getCurrentTime());
 
             new VMExecutionStep().execute(context);
             TaskExecutionStep taskExec = new TaskExecutionStep();
@@ -349,9 +373,15 @@ public final class CampaignRunner {
             EnergyCalculationStep energyCalc = new EnergyCalculationStep();
             energyCalc.execute(context);
 
-            simulatedResults.add(new double[] {primary.extract(taskExec), energyCalc.getTotalITEnergyKWh()});
+            double primaryValue = primary.extract(taskExec);
+            double energyKWh = energyCalc.getTotalITEnergyKWh();
+            simulatedResults.add(new double[] {primaryValue, energyKWh});
             if (peaksOut != null) {
                 peaksOut.add(energyCalc.getPeakTotalPowerWatts());
+            }
+            if (detailsCollector != null) {
+                detailsCollector.record(context, runningVMs, solution, assignment,
+                    taskExec, energyCalc, primaryValue, energyKWh);
             }
         }
 

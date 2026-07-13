@@ -131,6 +131,16 @@ public final class ExperimentConfig {
     public int numRuns = 10;
 
     /**
+     * When true (default), the campaign additionally writes
+     * {@code scenario_N_solution_details.json.gz} — per-solution schedule
+     * details (task→VM assignments, per-VM queues, per-task waits, per-host
+     * energy) for every published Pareto-front solution, captured during the
+     * existing re-simulation loop. Reporting only; no published CSV or RNG
+     * behavior changes either way.
+     */
+    public boolean exportSolutionDetails = true;
+
+    /**
      * If false (default), {@link #toExperimentConfiguration} throws when any host
      * group is not on the measurement-based power model. Leave this false.
      */
