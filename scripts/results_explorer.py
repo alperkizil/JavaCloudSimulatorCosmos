@@ -394,11 +394,28 @@ def _apply_legend(ax_or_fig, opts, handles=None, labels=None):
         ax_or_fig.legend(fontsize=9, framealpha=0.85)
 
 
+def scenario_bounds(scn):
+    """Pooled per-scenario ideal/nadir over ALL algorithms' published points
+    plus the universal front — the same frame HV_fixed normalizes by. Stable
+    under visibility toggles so the picture doesn't rescale when algorithms
+    are hidden. Returns {obj_name: (ideal, span)}."""
+    frames = [scn.points[scn.obj_names]]
+    if scn.universal is not None and len(scn.universal):
+        frames.append(scn.universal[scn.obj_names])
+    allpts = pd.concat(frames, ignore_index=True)
+    out = {}
+    for c in scn.obj_names:
+        ideal = float(allpts[c].min())
+        span = max(float(allpts[c].max()) - ideal, 1e-12)
+        out[c] = (ideal, span)
+    return out
+
+
 def build_scatter_figure(exp, scn, styles, opts):
     """Scatter/front view for one scenario.
 
     opts keys: swap(bool), title(str|''), show_legend, show_labels,
-    show_clouds, show_fronts, hidden(set), marker_size(float).
+    show_clouds, show_fronts, normalize(bool), hidden(set), marker_size(float).
     """
     fig = Figure(figsize=(9.2, 6.6), dpi=100)
     ax = fig.add_subplot(111)
@@ -406,6 +423,16 @@ def build_scatter_figure(exp, scn, styles, opts):
     if opts.get('swap'):
         ox, oy = oy, ox
     ms = float(opts.get('marker_size', 7))
+
+    if opts.get('normalize'):
+        bounds = scenario_bounds(scn)
+
+        def val(series, col):
+            ideal, span = bounds[col]
+            return (series - ideal) / span
+    else:
+        def val(series, col):
+            return series
 
     for algo in _visible(exp, opts):
         st = styles[algo]
@@ -416,32 +443,37 @@ def build_scatter_figure(exp, scn, styles, opts):
                 # gid drives the GUI's click-to-details lookup; the cloud is
                 # plotted in file order so point index i within this algorithm
                 # equals (seed, solutionIndex) row order of the CSV.
-                coll = ax.scatter(pts[ox], pts[oy], s=(ms * 0.55) ** 2, alpha=0.22,
+                coll = ax.scatter(val(pts[ox], ox), val(pts[oy], oy),
+                                  s=(ms * 0.55) ** 2, alpha=0.22,
                                   color=st['color'], marker=st['marker'],
                                   linewidths=0, zorder=2)
                 coll.set_gid(f'cloud::{algo}')
         if opts.get('show_fronts', True) and algo in scn.fronts:
             fr = scn.fronts[algo].sort_values(ox)
-            line, = ax.plot(fr[ox], fr[oy], color=st['color'], marker=st['marker'],
+            line, = ax.plot(val(fr[ox], ox), val(fr[oy], oy),
+                            color=st['color'], marker=st['marker'],
                             markersize=ms, markerfacecolor=mfc,
                             markeredgecolor=st['color'], linewidth=1.4, alpha=0.9,
                             label=st['display'], zorder=4)
             line.set_gid(f'front::{algo}')
             if opts.get('show_labels') and len(fr):
                 mid = fr.iloc[len(fr) // 2]
-                ax.annotate(st['display'], (mid[ox], mid[oy]),
+                ax.annotate(st['display'],
+                            (float(val(mid[ox], ox)), float(val(mid[oy], oy))),
                             textcoords='offset points', xytext=(6, 6),
                             fontsize=8, color=st['color'], fontweight='bold',
                             zorder=6)
 
     if scn.universal is not None and len(scn.universal):
         uni = scn.universal.sort_values(ox)
-        ax.plot(uni[ox], uni[oy], color=UNIVERSAL_COLOR, linewidth=1.9,
+        ax.plot(val(uni[ox], ox), val(uni[oy], oy),
+                color=UNIVERSAL_COLOR, linewidth=1.9,
                 marker='o', markersize=max(ms * 0.5, 3.5),
                 label=UNIVERSAL_LABEL, zorder=8)
 
-    ax.set_xlabel(axis_label(ox))
-    ax.set_ylabel(axis_label(oy))
+    suffix = '  (normalized)' if opts.get('normalize') else ''
+    ax.set_xlabel(axis_label(ox) + suffix)
+    ax.set_ylabel(axis_label(oy) + suffix)
     ax.set_title(opts.get('title')
                  or f'{scn.name}: {axis_label(ox)} vs {axis_label(oy)}')
     _apply_legend(ax, opts)
@@ -958,10 +990,12 @@ class ResultsExplorerApp:
         self.labels_var = tk.BooleanVar(value=False)
         self.clouds_var = tk.BooleanVar(value=False)
         self.swap_var = tk.BooleanVar(value=False)
+        self.normalize_var = tk.BooleanVar(value=False)
         for var, text in ((self.legend_var, 'Show legend'),
                           (self.labels_var, 'Algorithm name labels'),
                           (self.clouds_var, 'Per-seed point clouds'),
-                          (self.swap_var, 'Swap X / Y axes')):
+                          (self.swap_var, 'Swap X / Y axes'),
+                          (self.normalize_var, 'Normalize axes (pooled ideal/nadir)')):
             ttk.Checkbutton(side, text=text, variable=var,
                             command=self.refresh_plots).pack(anchor='w')
 
@@ -1261,6 +1295,7 @@ class ResultsExplorerApp:
             'show_legend': self.legend_var.get(),
             'show_labels': self.labels_var.get(),
             'show_clouds': self.clouds_var.get(),
+            'normalize': self.normalize_var.get(),
             'hidden': self.hidden,
             'marker_size': ms,
         }
