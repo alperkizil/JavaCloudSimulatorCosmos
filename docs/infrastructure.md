@@ -342,40 +342,22 @@ PowerCeiling study).
 
 ## 5. User → Datacenter Matching (`UserDatacenterMappingStep`)
 
-Users were *initially* matched to datacenters at creation time (§3.3) by
-resolving their configured datacenter names. `UserDatacenterMappingStep`
-(`steps/UserDatacenterMappingStep.java`) runs **after host placement** and
-finalizes that matching, because only now is it known which datacenters
-actually contain hosts.
+Creation already resolved each user's datacenter names to IDs (§3.3);
+`steps/UserDatacenterMappingStep.java` runs **after host placement** and
+finalizes the matching now that it is known which datacenters actually have
+hosts. If no datacenter has any, it throws and the simulation aborts.
+Per user, in order:
 
-For the whole step: if **no datacenter has any hosts**, it throws a
-`RuntimeException` and the simulation aborts — there is nothing to run on.
+| Action | What happens |
+|---|---|
+| Prune | preferred datacenters without hosts are removed from the user's set |
+| Repair | a user left with no valid datacenter gets one host-holding datacenter, picked uniformly at random with the **seeded** `RandomGenerator` (reproducible; counted in `userMapping.reassignedUsers`) |
+| Estimate demand | the user's VM *requests* (vCPUs, GPUs, RAM, storage, bandwidth) are summed |
+| Advisory check | demand vs. free capacity across the user's datacenters — failure only sets `userMapping.insufficientResources`; real enforcement is per-VM at placement (§6) |
+| Start session | `user.startSession(t)` at t = 0 |
 
-Then, per user (`processUser`):
-
-1. **Prune invalid preferences.** Every preferred datacenter that has no
-   hosts is removed from the user's list
-   (`user.removeSelectedDatacenter(id)`).
-2. **Repair empty preference sets.** A user left with zero valid datacenters
-   (bad names in the config, or all their DCs ended up hostless) is assigned
-   one **uniformly at random** among the datacenters that do have hosts:
-   `RandomGenerator.getInstance().randomElement(datacentersWithHosts)`.
-   Because the generator was seeded by the engine, this repair is
-   reproducible run-to-run. The user is registered as a customer of that
-   datacenter, and the `userMapping.reassignedUsers` metric counts it.
-3. **Estimate resource demand.** The user's total demand is summed over
-   their VMs' *requests* (vCPUs, GPUs, RAM, storage, bandwidth) into a
-   `UserResourceRequirements` record.
-4. **Advisory feasibility check.** The demand is compared against the free
-   RAM/cores/GPUs summed across all hosts of the user's selected
-   datacenters. Failure does **not** block anything — it only increments the
-   `userMapping.insufficientResources` metric. (Actual enforcement happens
-   per-VM at placement time, §6.)
-5. **Start the session.** `user.startSession(currentTime)` stamps the
-   session start (time 0 in the standard pipeline).
-
-After this step, every user has ≥ 1 datacenter that contains hosts, and
-those preference sets are exactly what constrains VM placement next.
+Afterwards every user has ≥ 1 datacenter with hosts — exactly the sets that
+constrain VM placement next (§6.2).
 
 ---
 
