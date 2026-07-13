@@ -173,17 +173,53 @@ occurs. All tasks belong to `ExperimentUser` and are created at t = 0.
 | 2 — GPU_Stress | 100 | 400 | 500 |
 | 3 — CPU_Stress | 400 | 100 | 500 |
 
-LOG16 instruction lengths per task (consecutive ratio ≈ 1.30; the bottom is
-pinned at 0.5 G — the one-tick threshold on the slowest effective lane — and
-the top re-fit to 25.16 G so total instruction mass matches the previous
-workload):
+The 16 log-spaced instruction lengths (consecutive ratio ≈ 1.30; the bottom
+is pinned at 0.5 G — the one-tick threshold on the slowest effective lane —
+and the top re-fit to 25.16 G so total instruction mass matches the previous
+workload), with the number of tasks generated per length in each scenario
+and pool:
 
-| # | Lengths (G instructions) |
-|---|---|
-| 1–4 | 0.50, 0.65, 0.84, 1.09 |
-| 5–8 | 1.42, 1.85, 2.40, 3.11 |
-| 9–12 | 4.04, 5.25, 6.81, 8.85 |
-| 13–16 | 11.49, 14.92, 19.37, 25.16 |
+| # | Length (G instr.) | S1 CPU | S1 GPU | S1 Σ | S2 CPU | S2 GPU | S2 Σ | S3 CPU | S3 GPU | S3 Σ |
+|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| 1 | 0.50 | 15 | 15 | 30 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 2 | 0.65 | 15 | 15 | 30 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 3 | 0.84 | 15 | 15 | 30 | 7 | 25 | 32 | 25 | 7 | 32 |
+| 4 | 1.09 | 15 | 15 | 30 | 7 | 25 | 32 | 25 | 7 | 32 |
+| 5 | 1.42 | 15 | 15 | 30 | 7 | 25 | 32 | 25 | 7 | 32 |
+| 6 | 1.85 | 16 | 16 | 32 | 7 | 25 | 32 | 25 | 7 | 32 |
+| 7 | 2.40 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 8 | 3.11 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 9 | 4.04 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 10 | 5.25 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 11 | 6.81 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 12 | 8.85 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 13 | 11.49 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 14 | 14.92 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 15 | 19.37 | 16 | 16 | 32 | 6 | 25 | 31 | 25 | 6 | 31 |
+| 16 | 25.16 | 15 | 15 | 30 | 6 | 25 | 31 | 25 | 6 | 31 |
+| **Σ** | | **250** | **250** | **500** | **100** | **400** | **500** | **400** | **100** | **500** |
+
+(S1 = Balanced, S2 = GPU_Stress, S3 = CPU_Stress; CPU/GPU = the two workload
+pools.)
+
+Why the counts look like this: `generateTasks` picks task *i*'s length as
+`instructionLengths[(i + i/block) % 16]` with
+`block = lcm(#types, 16) = 48` for both pools (lcm(6, 16) = lcm(3, 16) = 48).
+Within each full 48-task block the phase `i/block` is constant, so the index
+cycles through all 16 lengths exactly three times; the leftover
+`count mod 48` tasks then land on a consecutive run of lengths:
+
+- 250-task pools (Balanced): 5 × 48 + **10** leftovers → lengths #6–#15 get
+  one extra task (16 vs 15);
+- 100-task pools (GPU_Stress CPU / CPU_Stress GPU): 2 × 48 + **4** leftovers
+  → lengths #3–#6 get one extra (7 vs 6);
+- 400-task pools (GPU_Stress GPU / CPU_Stress CPU): 8 × 48 + **16** leftovers
+  → the leftovers cover every length exactly once, giving a perfectly
+  uniform 25 per length.
+
+So within every pool the per-length counts are uniform to ±1 task, and —
+because generation is deterministic and RNG-free — identical for every seed
+and every algorithm arm.
 
 ### 2.3 Random seed
 
