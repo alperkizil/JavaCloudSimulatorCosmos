@@ -638,6 +638,22 @@ speedFactor = (effectiveIpsPerVcpu / referenceIps) ^ 1.5
   (`calculateReferenceIpsFromHosts`) and propagated to every host's model,
   so simulation and objective predictions use the same basis.
 
+For the default campaign fleet the reference is **2.8 G** (median of
+16 × 2.5 G, 12 × 2.8 G, 12 × 3.0 G hosts), and speed clamping (§6.4) leaves
+five effective lane speeds, giving these factors:
+
+| Effective lane speed | ÷ reference (2.8 G) | Power factor (ratio^1.5) | Energy per instruction (ratio^0.5) |
+|---:|---:|---:|---:|
+| 0.5 G | 0.18 | 0.075 | 0.42 |
+| 2.0 G | 0.71 | 0.604 | 0.85 |
+| 2.5 G | 0.89 | 0.844 | 0.94 |
+| 2.8 G | 1.00 | 1.000 | 1.00 |
+| 3.0 G | 1.07 | 1.109 | 1.04 |
+
+A 3.0 G lane thus draws ≈ 14.7× the power of a 0.5 G lane but spends only
+≈ 2.4× the energy per instruction — running slow saves energy, running fast
+saves time. The worked example below uses the 2.0 G and 3.0 G rows.
+
 The measured profiles (`initializeDefaultProfiles`, incremental W above idle
 at the workload's typical utilization):
 
@@ -668,16 +684,16 @@ always sum to the lane power, so this changes the breakdown, never the total.
 The host accumulates them as `currentCpuPowerDraw` / `currentGpuPowerDraw`,
 with the idle baseline reported under `otherComponentsPowerDraw`.
 
-**Worked example.** A MIXED host (scale 1.0) whose VMs run, this tick, one
-`SEVEN_ZIP` lane on a 2 G-effective VM and two `FURMARK` lanes on a
-3 G-effective VM, with reference IPS 2.8 G:
+**Worked example.** A MIXED host (scale 1.0, reference 2.8 G) whose VMs run,
+this tick, one `SEVEN_ZIP` lane on a 2 G-effective VM and two `FURMARK`
+lanes on a 3 G-effective VM:
 
-```
-idle                                      = 75.79 W
-SEVEN_ZIP lane: 130.29 × (2.0/2.8)^1.5    = 130.29 × 0.6037 ≈  78.65 W
-FURMARK lanes: 2 × 352.18 × (3.0/2.8)^1.5 = 2 × 352.18 × 1.1090 ≈ 781.16 W
-hostPower ≈ 935.60 W
-```
+| Contribution | Measured power | × speed factor | = draw this tick |
+|---|---:|---:|---:|
+| Idle baseline | 75.79 W | — | 75.79 W |
+| `SEVEN_ZIP` lane at 2.0 G | 130.29 W | 0.6037 | 78.65 W |
+| `FURMARK` lanes at 3.0 G (×2) | 352.18 W each | 1.1090 | 781.16 W |
+| **Host total** | | | **935.60 W** |
 
 ## 8. Power and Energy on Datacenters
 
