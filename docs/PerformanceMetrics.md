@@ -13,6 +13,10 @@ metrics are computed in Java during the campaign
 them, and draws mean ± std bars. So this document is really about what the
 Java analyzer computes and how to read it.
 
+(One scoped exception: for PowerCeiling folders written *before* the
+`*_by_cap.csv` files existed, the explorer recomputes the per-cap-tier tables
+itself with faithful ports of the same math — see §10.)
+
 Everything below is derived directly from the source code (class and method
 names are cited throughout). How the fronts are *produced* is covered by the
 sibling documents: the optimizers and their publication archives in
@@ -332,7 +336,63 @@ bundle embeds the comparability notes of §3/§5 alongside the raw tables.
 
 ---
 
-## 9. Source Map
+## 9. PowerCeiling Studies: Per-Cap-Tier Metrics
+
+A PowerCeiling campaign carries every base arm four times per scenario:
+uncapped plus a constrained `_PC<targetPercent>` re-run under each derived cap
+(`CampaignRunner` Phase 2). Pooling all of those into ONE universal front
+mixes regimes: uncapped points dominate, so a capped arm's GD/IGD/contribution
+against the global reference mostly measures the cost of the cap, not the
+arm's quality *at* that cap.
+
+For these studies the analyzer therefore ALSO runs per tier:
+`ParetoAnalyzer.analyzeScenarioByTier` partitions a scenario's runs by cap
+tier (label suffix `_PC<digits>`; everything else = `Uncapped`), then runs the
+unchanged `analyzeScenario` on copies of each partition. Every number of §§3–5
+exists per tier, with the reference front and normalization bounds taken from
+that tier's arms only (the **tier frame**). Three additive files per scenario
+carry the results (base algorithm labels; leading `CapTier` and — where
+meaningful — `CapWatts` columns; schemas otherwise identical to their global
+counterparts):
+
+| File | Contents |
+|---|---|
+| `scenario_N_universal_fronts_by_cap.csv` | each tier's own universal front |
+| `scenario_N_performance_metrics_by_cap.csv` | §3–§5 columns per (tier, arm, seed) + MEAN/STDDEV + per-tier universal trailer |
+| `scenario_N_seed_collaboration_by_cap.csv` | §5.2 scoreboard per tier |
+
+Reading rules on top of §3:
+
+- **Tier-frame `HV_fixed` is comparable across arms/seeds *within one tier*,
+  not across tiers** (each tier has its own ideal/nadir).
+- For cross-cap comparisons of one arm, use the **run-wide-frame** `HV_fixed`
+  — the ordinary global `performance_metrics.csv` value of the tier-suffixed
+  arm: its frame pools all tiers, so Uncapped→PC30 values are comparable.
+  This is what the explorer's compare mode plots.
+- The global universal front (and the global GD/IGD/contribution computed
+  against it) remains what it always was — a mixed-regime envelope. Use it as
+  such, never as a per-cap reference set.
+- The global CSVs are byte-identical to before; the `*_by_cap.csv` files are
+  purely additive.
+
+## 10. The Explorer's PowerCap Mode
+
+`results_explorer.py` detects the `_PC<N>` labels and switches to a cap-aware
+GUI: a Power-cap dropdown scoping every tab to one tier (base arm names, the
+tier's universal front toggleable like an algorithm, per-tier tables), a
+compare mode (one arm's four tier fronts; HV bars in the run-wide frame), a
+Feasibility tab (`feasibility_summary.csv` vs the 90/60/30 calibration
+targets), and the off-by-default "Global universal (all arms)" overlay.
+
+Folders that predate the `*_by_cap.csv` files are **recomputed in-explorer**
+with faithful ports of the Java math (skyline union, `recompute_hv.py`
+HV_fixed, the `PerformanceMetrics` per-pair legacy four, both contribution
+definitions, the near-tie scoreboard) — the status bar shows `native` vs
+`recomputed`, and `scripts/test_results_explorer_powercap.py` pins the two
+sources to each other on a synthetic campaign
+(`observer/SyntheticPowerCeilingFolder`).
+
+## 11. Source Map
 
 | What | Where |
 |---|---|
@@ -343,3 +403,5 @@ bundle embeds the comparability notes of §3/§5 alongside the raw tables.
 | Universal / per-arm fronts, both contribution counts | `observer/ParetoAnalyzer` (`computeUniversalPareto`, `computeAlgorithmFront`, `paretoContributionCount`, `paretoContributionCountEps`, `analyzeSeedCollaboration`) |
 | CSV schemas | `observer/ExperimentReporter` |
 | Run production (fronts, `TimeMs`) | `newExperiments/CampaignRunner.doRunOne`, `simulateAllParetoSolutions` |
+| Per-cap-tier analysis + `*_by_cap.csv` | `observer/ParetoAnalyzer.analyzeScenarioByTier`, `observer/ExperimentReporter.writeByCapReports` |
+| Explorer per-tier recompute + parity fixtures | `scripts/results_explorer.py` (data layer), `scripts/test_results_explorer_powercap.py`, `observer/SyntheticPowerCeilingFolder`, `observer/ByCapAnalysisTest` |

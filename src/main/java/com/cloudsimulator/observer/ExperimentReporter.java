@@ -211,40 +211,52 @@ public final class ExperimentReporter {
             // byte-identical. It is the only HV formula comparable across
             // arms/seeds — the legacy HV column's per-pair normalization is not.
             w.println("Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,TimeMs,HV_fixed");
+            writeMetricsBody(w, "", s.runsByLabel, s.universalFront, s.universalHV, s.universalHvFixed);
+        }
+    }
 
-            for (Map.Entry<String, List<AlgorithmRunResult>> entry : s.runsByLabel.entrySet()) {
-                String label = entry.getKey();
-                List<AlgorithmRunResult> seeds = entry.getValue();
+    /**
+     * Shared row emitter for the performance-metrics schema. With an empty
+     * {@code rowPrefix} this reproduces the legacy file body byte-for-byte; the
+     * by-cap writer passes {@code "<tier>,<capWatts>,"} to prepend its two
+     * leading columns to every row.
+     */
+    private void writeMetricsBody(PrintWriter w, String rowPrefix,
+                                  Map<String, List<AlgorithmRunResult>> runsByLabel,
+                                  List<double[]> universalFront, double universalHV,
+                                  double universalHvFixed) {
+        for (Map.Entry<String, List<AlgorithmRunResult>> entry : runsByLabel.entrySet()) {
+            String label = entry.getKey();
+            List<AlgorithmRunResult> seeds = entry.getValue();
 
-                for (AlgorithmRunResult ar : seeds) {
-                    w.printf("%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f%n",
-                        ar.getLabel(), ar.getSeed(), ar.getHv(), ar.getGd(), ar.getIgd(), ar.getSpacing(),
-                        nonDomCount(ar), ar.getTotalCount(), ar.getParetoContributionCount(), ar.getRuntimeMs(),
-                        ar.getHvFixed());
-                }
-
-                double[] hvs = collect(seeds, AlgorithmRunResult::getHv);
-                double[] gds = collect(seeds, AlgorithmRunResult::getGd);
-                double[] igds = collect(seeds, AlgorithmRunResult::getIgd);
-                double[] spacings = collect(seeds, AlgorithmRunResult::getSpacing);
-                double[] hvFixeds = collect(seeds, AlgorithmRunResult::getHvFixed);
-                double avgND = seeds.stream().mapToInt(ExperimentReporter::nonDomCount).average().orElse(0);
-                double avgTotal = seeds.stream().mapToInt(AlgorithmRunResult::getTotalCount).average().orElse(0);
-                int unionPCont = ParetoAnalyzer.unionContributionCount(seeds, s.universalFront);
-                long avgTime = avgSuccessfulTime(seeds);
-
-                w.printf("%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d,%.6f%n",
-                    label, mean(hvs), mean(gds), mean(igds), mean(spacings),
-                    avgND, avgTotal, unionPCont, avgTime, mean(hvFixeds));
-
-                w.printf("%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,,%.6f%n",
-                    label, stddev(hvs), stddev(gds), stddev(igds), stddev(spacings), stddev(hvFixeds));
+            for (AlgorithmRunResult ar : seeds) {
+                w.printf("%s%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f%n",
+                    rowPrefix, ar.getLabel(), ar.getSeed(), ar.getHv(), ar.getGd(), ar.getIgd(), ar.getSpacing(),
+                    nonDomCount(ar), ar.getTotalCount(), ar.getParetoContributionCount(), ar.getRuntimeMs(),
+                    ar.getHvFixed());
             }
 
-            int univSize = s.universalFront.size();
-            w.printf("Universal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0,%.6f%n",
-                s.universalHV, univSize, univSize, univSize, s.universalHvFixed);
+            double[] hvs = collect(seeds, AlgorithmRunResult::getHv);
+            double[] gds = collect(seeds, AlgorithmRunResult::getGd);
+            double[] igds = collect(seeds, AlgorithmRunResult::getIgd);
+            double[] spacings = collect(seeds, AlgorithmRunResult::getSpacing);
+            double[] hvFixeds = collect(seeds, AlgorithmRunResult::getHvFixed);
+            double avgND = seeds.stream().mapToInt(ExperimentReporter::nonDomCount).average().orElse(0);
+            double avgTotal = seeds.stream().mapToInt(AlgorithmRunResult::getTotalCount).average().orElse(0);
+            int unionPCont = ParetoAnalyzer.unionContributionCount(seeds, universalFront);
+            long avgTime = avgSuccessfulTime(seeds);
+
+            w.printf("%s%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d,%.6f%n",
+                rowPrefix, label, mean(hvs), mean(gds), mean(igds), mean(spacings),
+                avgND, avgTotal, unionPCont, avgTime, mean(hvFixeds));
+
+            w.printf("%s%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,,%.6f%n",
+                rowPrefix, label, stddev(hvs), stddev(gds), stddev(igds), stddev(spacings), stddev(hvFixeds));
         }
+
+        int univSize = universalFront.size();
+        w.printf("%sUniversal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0,%.6f%n",
+            rowPrefix, universalHV, univSize, univSize, univSize, universalHvFixed);
     }
 
     // -------------------------------------------------------------------------
@@ -292,43 +304,138 @@ public final class ExperimentReporter {
             return;
         }
         String file = "scenario_" + s.scenarioNumber + "_seed_collaboration.csv";
-        Map<Long, ParetoAnalyzer.SeedCollaboration> bySeed = new LinkedHashMap<>();
-        for (ParetoAnalyzer.SeedCollaboration sc : s.seedCollaboration) {
-            bySeed.put(sc.seed, sc);
-        }
         try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
             w.println("Algorithm,Seed,SeedUniversalFrontSize,SeedUniversalHV_fixed,"
                 + "ContributionCount,ContributionPct");
-
-            for (Map.Entry<String, List<AlgorithmRunResult>> entry : s.runsByLabel.entrySet()) {
-                String label = entry.getKey();
-                List<AlgorithmRunResult> seeds = entry.getValue();
-                double[] counts = new double[seeds.size()];
-                double[] pcts = new double[seeds.size()];
-                for (int i = 0; i < seeds.size(); i++) {
-                    AlgorithmRunResult ar = seeds.get(i);
-                    ParetoAnalyzer.SeedCollaboration sc = bySeed.get(ar.getSeed());
-                    int count = sc == null ? 0 : sc.contributionCounts.getOrDefault(label, 0);
-                    double pct = sc == null ? Double.NaN
-                        : sc.contributionPct.getOrDefault(label, Double.NaN);
-                    int univSize = sc == null ? 0 : sc.seedUniversalFront.size();
-                    double univHvFixed = sc == null ? Double.NaN : sc.seedUniversalHvFixed;
-                    w.printf("%s,%d,%d,%.6f,%d,%.6f%n",
-                        label, ar.getSeed(), univSize, univHvFixed, count, pct);
-                    counts[i] = count;
-                    pcts[i] = pct;
-                }
-                w.printf("%s,MEAN,,,%.6f,%.6f%n", label, mean(counts), mean(pcts));
-                w.printf("%s,STDDEV,,,%.6f,%.6f%n", label, stddev(counts), stddev(pcts));
-            }
-
-            double[] univSizes = s.seedCollaboration.stream()
-                .mapToDouble(sc -> sc.seedUniversalFront.size()).toArray();
-            double[] univHvs = s.seedCollaboration.stream()
-                .mapToDouble(sc -> sc.seedUniversalHvFixed).toArray();
-            w.printf("Universal_Pareto,MEAN,%.6f,%.6f,,%n", mean(univSizes), mean(univHvs));
-            w.printf("Universal_Pareto,STDDEV,%.6f,%.6f,,%n", stddev(univSizes), stddev(univHvs));
+            writeCollaborationBody(w, "", s.runsByLabel, s.seedCollaboration);
         }
+    }
+
+    /**
+     * Shared row emitter for the seed-collaboration schema. Empty
+     * {@code rowPrefix} reproduces the legacy body byte-for-byte; the by-cap
+     * writer passes {@code "<tier>,"}.
+     */
+    private void writeCollaborationBody(PrintWriter w, String rowPrefix,
+                                        Map<String, List<AlgorithmRunResult>> runsByLabel,
+                                        List<ParetoAnalyzer.SeedCollaboration> seedCollaboration) {
+        Map<Long, ParetoAnalyzer.SeedCollaboration> bySeed = new LinkedHashMap<>();
+        for (ParetoAnalyzer.SeedCollaboration sc : seedCollaboration) {
+            bySeed.put(sc.seed, sc);
+        }
+
+        for (Map.Entry<String, List<AlgorithmRunResult>> entry : runsByLabel.entrySet()) {
+            String label = entry.getKey();
+            List<AlgorithmRunResult> seeds = entry.getValue();
+            double[] counts = new double[seeds.size()];
+            double[] pcts = new double[seeds.size()];
+            for (int i = 0; i < seeds.size(); i++) {
+                AlgorithmRunResult ar = seeds.get(i);
+                ParetoAnalyzer.SeedCollaboration sc = bySeed.get(ar.getSeed());
+                int count = sc == null ? 0 : sc.contributionCounts.getOrDefault(label, 0);
+                double pct = sc == null ? Double.NaN
+                    : sc.contributionPct.getOrDefault(label, Double.NaN);
+                int univSize = sc == null ? 0 : sc.seedUniversalFront.size();
+                double univHvFixed = sc == null ? Double.NaN : sc.seedUniversalHvFixed;
+                w.printf("%s%s,%d,%d,%.6f,%d,%.6f%n",
+                    rowPrefix, label, ar.getSeed(), univSize, univHvFixed, count, pct);
+                counts[i] = count;
+                pcts[i] = pct;
+            }
+            w.printf("%s%s,MEAN,,,%.6f,%.6f%n", rowPrefix, label, mean(counts), mean(pcts));
+            w.printf("%s%s,STDDEV,,,%.6f,%.6f%n", rowPrefix, label, stddev(counts), stddev(pcts));
+        }
+
+        double[] univSizes = seedCollaboration.stream()
+            .mapToDouble(sc -> sc.seedUniversalFront.size()).toArray();
+        double[] univHvs = seedCollaboration.stream()
+            .mapToDouble(sc -> sc.seedUniversalHvFixed).toArray();
+        w.printf("%sUniversal_Pareto,MEAN,%.6f,%.6f,,%n", rowPrefix, mean(univSizes), mean(univHvs));
+        w.printf("%sUniversal_Pareto,STDDEV,%.6f,%.6f,,%n", rowPrefix, stddev(univSizes), stddev(univHvs));
+    }
+
+    // -------------------------------------------------------------------------
+    // *_by_cap.csv (additive; PowerCeiling studies only)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes the three per-cap-tier files for one scenario of a PowerCeiling
+     * study: {@code scenario_N_universal_fronts_by_cap.csv},
+     * {@code scenario_N_performance_metrics_by_cap.csv} and
+     * {@code scenario_N_seed_collaboration_by_cap.csv}. Purely additive — no
+     * existing file changes shape. Every table is the exact legacy schema with
+     * leading {@code CapTier} (and, for the first two, {@code CapWatts}) columns,
+     * and every number is computed strictly within its tier by
+     * {@link ParetoAnalyzer#analyzeScenarioByTier} (base algorithm labels; the
+     * {@code Uncapped} tier has an empty {@code CapWatts} field).
+     *
+     * @param capWattsByTier tier name ({@code "PC90"}, ...) &rarr; derived cap in
+     *                       Watts; tiers absent from the map (Uncapped) get an
+     *                       empty CapWatts field
+     */
+    public void writeByCapReports(Path dir, int scenarioNumber, List<String> objectiveNames,
+                                  List<ParetoAnalyzer.TierAnalysis> tiers,
+                                  Map<String, Double> capWattsByTier) throws IOException {
+        writeUniversalFrontsByCap(dir, scenarioNumber, objectiveNames, tiers, capWattsByTier);
+        writePerformanceMetricsByCap(dir, scenarioNumber, tiers, capWattsByTier);
+        writeSeedCollaborationByCap(dir, scenarioNumber, tiers);
+    }
+
+    private static String capWattsField(Map<String, Double> capWattsByTier, String tier) {
+        Double watts = capWattsByTier == null ? null : capWattsByTier.get(tier);
+        return watts == null ? "" : String.format(java.util.Locale.US, "%.3f", watts);
+    }
+
+    void writeUniversalFrontsByCap(Path dir, int scenarioNumber, List<String> objectiveNames,
+                                   List<ParetoAnalyzer.TierAnalysis> tiers,
+                                   Map<String, Double> capWattsByTier) throws IOException {
+        String file = "scenario_" + scenarioNumber + "_universal_fronts_by_cap.csv";
+        try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
+            w.println("CapTier,CapWatts," + objectiveNames.get(0) + "," + objectiveNames.get(1));
+            for (ParetoAnalyzer.TierAnalysis t : tiers) {
+                String watts = capWattsField(capWattsByTier, t.tier);
+                for (double[] point : t.analysis.universalFront) {
+                    w.printf("%s,%s,%.6f,%.9f%n", t.tier, watts, point[0], point[1]);
+                }
+            }
+        }
+    }
+
+    void writePerformanceMetricsByCap(Path dir, int scenarioNumber,
+                                      List<ParetoAnalyzer.TierAnalysis> tiers,
+                                      Map<String, Double> capWattsByTier) throws IOException {
+        String file = "scenario_" + scenarioNumber + "_performance_metrics_by_cap.csv";
+        try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
+            w.println("CapTier,CapWatts,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,"
+                + "TotalSolutions,ParetoContribution,TimeMs,HV_fixed");
+            for (ParetoAnalyzer.TierAnalysis t : tiers) {
+                String prefix = t.tier + "," + capWattsField(capWattsByTier, t.tier) + ",";
+                writeMetricsBody(w, prefix, groupByLabel(t.runs), t.analysis.universalFront,
+                    t.analysis.universalHV, t.analysis.universalHvFixed);
+            }
+        }
+    }
+
+    void writeSeedCollaborationByCap(Path dir, int scenarioNumber,
+                                     List<ParetoAnalyzer.TierAnalysis> tiers) throws IOException {
+        String file = "scenario_" + scenarioNumber + "_seed_collaboration_by_cap.csv";
+        try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
+            w.println("CapTier,Algorithm,Seed,SeedUniversalFrontSize,SeedUniversalHV_fixed,"
+                + "ContributionCount,ContributionPct");
+            for (ParetoAnalyzer.TierAnalysis t : tiers) {
+                writeCollaborationBody(w, t.tier + ",", groupByLabel(t.runs),
+                    t.analysis.seedCollaboration);
+            }
+        }
+    }
+
+    /** Groups runs by label preserving encounter order (mirrors the runner). */
+    private static Map<String, List<AlgorithmRunResult>> groupByLabel(List<AlgorithmRunResult> runs) {
+        Map<String, List<AlgorithmRunResult>> byLabel = new LinkedHashMap<>();
+        for (AlgorithmRunResult r : runs) {
+            byLabel.computeIfAbsent(r.getLabel(), k -> new ArrayList<>()).add(r);
+        }
+        return byLabel;
     }
 
     // -------------------------------------------------------------------------

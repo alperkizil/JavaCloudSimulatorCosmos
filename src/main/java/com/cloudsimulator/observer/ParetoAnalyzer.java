@@ -781,4 +781,94 @@ public final class ParetoAnalyzer {
         return new ScenarioAnalysis(universal, universalHV, algorithmFronts,
             seedCollaboration, universalHvFixed);
     }
+
+    // =========================================================================
+    // Cap-tier partitioned analysis (PowerCeiling studies)
+    // =========================================================================
+
+    /** Tier name used for arms without a {@code _PC<digits>} label suffix. */
+    public static final String UNCAPPED_TIER = "Uncapped";
+
+    /**
+     * Campaign cap-tier suffix as produced by {@code CampaignRunner} Phase 2
+     * ({@code <base>_PC<targetPercent>}, e.g. {@code NSGA-II_PC60}). End-anchored
+     * and digits-only, so the legacy {@code FinalExperiment} suffix form
+     * {@code _PC_<n>kW} does NOT match and keeps its existing handling.
+     */
+    private static final java.util.regex.Pattern TIER_SUFFIX =
+        java.util.regex.Pattern.compile("_PC(\\d+)$");
+
+    /** @return the cap tier of a label ({@code "PC90"}, ...) or {@link #UNCAPPED_TIER}. */
+    public static String capTierOf(String label) {
+        java.util.regex.Matcher m = TIER_SUFFIX.matcher(label);
+        return m.find() ? "PC" + m.group(1) : UNCAPPED_TIER;
+    }
+
+    /** @return the label with any {@code _PC<digits>} tier suffix stripped. */
+    public static String baseLabelOf(String label) {
+        return TIER_SUFFIX.matcher(label).replaceFirst("");
+    }
+
+    /** One cap tier's scenario analysis over copies of that tier's runs. */
+    public static final class TierAnalysis {
+        /** {@code "Uncapped"} or {@code "PC<targetPercent>"}. */
+        public final String tier;
+        /**
+         * Analyzed COPIES of the tier's runs, relabelled to their BASE algorithm
+         * names (tier identity lives in {@link #tier}). The original scenario
+         * runs are never touched, so the global analysis stays intact.
+         */
+        public final List<AlgorithmRunResult> runs;
+        public final ScenarioAnalysis analysis;
+
+        TierAnalysis(String tier, List<AlgorithmRunResult> runs, ScenarioAnalysis analysis) {
+            this.tier = tier;
+            this.runs = runs;
+            this.analysis = analysis;
+        }
+    }
+
+    /**
+     * Partitions a scenario's runs by cap tier (label suffix {@code _PC<digits>},
+     * everything else = {@code Uncapped}) and runs the existing
+     * {@link #analyzeScenario} unchanged on a COPY of each partition — so every
+     * indicator, universal front, bound and collaboration table is computed
+     * strictly within the tier, and the caller's run objects keep their
+     * scenario-wide (global) indicator values.
+     *
+     * <p>Tier order: {@code Uncapped} first when present, then tiers by target
+     * percent descending (loose to tight: PC90, PC60, PC30).</p>
+     */
+    public static List<TierAnalysis> analyzeScenarioByTier(List<AlgorithmRunResult> scenarioRuns) {
+        Map<String, List<AlgorithmRunResult>> byTier = new LinkedHashMap<>();
+        for (AlgorithmRunResult run : scenarioRuns) {
+            byTier.computeIfAbsent(capTierOf(run.getLabel()), k -> new ArrayList<>()).add(run);
+        }
+
+        List<String> tiers = new ArrayList<>(byTier.keySet());
+        tiers.sort((a, b) -> {
+            if (a.equals(b)) {
+                return 0;
+            }
+            if (a.equals(UNCAPPED_TIER)) {
+                return -1;
+            }
+            if (b.equals(UNCAPPED_TIER)) {
+                return 1;
+            }
+            return Integer.compare(Integer.parseInt(b.substring(2)), Integer.parseInt(a.substring(2)));
+        });
+
+        List<TierAnalysis> out = new ArrayList<>();
+        for (String tier : tiers) {
+            List<AlgorithmRunResult> copies = new ArrayList<>();
+            for (AlgorithmRunResult r : byTier.get(tier)) {
+                copies.add(new AlgorithmRunResult(baseLabelOf(r.getLabel()), r.getScenarioNumber(),
+                    r.getScenarioName(), r.getSeed(), r.getObjectiveNames(), r.getFront(),
+                    r.getAuxPeakPowerWatts(), r.getRuntimeMs()));
+            }
+            out.add(new TierAnalysis(tier, copies, analyzeScenario(copies)));
+        }
+        return out;
+    }
 }
