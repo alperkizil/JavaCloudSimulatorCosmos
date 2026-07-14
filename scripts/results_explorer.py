@@ -9,7 +9,7 @@ Manually invoked (never auto-run by the pipeline):
 Loads a campaign result folder (the directory holding scenario_N_*.csv,
 experiment_summary.csv, plot_options.json) and provides:
 
-  * Scatter tab   — universal Pareto front (always shown, connected), per-
+  * Scatter tab   — universal Pareto front (toggleable, connected), per-
                     algorithm pooled fronts (union over seeds, connected),
                     optional raw per-seed point clouds, X/Y swap, custom title,
                     live per-algorithm colors, family-stable markers,
@@ -24,12 +24,33 @@ experiment_summary.csv, plot_options.json) and provides:
                     aggregates) read from scenario_N_solution_details.json when
                     the run was produced by a build that exports it.
   * Save          — any figure to PNG/SVG/PDF at a chosen DPI, any table to
-                    CSV, and a single-file "Save for Claude" Markdown bundle of
-                    every table/front for LLM analysis.
+                    CSV, and a "Save for Claude" bundle for LLM analysis: a zip
+                    with a generated read-first briefing, every figure, every
+                    table as a real CSV, and the all-tables markdown (a plain
+                    .md/.md.gz save of just the markdown is still offered).
+
+PowerCap mode (PowerCeiling campaigns, detected from the _PC<N> arm labels):
+
+  * A "Power cap" dropdown scopes the whole GUI to one cap tier (Uncapped /
+    90% / 60% / 30%, with the derived kW): the 7 BASE arms, the tier's own
+    universal front (toggleable like any algorithm), and every indicator/table
+    computed strictly within the tier — reference front and normalization
+    bounds from that tier's arms only. The old all-arms global universal stays
+    available as an off-by-default dashed overlay.
+  * "Compare algorithm across caps" overlays one base arm's four tier fronts
+    (sequential blue ramp, Uncapped dashed); its HV bars use the run-wide
+    frame so they are comparable across caps.
+  * A Feasibility tab plots feasibility_summary.csv against the calibration
+    targets.
+  * Per-tier numbers come from the native scenario_N_*_by_cap.csv files when
+    the folder has them (written by ParetoAnalyzer.analyzeScenarioByTier);
+    older folders are recomputed in-explorer with the same math (the status
+    bar shows which source is active).
 
 Headless bulk export (no GUI, useful for scripting):
 
     python scripts/results_explorer.py <folder> --export-all <outdir>
+    python scripts/results_explorer.py <folder> --claude-zip bundle.zip
 
 Only needs pandas + numpy + matplotlib (same as the rest of the pipeline);
 tkinter is imported only when the GUI actually starts.
@@ -42,6 +63,8 @@ import math
 import os
 import re
 import sys
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 
 import numpy as np
@@ -163,6 +186,269 @@ def _non_dominated(points):
     return pts[keep]
 
 
+# =============================================================================
+# POWERCAP TIERS — label parsing + indicator math ports
+#
+# A PowerCeiling campaign carries 4 arm sets per scenario: the 7 base arms
+# uncapped plus each re-run as a constrained _PC<targetPercent> variant under
+# the derived caps (CampaignRunner Phase 2). Folders written after the Java-side
+# fix carry native per-tier files (scenario_N_*_by_cap.csv, computed by
+# ParetoAnalyzer.analyzeScenarioByTier); for older folders the explorer
+# recomputes the same numbers from the point clouds with the faithful ports
+# below (ParetoAnalyzer / PerformanceMetrics / recompute_hv.py math).
+# =============================================================================
+
+TIER_RE = re.compile(r'_PC(\d+)$')
+UNCAPPED_TIER = 'Uncapped'
+CONTRIB_REL_EPS = 3e-3    # ParetoAnalyzer.CONTRIB_REL_EPS (near-tie credit only)
+CONTRIB_ABS_FLOOR = 1e-9  # ParetoAnalyzer.CONTRIB_ABS_FLOOR
+DEDUP_EPS = 1e-9          # ParetoAnalyzer.DEDUP_EPS
+
+
+def split_tier(label):
+    """'GA_Energy_Dominance_PC60' -> ('GA_Energy_Dominance', 'PC60');
+    labels without the campaign tier suffix -> (label, 'Uncapped').
+    The legacy FinalExperiment suffix form '_PC_<n>kW' is NOT a tier."""
+    m = TIER_RE.search(label)
+    return (label[:m.start()], 'PC' + m.group(1)) if m else (label, UNCAPPED_TIER)
+
+
+def tier_sort_key(tier):
+    """Uncapped first, then descending target percent (PC90, PC60, PC30)."""
+    return (0, 0) if tier == UNCAPPED_TIER else (1, -int(tier[2:]))
+
+
+def tier_display(tier, cap_watts=None):
+    if tier == UNCAPPED_TIER:
+        return 'Uncapped'
+    label = f'Cap {tier[2:]}%'
+    if cap_watts is not None and np.isfinite(cap_watts):
+        label += f' (≈{cap_watts / 1000.0:.1f} kW)'
+    return label
+
+
+# ---- ParetoAnalyzer ports (raw-space union / contribution machinery) --------
+
+def _dominates(a, b):
+    """Weak Pareto dominance, both objectives minimized (ParetoAnalyzer.dominates)."""
+    return a[0] <= b[0] and a[1] <= b[1] and (a[0] < b[0] or a[1] < b[1])
+
+
+def _filter_nondominated(points):
+    """Equivalent of ParetoAnalyzer.filterToNonDominated / nonDominatedUnion:
+    non-dominated subset (weak dominance, minimization), de-duplicated at 1e-9,
+    sorted by x. Implemented as an O(n log n) skyline sweep — value-identical to
+    the Java O(n^2) scan (for 2-D minimization the x-sorted strictly-descending-y
+    staircase IS the non-dominated set; only the representative of sub-1e-9
+    duplicate clusters can differ, which CSV precision makes exactly equal
+    anyway). Returns an (n, 2) float array."""
+    arr = np.asarray(points, dtype=float).reshape(-1, 2)
+    if not len(arr):
+        return arr
+    arr = np.unique(arr, axis=0)  # lexicographic sort (x, then y) + exact dedup
+    keep = []
+    best_y = np.inf
+    for x, y in arr:
+        if y < best_y:
+            keep.append((x, y))
+            best_y = y
+    out = []
+    for p in keep:  # 1e-9 near-duplicate pass (adjacent-only along the staircase)
+        if out and abs(out[-1][0] - p[0]) < DEDUP_EPS and abs(out[-1][1] - p[1]) < DEDUP_EPS:
+            continue
+        out.append(p)
+    return np.asarray(out)
+
+
+def _union_bounds(points):
+    """recompute_hv.py / ParetoAnalyzer.unionBounds: (idealX, idealY, nadirX, nadirY)."""
+    arr = np.asarray(points, dtype=float)
+    return (float(arr[:, 0].min()), float(arr[:, 1].min()),
+            float(arr[:, 0].max()), float(arr[:, 1].max()))
+
+
+def _normalize_union(points, bounds):
+    """Union-frame min-max normalization, range floored at 1e-12."""
+    ix, iy, nx, ny = bounds
+    rx = max(nx - ix, 1e-12)
+    ry = max(ny - iy, 1e-12)
+    arr = np.asarray(points, dtype=float)
+    return np.column_stack(((arr[:, 0] - ix) / rx, (arr[:, 1] - iy) / ry))
+
+
+def _hv_fixed(points_norm):
+    """recompute_hv.py hv_2d against (1.1, 1.1), divided by 1.21. Input is the
+    union-frame-normalized point set of one run (not pre-filtered)."""
+    nd = _filter_nd_sort9(points_norm)
+    if not len(nd):
+        return 0.0
+    nd = nd[(nd[:, 0] < 1.1) & (nd[:, 1] < 1.1)]
+    if not len(nd):
+        return 0.0
+    hv, prev_y = 0.0, 1.1
+    for x, y in nd[np.argsort(nd[:, 0])]:
+        hv += (1.1 - x) * (prev_y - y)
+        prev_y = y
+    return float(hv) / (1.1 * 1.1)
+
+
+def _filter_nd_sort9(points):
+    """recompute_hv.py non_dominated_sort: non-dominated subset, 9-decimal
+    de-duplication, sorted by x. Returns an (n, 2) array."""
+    pts = np.asarray(points, dtype=float)
+    if not len(pts):
+        return pts.reshape(0, 2)
+    keep = [p for i, p in enumerate(pts)
+            if not any(i != j and _dominates(q, p) for j, q in enumerate(pts))]
+    if not keep:
+        return np.empty((0, 2))
+    nd = np.array(keep)
+    _, idx = np.unique(np.round(nd, decimals=9), axis=0, return_index=True)
+    nd = nd[np.sort(idx)]
+    return nd[np.argsort(nd[:, 0])]
+
+
+def _contribution_count(run_points, universal):
+    """ParetoAnalyzer.paretoContributionCount: distinct universal points matched
+    within 1e-9 absolute on both raw objectives (each run point credits its
+    FIRST matching universal point, mirroring the Java break)."""
+    run = np.asarray(run_points, dtype=float).reshape(-1, 2)
+    uni = np.asarray(universal, dtype=float).reshape(-1, 2)
+    if not len(run) or not len(uni):
+        return 0
+    hit = ((np.abs(run[:, None, 0] - uni[None, :, 0]) < DEDUP_EPS)
+           & (np.abs(run[:, None, 1] - uni[None, :, 1]) < DEDUP_EPS))
+    any_hit = hit.any(axis=1)
+    first = hit.argmax(axis=1)  # index of the first True per row
+    return len(set(first[any_hit].tolist()))
+
+
+def _union_contribution_count(runs_points, universal):
+    """ParetoAnalyzer.unionContributionCount: distinct universal points matched
+    by ANY of the label's runs (the MEAN-row integer)."""
+    stacked = [np.asarray(p, dtype=float).reshape(-1, 2)
+               for p in runs_points if len(p)]
+    if not stacked:
+        return 0
+    return _contribution_count(np.vstack(stacked), universal)
+
+
+def _near_tie_credit(run_points, universal):
+    """ParetoAnalyzer.paretoContributionCountEps: distinct universal points some
+    run point near-ties (CONTRIB_REL_EPS relative on BOTH objectives, tolerance
+    scaled to the universal point's own magnitude, nearest-match)."""
+    run = np.asarray(run_points, dtype=float).reshape(-1, 2)
+    uni = np.asarray(universal, dtype=float).reshape(-1, 2)
+    if not len(run) or not len(uni):
+        return 0
+    tol = np.maximum(np.abs(uni) * CONTRIB_REL_EPS, CONTRIB_ABS_FLOOR)  # (m, 2)
+    d = np.abs(run[:, None, :] - uni[None, :, :])                       # (n, m, 2)
+    within = (d <= tol[None, :, :]).all(axis=2)                         # (n, m)
+    score = ((d / tol[None, :, :]) ** 2).sum(axis=2)                    # (n, m)
+    score[~within] = np.inf
+    best = score.argmin(axis=1)
+    ok = within.any(axis=1)
+    return len(set(best[ok].tolist()))
+
+
+# ---- PerformanceMetrics ports (legacy per-pair-frame HV/GD/IGD/Spacing) -----
+
+def _legacy_pair_metrics(seed_front, universal):
+    """Port of ParetoAnalyzer.computeLegacyIndicators: PerformanceMetrics on the
+    pair {seed non-dominated front, universal front} (reference index 1) in the
+    PAIR's own min-max frame. Returns (hv, gd, igd, spacing) with the runner
+    fallbacks (hv=0, gd=igd=MAX, spacing=0) on degenerate input."""
+    if universal is None or not len(universal):
+        return 0.0, sys.float_info.max, sys.float_info.max, 0.0
+    seed = [list(map(float, p)) for p in seed_front]
+    n_seed = len(seed)
+    if not seed:
+        seed = [[sys.float_info.max, sys.float_info.max]]  # runner dummy point
+    univ = [list(map(float, p)) for p in universal]
+    try:
+        fronts = [sorted(seed, key=lambda p: p[0]), sorted(univ, key=lambda p: p[0])]
+        # findMinMax: first/last elements only (fronts are x-sorted staircases).
+        f1min = f1max = fronts[0][0][0]
+        f2min = f2max = fronts[0][0][1]
+        for fr in fronts:
+            first, last = fr[0], fr[-1]
+            f1min = min(f1min, first[0])
+            f1max = max(f1max, last[0])
+            f2min = min(f2min, last[1])
+            f2max = max(f2max, first[1])
+        r1, r2 = f1max - f1min, f2max - f2min
+        norm = [[[((p[0] - f1min) / r1) if r1 > 0 else 0.0,
+                  ((p[1] - f2min) / r2) if r2 > 0 else 0.0] for p in fr]
+                for fr in fronts]
+        ns, nu = norm[0], norm[1]
+
+        hv = abs(1.0 - ns[0][0]) * abs(1.0 - ns[0][1])
+        for i in range(1, len(ns)):
+            hv += abs(1.0 - ns[i][0]) * abs(ns[i - 1][1] - ns[i][1])
+
+        a, u = np.asarray(ns, dtype=float), np.asarray(nu, dtype=float)
+        d = np.sqrt(((a[:, None, :] - u[None, :, :]) ** 2).sum(axis=2))
+        gd = float(d.min(axis=1).mean())
+        igd = float(d.min(axis=0).mean())
+
+        spacing = 0.0
+        if n_seed > 1:
+            p = ns
+            dist = [abs(p[1][0] - p[0][0]) + abs(p[0][1] - p[1][1])]
+            prev = dist[0]
+            for i in range(1, len(p) - 1):
+                nxt = abs(p[i + 1][0] - p[i][0]) + abs(p[i][1] - p[i + 1][1])
+                dist.append(min(prev, nxt))
+                prev = nxt
+            last = len(p) - 1
+            dist.append(p[last][0] - p[last - 1][0] + p[last - 1][1] - p[last][1])
+            d_avg = sum(dist) / len(dist)
+            spacing = math.sqrt(sum((d_avg - d) ** 2 for d in dist) / (len(p) - 1))
+        return float(hv), float(gd), float(igd), float(spacing)
+    except Exception:
+        return 0.0, sys.float_info.max, sys.float_info.max, 0.0
+
+
+def _legacy_own_frame_hv(universal):
+    """ParetoAnalyzer.universalHV: the universal front's legacy HV in its OWN
+    min-max frame (comparable to nothing; kept for the trailer row)."""
+    if universal is None or not len(universal):
+        return 0.0
+    try:
+        fr = sorted([list(map(float, p)) for p in universal], key=lambda p: p[0])
+        f1min, f1max = fr[0][0], fr[-1][0]
+        f2min, f2max = fr[-1][1], fr[0][1]
+        r1, r2 = f1max - f1min, f2max - f2min
+        ns = [[((p[0] - f1min) / r1) if r1 > 0 else 0.0,
+               ((p[1] - f2min) / r2) if r2 > 0 else 0.0] for p in fr]
+        hv = abs(1.0 - ns[0][0]) * abs(1.0 - ns[0][1])
+        for i in range(1, len(ns)):
+            hv += abs(1.0 - ns[i][0]) * abs(ns[i - 1][1] - ns[i][1])
+        return float(hv)
+    except Exception:
+        return 0.0
+
+
+class TierData:
+    """One cap tier's slice of a scenario: fronts, universal front and per-tier
+    indicator tables, keyed by BASE algorithm labels."""
+
+    def __init__(self, tier):
+        self.tier = tier
+        self.cap_watts = None       # derived cap (W); None for Uncapped
+        self.points = None          # tier's cloud rows (Algorithm = base label)
+        self.universal = None       # tier universal front DataFrame
+        self.fronts = {}            # base label -> pooled front DataFrame
+        self.metrics_seed = None
+        self.metrics_mean = None
+        self.metrics_std = None
+        self.universal_metrics = {}
+        self.collab_seed = None
+        self.collab_mean = None
+        self.collab_std = None
+        self.collab_universal = {}  # {'mean': {...}, 'std': {...}}
+
+
 class ScenarioData:
     """All artifacts of one scenario_N_* set, parsed and split."""
 
@@ -183,6 +469,7 @@ class ScenarioData:
         self.collab_std = None
         self.collab_universal = {}   # {'mean': {...}, 'std': {...}}
         self.details = None          # parsed scenario_N_solution_details.json
+        self.tiers = {}              # tier name -> TierData (powercap folders only)
 
 
 class ExperimentData:
@@ -194,6 +481,13 @@ class ExperimentData:
         self.scenarios = {}      # number -> ScenarioData
         self.algorithms = []     # encounter-ordered labels (no Universal_Pareto)
         self.plot_options = {}
+        # PowerCap mode (set by _load_powercap when _PC<N> arms are present):
+        self.is_powercap = False
+        self.base_algorithms = []  # encounter-ordered base labels (7 arms)
+        self.tier_names = []       # ordered: Uncapped, PC90, PC60, PC30
+        self.cap_watts = {}        # tier -> derived cap (W), when known
+        self.feasibility = None    # feasibility_summary.csv DataFrame (or None)
+        self.by_cap_source = None  # 'native' | 'recomputed' | None
 
     # ---- loading --------------------------------------------------------
 
@@ -237,6 +531,7 @@ class ExperimentData:
                 if a != UNIVERSAL_KEY:
                     seen.setdefault(a, None)
         exp.algorithms = list(seen)
+        exp._load_powercap()
         return exp
 
     def _path(self, fname):
@@ -332,6 +627,270 @@ class ExperimentData:
                     print(f'warning: could not parse {path}: {e}', file=sys.stderr)
                 return
 
+    # ---- powercap (cap-tier) loading -------------------------------------
+
+    def _load_powercap(self):
+        """Detects a PowerCeiling folder (arm labels with _PC<N> suffixes) and
+        builds per-tier data for every scenario: native *_by_cap.csv files when
+        the run was produced by a build that writes them, else a faithful
+        in-explorer recompute from the point clouds. No-op for other studies."""
+        bases, tiers = {}, {}
+        for a in self.algorithms:
+            b, t = split_tier(a)
+            bases.setdefault(b, None)
+            tiers.setdefault(t, None)
+        self.is_powercap = any(t != UNCAPPED_TIER for t in tiers)
+        if not self.is_powercap:
+            return
+        self.base_algorithms = list(bases)
+        self.tier_names = sorted(tiers, key=tier_sort_key)
+        self._load_feasibility()
+
+        native = all(
+            os.path.isfile(self._path(f'scenario_{n}_performance_metrics_by_cap.csv'))
+            for n in self.scenarios)
+        self.by_cap_source = 'native' if native else 'recomputed'
+        for scn in self.scenarios.values():
+            self._slice_tier_points(scn)
+            if native:
+                self._load_tiers_native(scn)
+            else:
+                self._recompute_tiers(scn)
+        self._resolve_cap_watts()
+
+    def _full_label(self, base, tier):
+        return base if tier == UNCAPPED_TIER else f'{base}_{tier}'
+
+    def _slice_tier_points(self, scn):
+        """Splits the clouds and pooled fronts by tier, relabelling arms to
+        their base names (tier identity lives in the TierData)."""
+        tier_of = {a: split_tier(a)[1] for a in self.algorithms}
+        base_of = {a: split_tier(a)[0] for a in self.algorithms}
+        for tier in self.tier_names:
+            td = TierData(tier)
+            mask = scn.points['Algorithm'].map(lambda a: tier_of.get(a) == tier)
+            pts = scn.points[mask].copy()
+            pts['Algorithm'] = pts['Algorithm'].map(base_of)
+            td.points = pts.reset_index(drop=True)
+            for label, front in scn.fronts.items():
+                if tier_of.get(label) == tier:
+                    td.fronts[base_of[label]] = front
+            scn.tiers[tier] = td
+
+    def _load_feasibility(self):
+        path = self._path('feasibility_summary.csv')
+        if os.path.isfile(path):
+            try:
+                self.feasibility = pd.read_csv(path)
+            except (OSError, ValueError):
+                self.feasibility = None
+
+    def _resolve_cap_watts(self):
+        """Tier -> derived cap Watts: native CapWatts columns first, else the
+        distinct CapWatts of feasibility_summary.csv matched to the PC tiers in
+        descending order (looser target = higher cap by construction)."""
+        watts = {}
+        for scn in self.scenarios.values():
+            for tier, td in scn.tiers.items():
+                if td.cap_watts is not None and np.isfinite(td.cap_watts):
+                    watts.setdefault(tier, float(td.cap_watts))
+        pc_tiers = [t for t in self.tier_names if t != UNCAPPED_TIER]
+        if not watts and self.feasibility is not None and 'CapWatts' in self.feasibility:
+            caps = sorted(pd.unique(self.feasibility['CapWatts'].dropna()), reverse=True)
+            watts = {t: float(w) for t, w in zip(pc_tiers, caps)}
+        self.cap_watts = watts
+        for scn in self.scenarios.values():
+            for tier, td in scn.tiers.items():
+                td.cap_watts = watts.get(tier)
+
+    # ---- native *_by_cap.csv loaders --------------------------------------
+
+    def _load_tiers_native(self, scn):
+        n = scn.number
+        uni_path = self._path(f'scenario_{n}_universal_fronts_by_cap.csv')
+        if os.path.isfile(uni_path):
+            df = pd.read_csv(uni_path)
+            obj = [c for c in df.columns if c not in ('CapTier', 'CapWatts')][:2]
+            for tier, grp in df.groupby('CapTier', sort=False):
+                td = scn.tiers.get(tier)
+                if td is None:
+                    continue
+                td.universal = (grp[obj]
+                                .rename(columns=dict(zip(obj, scn.obj_names)))
+                                .sort_values(scn.obj_names[0])
+                                .reset_index(drop=True))
+                if 'CapWatts' in grp and grp['CapWatts'].notna().any():
+                    td.cap_watts = float(grp['CapWatts'].dropna().iloc[0])
+
+        df = pd.read_csv(self._path(f'scenario_{n}_performance_metrics_by_cap.csv'),
+                         dtype={'Seed': str})
+        num_cols = [c for c in df.columns
+                    if c not in ('CapTier', 'Algorithm', 'Seed')]
+        for c in num_cols:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+        for tier, grp in df.groupby('CapTier', sort=False):
+            td = scn.tiers.get(tier)
+            if td is None:
+                continue
+            if 'CapWatts' in grp and grp['CapWatts'].notna().any():
+                td.cap_watts = float(grp['CapWatts'].dropna().iloc[0])
+            grp = grp.drop(columns=[c for c in ('CapTier', 'CapWatts') if c in grp])
+            is_univ = grp['Algorithm'] == UNIVERSAL_KEY
+            seed_mask = grp['Seed'].str.fullmatch(r'\d+') & ~is_univ
+            td.metrics_seed = grp[seed_mask].copy()
+            td.metrics_seed['Seed'] = td.metrics_seed['Seed'].astype(int)
+            td.metrics_mean = grp[(grp['Seed'] == 'MEAN') & ~is_univ].set_index('Algorithm')
+            td.metrics_std = grp[(grp['Seed'] == 'STDDEV') & ~is_univ].set_index('Algorithm')
+            univ = grp[is_univ]
+            if len(univ):
+                td.universal_metrics = univ.iloc[0].to_dict()
+
+        collab_path = self._path(f'scenario_{n}_seed_collaboration_by_cap.csv')
+        if os.path.isfile(collab_path):
+            df = pd.read_csv(collab_path, dtype={'Seed': str})
+            num_cols = [c for c in df.columns if c not in ('CapTier', 'Algorithm', 'Seed')]
+            for c in num_cols:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+            for tier, grp in df.groupby('CapTier', sort=False):
+                td = scn.tiers.get(tier)
+                if td is None:
+                    continue
+                grp = grp.drop(columns=['CapTier'])
+                is_univ = grp['Algorithm'] == UNIVERSAL_KEY
+                seed_mask = grp['Seed'].str.fullmatch(r'\d+') & ~is_univ
+                td.collab_seed = grp[seed_mask].copy()
+                td.collab_seed['Seed'] = td.collab_seed['Seed'].astype(int)
+                td.collab_mean = grp[(grp['Seed'] == 'MEAN') & ~is_univ].set_index('Algorithm')
+                td.collab_std = grp[(grp['Seed'] == 'STDDEV') & ~is_univ].set_index('Algorithm')
+                for kind in ('MEAN', 'STDDEV'):
+                    row = grp[is_univ & (grp['Seed'] == kind)]
+                    if len(row):
+                        td.collab_universal[kind.lower()] = row.iloc[0].to_dict()
+
+    # ---- in-explorer recompute (pre-fix folders) ---------------------------
+
+    def _recompute_tiers(self, scn):
+        """Recomputes every per-tier table exactly the way the Java side does
+        (ParetoAnalyzer.analyzeScenarioByTier + ExperimentReporter *_by_cap
+        writers): tier universal front, tier union bounds, per-seed legacy
+        HV/GD/IGD/Spacing (per-pair frame vs the TIER universal), HV_fixed
+        (tier frame), strict contribution counts and the near-tie
+        seed-collaboration scoreboard. TimeMs comes from the run's own row in
+        the global performance_metrics.csv (runtime is per run, not re-derived)."""
+        metric_cols = ['HV', 'GD', 'IGD', 'Spacing', 'NonDomSolutions',
+                       'TotalSolutions', 'ParetoContribution', 'TimeMs', 'HV_fixed']
+        time_lookup = {}
+        if scn.metrics_seed is not None and 'TimeMs' in scn.metrics_seed.columns:
+            for _, r in scn.metrics_seed.iterrows():
+                time_lookup[(r['Algorithm'], int(r['Seed']))] = r['TimeMs']
+
+        for tier, td in scn.tiers.items():
+            if td.points is None or not len(td.points):
+                continue
+            objs = scn.obj_names
+            all_pts = td.points[objs].to_numpy(dtype=float)
+            universal = _filter_nondominated(all_pts)
+            td.universal = pd.DataFrame(universal, columns=objs)
+            bounds = _union_bounds(np.vstack([all_pts, np.asarray(universal)]))
+
+            runs = []  # (base, seed:int, run_pts) in cloud row order
+            for (base, seed), grp in td.points.groupby(['Algorithm', 'Seed'], sort=False):
+                runs.append((base, int(seed), grp[objs].to_numpy(dtype=float)))
+
+            rows, mean_rows, std_rows = [], [], []
+            by_label = {}
+            for base, seed, pts in runs:
+                by_label.setdefault(base, []).append((seed, pts))
+            for base, seed_runs in by_label.items():
+                label_rows = []
+                for seed, pts in seed_runs:
+                    nd = _filter_nondominated(pts)
+                    hv, gd, igd, spacing = _legacy_pair_metrics(nd, universal)
+                    row = {
+                        'Algorithm': base, 'Seed': seed,
+                        'HV': hv, 'GD': gd, 'IGD': igd, 'Spacing': spacing,
+                        'NonDomSolutions': len(nd), 'TotalSolutions': len(pts),
+                        'ParetoContribution': _contribution_count(pts, universal),
+                        'TimeMs': time_lookup.get(
+                            (self._full_label(base, tier), seed), np.nan),
+                        'HV_fixed': _hv_fixed(_normalize_union(pts, bounds)),
+                    }
+                    label_rows.append(row)
+                    rows.append(row)
+                lr = pd.DataFrame(label_rows)
+                times = lr['TimeMs'].dropna()
+                times = times[times > 0]
+                mean_rows.append({
+                    'Algorithm': base,
+                    'HV': lr['HV'].mean(), 'GD': lr['GD'].mean(),
+                    'IGD': lr['IGD'].mean(), 'Spacing': lr['Spacing'].mean(),
+                    'NonDomSolutions': lr['NonDomSolutions'].mean(),
+                    'TotalSolutions': lr['TotalSolutions'].mean(),
+                    'ParetoContribution': _union_contribution_count(
+                        [pts for _, pts in seed_runs], universal),
+                    'TimeMs': int(times.sum() // len(times)) if len(times) else 0,
+                    'HV_fixed': lr['HV_fixed'].mean(),
+                })
+                std_rows.append({
+                    'Algorithm': base,
+                    'HV': lr['HV'].std(ddof=0), 'GD': lr['GD'].std(ddof=0),
+                    'IGD': lr['IGD'].std(ddof=0), 'Spacing': lr['Spacing'].std(ddof=0),
+                    'HV_fixed': lr['HV_fixed'].std(ddof=0),
+                })
+            td.metrics_seed = pd.DataFrame(rows, columns=['Algorithm', 'Seed'] + metric_cols)
+            td.metrics_mean = pd.DataFrame(mean_rows).set_index('Algorithm')
+            td.metrics_std = pd.DataFrame(std_rows).set_index('Algorithm')
+            td.universal_metrics = {
+                'Algorithm': UNIVERSAL_KEY, 'Seed': 'ALL',
+                'HV': _legacy_own_frame_hv(universal),
+                'GD': 0.0, 'IGD': 0.0, 'Spacing': 0.0,
+                'NonDomSolutions': len(universal), 'TotalSolutions': len(universal),
+                'ParetoContribution': len(universal), 'TimeMs': 0,
+                'HV_fixed': _hv_fixed(_normalize_union(universal, bounds)),
+            }
+            self._recompute_tier_collab(td, objs, bounds, by_label)
+
+    def _recompute_tier_collab(self, td, objs, bounds, by_label):
+        """Per-seed all-arms-within-tier universal fronts + near-tie credit
+        (ParetoAnalyzer.analyzeSeedCollaboration semantics)."""
+        seed_pool = {}  # seed -> stacked tier points in cloud row order
+        for _, grp in td.points.groupby('Seed', sort=False):
+            seed_pool[int(grp['Seed'].iloc[0])] = grp[objs].to_numpy(dtype=float)
+        seed_univ = {s: _filter_nondominated(p) for s, p in seed_pool.items()}
+        seed_hvf = {s: _hv_fixed(_normalize_union(u, bounds)) if len(u) else np.nan
+                    for s, u in seed_univ.items()}
+
+        rows, mean_rows, std_rows = [], [], []
+        for base, seed_runs in by_label.items():
+            counts, pcts = [], []
+            for seed, pts in seed_runs:
+                univ = seed_univ.get(seed, [])
+                count = _near_tie_credit(pts, univ)
+                pct = 100.0 * count / len(univ) if len(univ) else np.nan
+                rows.append({'Algorithm': base, 'Seed': seed,
+                             'SeedUniversalFrontSize': len(univ),
+                             'SeedUniversalHV_fixed': seed_hvf.get(seed, np.nan),
+                             'ContributionCount': count, 'ContributionPct': pct})
+                counts.append(count)
+                pcts.append(pct)
+            counts, pcts = np.asarray(counts, float), np.asarray(pcts, float)
+            mean_rows.append({'Algorithm': base, 'ContributionCount': counts.mean(),
+                              'ContributionPct': np.nanmean(pcts) if len(pcts) else np.nan})
+            std_rows.append({'Algorithm': base, 'ContributionCount': counts.std(ddof=0),
+                             'ContributionPct': np.nanstd(pcts) if len(pcts) else np.nan})
+        td.collab_seed = pd.DataFrame(rows)
+        td.collab_mean = pd.DataFrame(mean_rows).set_index('Algorithm')
+        td.collab_std = pd.DataFrame(std_rows).set_index('Algorithm')
+        sizes = np.asarray([len(u) for u in seed_univ.values()], float)
+        hvfs = np.asarray(list(seed_hvf.values()), float)
+        if len(sizes):
+            td.collab_universal = {
+                'mean': {'SeedUniversalFrontSize': sizes.mean(),
+                         'SeedUniversalHV_fixed': np.nanmean(hvfs)},
+                'std': {'SeedUniversalFrontSize': sizes.std(ddof=0),
+                        'SeedUniversalHV_fixed': np.nanstd(hvfs)},
+            }
+
     # ---- convenience ----------------------------------------------------
 
     @property
@@ -380,6 +939,88 @@ def available_metrics(exp):
     return out
 
 
+# PowerCap per-cap view: same indicators, computed strictly within the selected
+# tier (reference front + normalization bounds from that tier's arms only).
+POWERCAP_METRIC_CHOICES = [
+    ('HV_fixed', 'Hypervolume — HV_fixed (tier frame)', 'HV_fixed (tier frame)', 'seed'),
+    ('HV', 'Hypervolume (legacy, per-pair vs tier universal)', 'HV', 'seed'),
+    ('GD', 'Generational Distance (tier reference)', 'GD', 'seed'),
+    ('IGD', 'Inverted Generational Distance (tier reference)', 'IGD', 'seed'),
+    ('Spacing', 'Spacing', 'Spacing', 'seed'),
+    ('ParetoContribution', 'Pareto Contribution (tier union count)',
+     'points contributed', 'union'),
+    ('CollabSharePct', 'Pareto Contribution (per-seed near-tie share %, tier)',
+     'share of per-seed tier universal front (%)', 'collab'),
+]
+
+# PowerCap compare mode: indicators that make sense ACROSS tiers for one arm.
+# HV uses the run-wide frame (the stored global HV_fixed — pooled ideal/nadir
+# over all tiers), so bars are directly comparable across caps; GD/IGD are
+# referenced to each tier's own universal front ("competitiveness at that cap").
+COMPARE_METRIC_CHOICES = [
+    ('HV_fixed_run', 'Hypervolume — HV_fixed (run-wide frame, comparable across caps)',
+     'HV_fixed (run-wide frame)', 'global-seed'),
+    ('GD', 'Generational Distance (each tier vs its own universal)', 'GD', 'tier-seed'),
+    ('IGD', 'Inverted Generational Distance (each tier vs its own universal)',
+     'IGD', 'tier-seed'),
+    ('ParetoContribution', 'Pareto Contribution (tier union count)',
+     'points contributed', 'tier-union'),
+]
+
+
+def powercap_metrics(exp):
+    have_collab = any(td.collab_seed is not None
+                      for scn in exp.scenarios.values() for td in scn.tiers.values())
+    return [(k, d, y, s) for k, d, y, s in POWERCAP_METRIC_CHOICES
+            if s != 'collab' or have_collab]
+
+
+def _tier_metric_values(td, algo, key, source):
+    """(mean, std) of one per-tier metric for one base algorithm (mirrors
+    _metric_values, on a TierData)."""
+    if source == 'collab':
+        if td.collab_mean is None or algo not in td.collab_mean.index:
+            return (np.nan, np.nan)
+        return (td.collab_mean.loc[algo, 'ContributionPct'],
+                td.collab_std.loc[algo, 'ContributionPct']
+                if td.collab_std is not None and algo in td.collab_std.index
+                else np.nan)
+    if td.metrics_seed is None:
+        return (np.nan, np.nan)
+    if source == 'union':
+        if td.metrics_mean is not None and algo in td.metrics_mean.index:
+            return (td.metrics_mean.loc[algo, 'ParetoContribution'], np.nan)
+        return (np.nan, np.nan)
+    rows = td.metrics_seed[td.metrics_seed['Algorithm'] == algo]
+    if key not in rows.columns or not len(rows):
+        return (np.nan, np.nan)
+    vals = rows[key].dropna()
+    if not len(vals):
+        return (np.nan, np.nan)
+    return (vals.mean(), vals.std(ddof=1) if len(vals) > 1 else 0.0)
+
+
+def _compare_metric_values(exp, scn, base, tier, key, source):
+    """(mean, std) of one compare-mode metric for one (base arm, tier)."""
+    td = scn.tiers.get(tier)
+    if source == 'global-seed':
+        # Stored global HV_fixed rows for the tier-suffixed arm: the run-wide
+        # frame is exactly the pooled scenario frame, comparable across tiers.
+        if scn.metrics_seed is None or 'HV_fixed' not in scn.metrics_seed.columns:
+            return (np.nan, np.nan)
+        full = base if tier == UNCAPPED_TIER else f'{base}_{tier}'
+        vals = scn.metrics_seed.loc[
+            scn.metrics_seed['Algorithm'] == full, 'HV_fixed'].dropna()
+        if not len(vals):
+            return (np.nan, np.nan)
+        return (vals.mean(), vals.std(ddof=1) if len(vals) > 1 else 0.0)
+    if td is None:
+        return (np.nan, np.nan)
+    if source == 'tier-union':
+        return _tier_metric_values(td, base, 'ParetoContribution', 'union')
+    return _tier_metric_values(td, base, key, 'seed')
+
+
 def _visible(exp, opts):
     hidden = opts.get('hidden', set())
     return [a for a in exp.algorithms if a not in hidden]
@@ -394,28 +1035,56 @@ def _apply_legend(ax_or_fig, opts, handles=None, labels=None):
         ax_or_fig.legend(fontsize=9, framealpha=0.85)
 
 
-def scenario_bounds(scn):
-    """Pooled per-scenario ideal/nadir over ALL algorithms' published points
-    plus the universal front — the same frame HV_fixed normalizes by. Stable
-    under visibility toggles so the picture doesn't rescale when algorithms
-    are hidden. Returns {obj_name: (ideal, span)}."""
-    frames = [scn.points[scn.obj_names]]
-    if scn.universal is not None and len(scn.universal):
-        frames.append(scn.universal[scn.obj_names])
+def _bounds_from(points_df, universal_df, obj_names):
+    frames = [points_df[obj_names]]
+    if universal_df is not None and len(universal_df):
+        frames.append(universal_df[obj_names])
     allpts = pd.concat(frames, ignore_index=True)
     out = {}
-    for c in scn.obj_names:
+    for c in obj_names:
         ideal = float(allpts[c].min())
         span = max(float(allpts[c].max()) - ideal, 1e-12)
         out[c] = (ideal, span)
     return out
 
 
+def scenario_bounds(scn):
+    """Pooled per-scenario ideal/nadir over ALL algorithms' published points
+    plus the universal front — the same frame HV_fixed normalizes by. Stable
+    under visibility toggles so the picture doesn't rescale when algorithms
+    are hidden. Returns {obj_name: (ideal, span)}."""
+    return _bounds_from(scn.points, scn.universal, scn.obj_names)
+
+
+def tier_bounds(td, obj_names):
+    """Per-tier ideal/nadir (the frame the tier's HV_fixed uses)."""
+    return _bounds_from(td.points, td.universal, obj_names)
+
+
+# Sequential blue ramp for cap tiers (loose -> tight); Uncapped is drawn dashed
+# so tier identity never rides on color alone.
+TIER_COLOR_RAMP = ['#82B8D8', '#4E94BE', '#1F6690', '#0C3A5C', '#062338', '#031320']
+GLOBAL_UNIVERSAL_COLOR = '#9AA0A6'
+
+
+def tier_color(exp, tier):
+    try:
+        return TIER_COLOR_RAMP[exp.tier_names.index(tier) % len(TIER_COLOR_RAMP)]
+    except ValueError:
+        return TIER_COLOR_RAMP[-1]
+
+
 def build_scatter_figure(exp, scn, styles, opts):
     """Scatter/front view for one scenario.
 
     opts keys: swap(bool), title(str|''), show_legend, show_labels,
-    show_clouds, show_fronts, normalize(bool), hidden(set), marker_size(float).
+    show_clouds, show_fronts, normalize(bool), hidden(set), marker_size(float),
+    show_universal(bool, default True).
+
+    PowerCap per-cap view: opts['tier'] scopes everything to that tier (base
+    algorithm labels, the tier's universal front in black, normalization by the
+    TIER's ideal/nadir) and opts['show_global_universal'] overlays the stored
+    all-arms global universal front as a grey dashed reference.
     """
     fig = Figure(figsize=(9.2, 6.6), dpi=100)
     ax = fig.add_subplot(111)
@@ -424,21 +1093,35 @@ def build_scatter_figure(exp, scn, styles, opts):
         ox, oy = oy, ox
     ms = float(opts.get('marker_size', 7))
 
-    if opts.get('normalize'):
-        bounds = scenario_bounds(scn)
+    tier = opts.get('tier') if getattr(exp, 'is_powercap', False) else None
+    if tier is not None:
+        td = scn.tiers[tier]
+        algos = [a for a in exp.base_algorithms if a not in opts.get('hidden', set())]
+        points_src, fronts_src, universal = td.points, td.fronts, td.universal
+        universal_label = f'Universal — {tier_display(tier)}'
+        default_title = (f'{scn.name}: {axis_label(ox)} vs {axis_label(oy)} — '
+                         f'{tier_display(tier, td.cap_watts)}')
+        norm_bounds = tier_bounds(td, scn.obj_names)
+    else:
+        algos = _visible(exp, opts)
+        points_src, fronts_src, universal = scn.points, scn.fronts, scn.universal
+        universal_label = UNIVERSAL_LABEL
+        default_title = f'{scn.name}: {axis_label(ox)} vs {axis_label(oy)}'
+        norm_bounds = scenario_bounds(scn)
 
+    if opts.get('normalize'):
         def val(series, col):
-            ideal, span = bounds[col]
+            ideal, span = norm_bounds[col]
             return (series - ideal) / span
     else:
         def val(series, col):
             return series
 
-    for algo in _visible(exp, opts):
+    for algo in algos:
         st = styles[algo]
         mfc = st['color'] if st['filled'] else 'none'
         if opts.get('show_clouds'):
-            pts = scn.points[scn.points['Algorithm'] == algo]
+            pts = points_src[points_src['Algorithm'] == algo]
             if len(pts):
                 # gid drives the GUI's click-to-details lookup; the cloud is
                 # plotted in file order so point index i within this algorithm
@@ -448,8 +1131,8 @@ def build_scatter_figure(exp, scn, styles, opts):
                                   color=st['color'], marker=st['marker'],
                                   linewidths=0, zorder=2)
                 coll.set_gid(f'cloud::{algo}')
-        if opts.get('show_fronts', True) and algo in scn.fronts:
-            fr = scn.fronts[algo].sort_values(ox)
+        if opts.get('show_fronts', True) and algo in fronts_src:
+            fr = fronts_src[algo].sort_values(ox)
             line, = ax.plot(val(fr[ox], ox), val(fr[oy], oy),
                             color=st['color'], marker=st['marker'],
                             markersize=ms, markerfacecolor=mfc,
@@ -464,20 +1147,150 @@ def build_scatter_figure(exp, scn, styles, opts):
                             fontsize=8, color=st['color'], fontweight='bold',
                             zorder=6)
 
-    if scn.universal is not None and len(scn.universal):
-        uni = scn.universal.sort_values(ox)
+    if (opts.get('show_universal', True)
+            and universal is not None and len(universal)):
+        uni = universal.sort_values(ox)
         ax.plot(val(uni[ox], ox), val(uni[oy], oy),
                 color=UNIVERSAL_COLOR, linewidth=1.9,
                 marker='o', markersize=max(ms * 0.5, 3.5),
-                label=UNIVERSAL_LABEL, zorder=8)
+                label=universal_label, zorder=8)
+
+    if (tier is not None and opts.get('show_global_universal')
+            and scn.universal is not None and len(scn.universal)):
+        uni = scn.universal.sort_values(ox)
+        ax.plot(val(uni[ox], ox), val(uni[oy], oy),
+                color=GLOBAL_UNIVERSAL_COLOR, linewidth=1.6, linestyle='--',
+                marker='o', markersize=max(ms * 0.4, 3.0),
+                label='Global universal (all arms)', zorder=7)
 
     suffix = '  (normalized)' if opts.get('normalize') else ''
     ax.set_xlabel(axis_label(ox) + suffix)
     ax.set_ylabel(axis_label(oy) + suffix)
-    ax.set_title(opts.get('title')
-                 or f'{scn.name}: {axis_label(ox)} vs {axis_label(oy)}')
+    ax.set_title(opts.get('title') or default_title)
     _apply_legend(ax, opts)
     fig.subplots_adjust(left=0.09, right=0.97, top=0.93, bottom=0.09)
+    return fig
+
+
+def build_compare_figure(exp, scn, base, styles, opts):
+    """PowerCap compare mode: one base algorithm's pooled front at every cap
+    tier, colored by the sequential tier ramp (Uncapped dashed). Normalization
+    (when on) uses the scenario-wide frame, so it is comparable across tiers."""
+    fig = Figure(figsize=(9.2, 6.6), dpi=100)
+    ax = fig.add_subplot(111)
+    ox, oy = scn.obj_names
+    if opts.get('swap'):
+        ox, oy = oy, ox
+    ms = float(opts.get('marker_size', 7))
+    marker = styles.get(base, {}).get('marker', 'o')
+    display = styles.get(base, {}).get('display', base)
+
+    if opts.get('normalize'):
+        bounds = scenario_bounds(scn)
+
+        def val(series, col):
+            ideal, span = bounds[col]
+            return (series - ideal) / span
+    else:
+        def val(series, col):
+            return series
+
+    hidden = opts.get('tiers_hidden', set())
+    for tier in exp.tier_names:
+        if tier in hidden:
+            continue
+        td = scn.tiers.get(tier)
+        fr = td.fronts.get(base) if td is not None else None
+        if fr is None or not len(fr):
+            continue
+        fr = fr.sort_values(ox)
+        color = tier_color(exp, tier)
+        line, = ax.plot(val(fr[ox], ox), val(fr[oy], oy),
+                        color=color, marker=marker, markersize=ms,
+                        markerfacecolor=color, markeredgecolor=color,
+                        linewidth=1.6, alpha=0.95,
+                        linestyle='--' if tier == UNCAPPED_TIER else '-',
+                        label=tier_display(tier, td.cap_watts), zorder=4)
+        line.set_gid(f'cmpfront::{tier}')
+        if opts.get('show_labels') and len(fr):
+            mid = fr.iloc[len(fr) // 2]
+            ax.annotate(tier_display(tier),
+                        (float(val(mid[ox], ox)), float(val(mid[oy], oy))),
+                        textcoords='offset points', xytext=(6, 6),
+                        fontsize=8, color=color, fontweight='bold', zorder=6)
+
+    suffix = '  (normalized, scenario-wide frame)' if opts.get('normalize') else ''
+    ax.set_xlabel(axis_label(ox) + suffix)
+    ax.set_ylabel(axis_label(oy) + suffix)
+    ax.set_title(opts.get('title') or f'{scn.name}: {display} across power caps')
+    _apply_legend(ax, opts)
+    fig.subplots_adjust(left=0.09, right=0.97, top=0.93, bottom=0.09)
+    return fig
+
+
+def build_feasibility_figure(exp, styles, opts):
+    """PowerCap only: per scenario, each UNCAPPED arm's mean feasibility rate
+    under every derived cap (mean ± std over seeds, from
+    feasibility_summary.csv), with the calibration targets as dashed lines."""
+    fe = exp.feasibility
+    fig = Figure(figsize=(9.2, 6.0), dpi=100)
+    if fe is None or not len(fe):
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'feasibility_summary.csv not found in this folder.',
+                ha='center', va='center', color='#666666')
+        ax.set_axis_off()
+        return fig
+
+    uncapped_arms = [a for a in exp.base_algorithms]
+    hidden = opts.get('hidden', set())
+    uncapped_arms = [a for a in uncapped_arms if a not in hidden]
+    fe = fe[fe['Algorithm'].map(lambda a: split_tier(a)[1] == UNCAPPED_TIER)]
+    caps = sorted(pd.unique(fe['CapWatts'].dropna()), reverse=True)
+    pc_tiers = [t for t in exp.tier_names if t != UNCAPPED_TIER]
+    scen_nums = sorted(pd.unique(fe['Scenario']))
+
+    fig = Figure(figsize=(4.6 * max(len(scen_nums), 1) + 1.4, 5.6), dpi=100)
+    axes = (list(np.atleast_1d(fig.subplots(1, len(scen_nums))))
+            if len(scen_nums) > 1 else [fig.add_subplot(111)])
+    width = 0.8 / max(len(caps), 1)
+    for ax, s in zip(axes, scen_nums):
+        sub = fe[fe['Scenario'] == s]
+        x = np.arange(len(uncapped_arms))
+        for ci, cap in enumerate(caps):
+            tier = pc_tiers[ci] if ci < len(pc_tiers) else None
+            color = tier_color(exp, tier) if tier else FALLBACK_COLORS[ci]
+            means, stds = [], []
+            for algo in uncapped_arms:
+                row = sub[(sub['Algorithm'] == algo) & (sub['CapWatts'] == cap)]
+                means.append(float(row['MeanFeasibilityRate'].iloc[0]) if len(row) else np.nan)
+                stds.append(float(row['StdFeasibilityRate'].iloc[0]) if len(row) else np.nan)
+            label = (tier_display(tier, cap) if tier
+                     else f'{cap / 1000.0:.1f} kW')
+            ax.bar(x + ci * width - 0.4 + width / 2,
+                   [0 if np.isnan(m) else m for m in means], width * 0.92,
+                   yerr=[0 if np.isnan(sd) else sd for sd in stds],
+                   capsize=2, error_kw={'linewidth': 0.8},
+                   color=color, label=label)
+        for tier in pc_tiers:
+            ax.axhline(int(tier[2:]) / 100.0, color='#888888',
+                       linestyle='--', linewidth=0.9, zorder=1)
+        ax.set_xticks(x)
+        ax.set_xticklabels([styles.get(a, {'display': a})['display']
+                            for a in uncapped_arms],
+                           rotation=38, ha='right', fontsize=8)
+        name = ''
+        named = sub.drop_duplicates('Scenario')
+        if len(named) and 'ScenarioName' in named:
+            name = str(named['ScenarioName'].iloc[0]).replace('_', ' ')
+        ax.set_title(name or f'Scenario {s}', fontsize=11)
+        ax.set_ylim(0, 1.05)
+    axes[0].set_ylabel('Mean feasibility rate')
+    if opts.get('show_legend', True):
+        axes[-1].legend(fontsize=8, framealpha=0.85, loc='upper right')
+    fig.suptitle(opts.get('title') or
+                 'Uncapped arms — share of solutions feasible under each derived cap '
+                 '(dashed: calibration targets)', fontsize=12)
+    fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28, wspace=0.24)
     return fig
 
 
@@ -520,18 +1333,58 @@ def _metric_values(scn, algo, key, source):
 
 
 def build_metric_figure(exp, key, display, ylabel, source, styles, opts):
-    """One indicator, one panel per scenario, bars = algorithms (mean ± std)."""
+    """One indicator, one panel per scenario, bars = algorithms (mean ± std).
+
+    PowerCap: opts['tier'] scopes bars to the tier's arms with tier-referenced
+    values; compare mode (opts['mode'] == 'cmp') plots one base arm with one
+    bar per cap tier instead (see COMPARE_METRIC_CHOICES sources)."""
     scns = [exp.scenarios[n] for n in sorted(exp.scenarios)]
     fig = Figure(figsize=(4.6 * max(len(scns), 1) + 1.2, 5.4), dpi=100)
     axes = fig.subplots(1, len(scns)) if len(scns) > 1 else [fig.add_subplot(111)]
     if len(scns) > 1:
         axes = list(np.atleast_1d(axes))
-    algos = _visible(exp, opts)
 
+    powercap = getattr(exp, 'is_powercap', False)
+    compare = powercap and opts.get('mode') == 'cmp'
+    tier = opts.get('tier') if powercap else None
+
+    if compare:
+        base = opts.get('cmp_algo')
+        hidden = opts.get('tiers_hidden', set())
+        tiers = [t for t in exp.tier_names if t not in hidden]
+        for ax, scn in zip(axes, scns):
+            means, stds, colors, names = [], [], [], []
+            for t in tiers:
+                m, s = _compare_metric_values(exp, scn, base, t, key, source)
+                means.append(m)
+                stds.append(s)
+                colors.append(tier_color(exp, t))
+                names.append(tier_display(t, scn.tiers.get(t).cap_watts
+                                          if scn.tiers.get(t) else None))
+            x = np.arange(len(tiers))
+            yerr = None if all(np.isnan(s) for s in stds) else \
+                [0 if np.isnan(s) else s for s in stds]
+            ax.bar(x, [0 if np.isnan(m) else m for m in means], color=colors,
+                   yerr=yerr, capsize=3, error_kw={'linewidth': 1})
+            ax.set_xticks(x)
+            ax.set_xticklabels(names, rotation=38, ha='right', fontsize=8)
+            ax.set_title(scn.name, fontsize=11)
+            ax.grid(axis='x', alpha=0)
+        axes[0].set_ylabel(ylabel)
+        disp = styles.get(base, {}).get('display', base)
+        fig.suptitle(opts.get('title') or f'{disp} — {display}', fontsize=13)
+        fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28,
+                            wspace=0.24)
+        return fig
+
+    algos = ([a for a in exp.base_algorithms if a not in opts.get('hidden', set())]
+             if tier is not None else _visible(exp, opts))
     for ax, scn in zip(axes, scns):
+        td = scn.tiers.get(tier) if tier is not None else None
         means, stds, colors, names = [], [], [], []
         for algo in algos:
-            m, s = _metric_values(scn, algo, key, source)
+            m, s = (_tier_metric_values(td, algo, key, source) if td is not None
+                    else _metric_values(scn, algo, key, source))
             means.append(m)
             stds.append(s)
             colors.append(styles[algo]['color'])
@@ -545,30 +1398,82 @@ def build_metric_figure(exp, key, display, ylabel, source, styles, opts):
         ax.set_xticklabels(names, rotation=38, ha='right', fontsize=8)
         ax.set_title(scn.name, fontsize=11)
         ax.grid(axis='x', alpha=0)
-        if source == 'union' and scn.universal is not None:
-            ax.text(0.98, 0.96, f'universal front: {len(scn.universal)} pts',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=8,
-                    color='#555555')
+        if source == 'union':
+            uni = td.universal if td is not None else scn.universal
+            if uni is not None:
+                ax.text(0.98, 0.96, f'universal front: {len(uni)} pts',
+                        transform=ax.transAxes, ha='right', va='top', fontsize=8,
+                        color='#555555')
     axes[0].set_ylabel(ylabel)
-    fig.suptitle(opts.get('title') or f'{display} — mean ± std over seeds'
-                 if source not in ('union',)
-                 else opts.get('title') or display, fontsize=13)
+    title = opts.get('title') or (f'{display} — mean ± std over seeds'
+                                  if source not in ('union',) else display)
+    if tier is not None and not opts.get('title'):
+        title += f' — {tier_display(tier, exp.cap_watts.get(tier))}'
+    fig.suptitle(title, fontsize=13)
     fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28,
                         wspace=0.24)
     return fig
 
 
 def build_runtime_figure(exp, styles, opts):
-    """Average runtime (s) per algorithm: one panel per scenario + overall."""
+    """Average runtime (s) per algorithm: one panel per scenario + overall.
+
+    PowerCap per-cap view scopes to the tier's runs; compare mode shows one
+    base arm's runtime with one bar per tier."""
     scns = [exp.scenarios[n] for n in sorted(exp.scenarios)]
-    panels = [(s.name, s.metrics_seed) for s in scns if s.metrics_seed is not None]
+    powercap = getattr(exp, 'is_powercap', False)
+    compare = powercap and opts.get('mode') == 'cmp'
+    tier = opts.get('tier') if powercap else None
+
+    if compare:
+        base = opts.get('cmp_algo')
+        hidden = opts.get('tiers_hidden', set())
+        tiers = [t for t in exp.tier_names if t not in hidden]
+        n = max(len(scns), 1)
+        fig = Figure(figsize=(4.6 * n + 1.2, 5.4), dpi=100)
+        axes = (list(np.atleast_1d(fig.subplots(1, n)))
+                if n > 1 else [fig.add_subplot(111)])
+        for ax, scn in zip(axes, scns):
+            means, stds, colors, names = [], [], [], []
+            for t in tiers:
+                td = scn.tiers.get(t)
+                rows = (td.metrics_seed if td is not None
+                        and td.metrics_seed is not None else None)
+                vals = (rows[rows['Algorithm'] == base]['TimeMs'].dropna() / 1000.0
+                        if rows is not None else pd.Series(dtype=float))
+                means.append(vals.mean() if len(vals) else 0)
+                stds.append(vals.std(ddof=1) if len(vals) > 1 else 0)
+                colors.append(tier_color(exp, t))
+                names.append(tier_display(t))
+            x = np.arange(len(tiers))
+            ax.bar(x, means, yerr=stds, color=colors, capsize=3,
+                   error_kw={'linewidth': 1})
+            ax.set_xticks(x)
+            ax.set_xticklabels(names, rotation=38, ha='right', fontsize=8)
+            ax.set_title(scn.name, fontsize=11)
+        axes[0].set_ylabel('runtime (s)')
+        disp = styles.get(base, {}).get('display', base)
+        fig.suptitle(opts.get('title')
+                     or f'{disp} — average runtime across power caps', fontsize=13)
+        fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28,
+                            wspace=0.24)
+        return fig
+
+    if tier is not None:
+        panels = [(s.name, s.tiers[tier].metrics_seed) for s in scns
+                  if tier in s.tiers and s.tiers[tier].metrics_seed is not None]
+        algos = [a for a in exp.base_algorithms if a not in opts.get('hidden', set())]
+        subtitle = f' — {tier_display(tier, exp.cap_watts.get(tier))}'
+    else:
+        panels = [(s.name, s.metrics_seed) for s in scns if s.metrics_seed is not None]
+        algos = _visible(exp, opts)
+        subtitle = ''
     all_rows = pd.concat([p[1] for p in panels], ignore_index=True) if panels else None
     if all_rows is not None and len(panels) > 1:
         panels = panels + [('All scenarios', all_rows)]
     n = max(len(panels), 1)
     fig = Figure(figsize=(4.6 * n + 1.2, 5.4), dpi=100)
     axes = list(np.atleast_1d(fig.subplots(1, n))) if n > 1 else [fig.add_subplot(111)]
-    algos = _visible(exp, opts)
 
     for ax, (name, rows) in zip(axes, panels):
         means, stds, colors, names = [], [], [], []
@@ -586,7 +1491,8 @@ def build_runtime_figure(exp, styles, opts):
         ax.set_title(name, fontsize=11)
     if panels:
         axes[0].set_ylabel('runtime (s)')
-    fig.suptitle(opts.get('title') or 'Average runtime per algorithm (mean ± std over seeds)',
+    fig.suptitle((opts.get('title')
+                  or 'Average runtime per algorithm (mean ± std over seeds)' + subtitle),
                  fontsize=13)
     fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28,
                         wspace=0.24)
@@ -622,6 +1528,43 @@ def pivot_metric_table(scn, metric):
                 f"HV={um['HV']:.6f}" if pd.notna(um.get('HV')) else None,
                 f"HV_fixed={um['HV_fixed']:.6f}" if pd.notna(um.get('HV_fixed')) else None]
         info = 'Pooled universal front: ' + ', '.join(b for b in bits if b)
+    return piv, info
+
+
+def compare_pivot_table(exp, scn, base, metric):
+    """Compare-mode table: seeds × cap tiers for one base arm.
+
+    metric 'HV_fixed_run' reads the stored run-wide-frame HV_fixed rows of the
+    tier-suffixed arm from the GLOBAL metrics (comparable across caps); any
+    other metric reads the per-tier tables (referenced to each tier's own
+    universal front)."""
+    cols = {}
+    for tier in exp.tier_names:
+        td = scn.tiers.get(tier)
+        name = tier_display(tier)
+        if metric == 'HV_fixed_run':
+            if scn.metrics_seed is None or 'HV_fixed' not in scn.metrics_seed.columns:
+                continue
+            full = base if tier == UNCAPPED_TIER else f'{base}_{tier}'
+            rows = scn.metrics_seed[scn.metrics_seed['Algorithm'] == full]
+            if len(rows):
+                cols[name] = rows.set_index('Seed')['HV_fixed']
+        else:
+            if td is None or td.metrics_seed is None or metric not in td.metrics_seed.columns:
+                continue
+            rows = td.metrics_seed[td.metrics_seed['Algorithm'] == base]
+            if len(rows):
+                cols[name] = rows.set_index('Seed')[metric]
+    if not cols:
+        return None, ''
+    piv = pd.DataFrame(cols)
+    piv.index = piv.index.astype(str)
+    means = piv.mean()
+    stds = piv.std(ddof=0)
+    piv.loc['MEAN'] = means
+    piv.loc['STDDEV'] = stds
+    info = ('HV_fixed (run-wide frame) is comparable across caps; '
+            'GD/IGD/Spacing reference each tier\'s own universal front.')
     return piv, info
 
 
@@ -741,6 +1684,51 @@ def _df_to_csv_block(df, index_label=None, float_format='%.6f'):
     return '```csv\n' + txt + '```\n'
 
 
+def _bundle_indicator_sections(L, src, where, obj_names, universal_name):
+    """Emits the indicator/collaboration/front sections for one source — a
+    ScenarioData or (duck-typed) TierData. `where` names it in headings."""
+    if src.metrics_seed is not None:
+        L.append(f'### Per-seed quality indicators ({where})')
+        L.append(_df_to_csv_block(src.metrics_seed, float_format='%.6g'))
+        mixed = []
+        if src.metrics_mean is not None:
+            mm = src.metrics_mean.copy()
+            mm.insert(0, 'Kind', 'MEAN')
+            mixed.append(mm)
+        if src.metrics_std is not None:
+            ms = src.metrics_std.copy()
+            ms.insert(0, 'Kind', 'STDDEV')
+            mixed.append(ms)
+        if mixed:
+            L.append(f'### MEAN / STDDEV rows ({where})')
+            L.append(_df_to_csv_block(pd.concat(mixed).drop(columns=['Seed'],
+                                                            errors='ignore'),
+                                      index_label='Algorithm',
+                                      float_format='%.6g'))
+        if src.universal_metrics:
+            um = {k: v for k, v in src.universal_metrics.items()
+                  if k not in ('Algorithm', 'Seed') and pd.notna(v)}
+            L.append(f'{universal_name} metrics: '
+                     + ', '.join(f'{k}={v:.6g}' if isinstance(v, float)
+                                 else f'{k}={v}' for k, v in um.items()))
+            L.append('')
+    if src.collab_seed is not None:
+        L.append(f'### Seed-collaboration scoreboard (near-tie credit, {where})')
+        L.append(_df_to_csv_block(src.collab_seed, float_format='%.6g'))
+        piv, info = collab_table(src)
+        if info:
+            L.append(info)
+            L.append('')
+    if src.universal is not None and len(src.universal):
+        L.append(f'### {universal_name} ({len(src.universal)} points)')
+        L.append(_df_to_csv_block(src.universal[obj_names], float_format='%.9g'))
+    if src.fronts:
+        L.append(f'### Per-algorithm pooled fronts (union over seeds, {where})')
+        for label, fr in src.fronts.items():
+            L.append(f'#### {label} ({len(fr)} points)')
+            L.append(_df_to_csv_block(fr[obj_names], float_format='%.9g'))
+
+
 def build_claude_bundle(exp):
     L = []
     objs = exp.objective_names
@@ -750,7 +1738,13 @@ def build_claude_bundle(exp):
     L.append(f'- Study objectives (both minimized): {objs[0]} vs {objs[1]}')
     L.append(f'- Scenarios: ' + ', '.join(
         f'{n} = {exp.scenarios[n].name}' for n in sorted(exp.scenarios)))
-    L.append(f'- Algorithms: ' + ', '.join(exp.algorithms))
+    if exp.is_powercap:
+        L.append(f'- Base algorithms: ' + ', '.join(exp.base_algorithms))
+        L.append('- Cap tiers: ' + ', '.join(
+            tier_display(t, exp.cap_watts.get(t)) for t in exp.tier_names))
+        L.append(f'- Per-tier data source: {exp.by_cap_source}')
+    else:
+        L.append(f'- Algorithms: ' + ', '.join(exp.algorithms))
     L.append('')
     L.append('Notes for analysis: HV_fixed (when present) is the only hypervolume '
              'comparable across algorithms/seeds within this run; the legacy HV '
@@ -759,54 +1753,48 @@ def build_claude_bundle(exp):
              'the pooled universal front; the MEAN row of that column is the '
              'union-over-seeds count. The seed-collaboration table uses near-tie '
              'credit (0.3% relative on both objectives), so shares can sum to >100%.')
+    if exp.is_powercap:
+        L.append('')
+        L.append('PowerCeiling study: this bundle is organized per CAP TIER. Within a '
+                 'tier section, every indicator (HV_fixed, GD, IGD, Spacing, '
+                 'contribution, collaboration) is computed strictly against that '
+                 'tier\'s own universal front and normalization bounds — the tier '
+                 'frame. Tier-frame HV_fixed values are NOT comparable across tiers; '
+                 'for cross-cap comparisons of one arm use the run-wide-frame '
+                 'HV_fixed in the "global (all arms)" appendix, whose frame pools '
+                 'all tiers. The appendix\'s global universal front mixes capped and '
+                 'uncapped regimes — treat it as an envelope, not a per-cap reference.')
     L.append('')
 
     for n in sorted(exp.scenarios):
         scn = exp.scenarios[n]
         L.append(f'## Scenario {n}: {scn.name}')
         L.append('')
-        if scn.metrics_seed is not None:
-            L.append(f'### Per-seed quality indicators (scenario {n})')
-            cols = [c for c in scn.metrics_seed.columns]
-            L.append(_df_to_csv_block(scn.metrics_seed[cols], float_format='%.6g'))
-            mixed = []
-            if scn.metrics_mean is not None:
-                mm = scn.metrics_mean.copy()
-                mm.insert(0, 'Kind', 'MEAN')
-                mixed.append(mm)
-            if scn.metrics_std is not None:
-                ms = scn.metrics_std.copy()
-                ms.insert(0, 'Kind', 'STDDEV')
-                mixed.append(ms)
-            if mixed:
-                L.append(f'### MEAN / STDDEV rows (scenario {n})')
-                L.append(_df_to_csv_block(pd.concat(mixed).drop(columns=['Seed'],
-                                                                errors='ignore'),
-                                          index_label='Algorithm',
-                                          float_format='%.6g'))
-            if scn.universal_metrics:
-                um = {k: v for k, v in scn.universal_metrics.items()
-                      if k not in ('Algorithm', 'Seed') and pd.notna(v)}
-                L.append('Pooled universal front metrics: '
-                         + ', '.join(f'{k}={v:.6g}' if isinstance(v, float)
-                                     else f'{k}={v}' for k, v in um.items()))
+        if exp.is_powercap:
+            for tier in exp.tier_names:
+                td = scn.tiers.get(tier)
+                if td is None:
+                    continue
+                L.append(f'## Scenario {n} — {tier_display(tier, td.cap_watts)}')
                 L.append('')
-        if scn.collab_seed is not None:
-            L.append(f'### Seed-collaboration scoreboard (near-tie credit, scenario {n})')
-            L.append(_df_to_csv_block(scn.collab_seed, float_format='%.6g'))
-            piv, info = collab_table(scn)
-            if info:
-                L.append(info)
-                L.append('')
-        if scn.universal is not None and len(scn.universal):
-            L.append(f'### Pooled universal Pareto front ({len(scn.universal)} points)')
-            L.append(_df_to_csv_block(scn.universal[scn.obj_names],
-                                      float_format='%.9g'))
-        if scn.fronts:
-            L.append(f'### Per-algorithm pooled fronts (union over seeds)')
-            for label, fr in scn.fronts.items():
-                L.append(f'#### {label} ({len(fr)} points)')
-                L.append(_df_to_csv_block(fr[scn.obj_names], float_format='%.9g'))
+                _bundle_indicator_sections(
+                    L, td, f'scenario {n}, {tier_display(tier)}', scn.obj_names,
+                    f'{tier_display(tier)} universal Pareto front')
+            L.append(f'## Scenario {n} — appendix: global (all arms, mixed regimes)')
+            L.append('')
+            if scn.universal is not None and len(scn.universal):
+                L.append(f'### Global universal front ({len(scn.universal)} points, '
+                         'pooled over uncapped + all caps)')
+                L.append(_df_to_csv_block(scn.universal[scn.obj_names],
+                                          float_format='%.9g'))
+            if scn.metrics_seed is not None and 'HV_fixed' in scn.metrics_seed.columns:
+                L.append('### Run-wide-frame HV_fixed per (arm, tier, seed) — '
+                         'comparable across caps')
+                run_frame = scn.metrics_seed[['Algorithm', 'Seed', 'HV_fixed']]
+                L.append(_df_to_csv_block(run_frame, float_format='%.6g'))
+        else:
+            _bundle_indicator_sections(L, scn, f'scenario {n}', scn.obj_names,
+                                       'Pooled universal Pareto front')
         sols = details_solutions(scn)
         if sols:
             reps = [s for s in sols if s.get('roles')] or sols
@@ -832,6 +1820,130 @@ def build_claude_bundle(exp):
                 rows.append(row)
             L.append(_df_to_csv_block(pd.DataFrame(rows), float_format='%.6g'))
         L.append('')
+    if exp.is_powercap and exp.feasibility is not None and len(exp.feasibility):
+        L.append('## Feasibility summary (every arm × derived cap, from '
+                 'feasibility_summary.csv)')
+        L.append(_df_to_csv_block(exp.feasibility, float_format='%.6g'))
+    return '\n'.join(L)
+
+
+# =============================================================================
+# INSTRUCTIONS_FOR_CLAUDE.md — generated analysis briefing for the zip bundle
+# =============================================================================
+
+def build_instructions_md(exp, file_map):
+    """A read-first briefing for the Claude instance that analyzes the bundle:
+    what this run is, what every file contains, how to read the numbers, and
+    what analysis to perform. Generated from the loaded folder, not boilerplate.
+
+    file_map: list of (relative path, one-line description) for the zip contents.
+    """
+    objs = exp.objective_names
+    L = [f'# How to analyze this bundle — {exp.name}', '']
+    L.append('You are looking at the complete result bundle of a cloud '
+             'task-scheduling experiment from the COSMOS simulator. Read this '
+             'file fully before touching the data.')
+    L.append('')
+    L.append('## What this run is')
+    L.append('')
+    L.append(f'- Study: {objs[0]} vs {objs[1]} — BOTH objectives are minimized.')
+    L.append(f'- Scenarios: ' + '; '.join(
+        f'{n} = {exp.scenarios[n].name}' for n in sorted(exp.scenarios)))
+    first = next(iter(exp.scenarios.values()))
+    n_seeds = (first.metrics_seed['Seed'].nunique()
+               if first.metrics_seed is not None else 0)
+    if exp.is_powercap:
+        L.append(f'- PowerCeiling study: {len(exp.base_algorithms)} base arms '
+                 f'({", ".join(exp.base_algorithms)}), each run uncapped and '
+                 f're-run under every derived power cap.')
+        L.append('- Cap tiers: ' + ', '.join(
+            tier_display(t, exp.cap_watts.get(t)) for t in exp.tier_names)
+            + ' (tier = target feasibility percent; caps were calibrated from '
+              'the uncapped peak-power distribution).')
+        L.append(f'- Per-tier tables were '
+                 + ('written natively by the Java analyzer (*_by_cap.csv).'
+                    if exp.by_cap_source == 'native' else
+                    'recomputed by the explorer from the point clouds '
+                    '(pre-fix folder without *_by_cap.csv).'))
+    else:
+        L.append(f'- Algorithms: {", ".join(exp.algorithms)}.')
+    L.append(f'- Seeds per (arm, scenario): {n_seeds}. Every metric row is one '
+             '(arm, seed) run; MEAN/STDDEV rows aggregate over seeds.')
+    L.append('')
+    L.append('## Files in this bundle')
+    L.append('')
+    for rel, desc in file_map:
+        L.append(f'- `{rel}` — {desc}')
+    L.append('')
+    L.append('## How to read the numbers (important)')
+    L.append('')
+    L.append('- `HV_fixed` is the only hypervolume comparable across arms and '
+             'seeds; higher is better, range [0, 1]. The legacy `HV` column uses '
+             'a per-pair normalization frame and must NOT be compared across '
+             'arms — do not cite it.')
+    L.append('- `GD`/`IGD` are distances to the universal (reference) front '
+             '(lower is better); `Spacing` measures only front regularity, not '
+             'quality.')
+    L.append('- `ParetoContribution` per-seed rows are strict 1e-9 exact-match '
+             'counts against the pooled universal front; the MEAN row of that '
+             'column is the union-over-seeds count, not an average.')
+    L.append('- The seed-collaboration scoreboard uses near-tie credit (0.3% '
+             'relative, nearest-match): shares are distributional evidence and '
+             'can sum to more than 100%.')
+    L.append('- Never compare HV_fixed values across differently-configured '
+             'campaigns: the frame is this run\'s own pooled ideal/nadir.')
+    if exp.is_powercap:
+        L.append('- Per-tier sections use the TIER frame: reference front and '
+                 'bounds come from that tier\'s arms only. Tier-frame HV_fixed is '
+                 'NOT comparable across tiers.')
+        L.append('- For cross-cap comparisons of one arm, use the run-wide-frame '
+                 'HV_fixed table (appendix of bundle.md): one common frame pooled '
+                 'over all tiers.')
+        L.append('- The global universal front mixes capped and uncapped regimes; '
+                 'treat it as an envelope, never as a per-cap reference set.')
+        L.append('- feasibility_summary.csv rates each arm\'s solutions against '
+                 'every cap; uncapped arms land near the 90/60/30% calibration '
+                 'targets by construction.')
+    L.append('')
+    L.append('## What to do')
+    L.append('')
+    steps = [
+        'Rank the arms per scenario' + (' and per cap tier' if exp.is_powercap else '')
+        + ': mean ± std HV_fixed first, then GD/IGD for convergence/coverage; '
+          'check ranking stability across seeds (the per-seed tables) before '
+          'claiming any ordering.',
+        'Assess collaboration: which arms supply the universal front? Compare '
+        'the strict pooled contribution (winner-takes-all) against the per-seed '
+        'near-tie shares (distributional); a large divergence between the two '
+        'is itself a finding worth reporting.',
+    ]
+    if exp.is_powercap:
+        steps += [
+            'Quantify each arm\'s degradation across caps: how much waiting time '
+            'does each tier cost, what happens to energy, and how does run-wide '
+            'HV_fixed fall from Uncapped to the tightest cap? Use the compare '
+            'figures and the run-wide HV_fixed table.',
+            'Sanity-check the calibration: uncapped arms\' feasibility under each '
+            'cap should sit near its target percent; flag arms that deviate '
+            'strongly (they run systematically hotter or cooler than the pool).',
+        ]
+    steps += [
+        'Flag anomalies: arms with zero contribution everywhere, seeds that are '
+        'outliers for one arm only, empty or one-point fronts, HV_fixed ties '
+        'that flip under GD/IGD.',
+        'End with a findings memo: ranked results with effect sizes (not just '
+        'orderings), the collaboration picture, anomalies, and an explicit '
+        'DO-NOT-CONCLUDE list (no cross-campaign HV comparisons; no legacy-HV '
+        'citations; near-tie shares are shared credit'
+        + ('; no cross-tier tier-frame HV comparisons' if exp.is_powercap else '')
+        + ').',
+    ]
+    for i, s in enumerate(steps, 1):
+        L.append(f'{i}. {s}')
+    L.append('')
+    L.append('The figures mirror the tables — use them to verify claims '
+             'visually before asserting them numerically.')
+    L.append('')
     return '\n'.join(L)
 
 
@@ -839,61 +1951,195 @@ def build_claude_bundle(exp):
 # HEADLESS BULK EXPORT (also exercises every builder without a display)
 # =============================================================================
 
-def export_all(exp, outdir, dpi=300):
-    os.makedirs(outdir, exist_ok=True)
-    styles = resolve_styles(exp.algorithms)
-    opts = {'show_legend': True}
-    written = []
+TABLE_METRICS = ('HV_fixed', 'HV', 'GD', 'IGD', 'Spacing',
+                 'ParetoContribution', 'TimeMs')
+
+
+def _write_table(path, piv, info):
+    with open(path, 'w') as fh:
+        piv.to_csv(fh, index_label='Seed', float_format='%.6f')
+        if info:
+            fh.write(f'\n# {info}\n')
+    return path
+
+
+def _emit_figures(exp, outdir, dpi, described):
+    """Renders every figure the GUI can draw into outdir; appends
+    (path, description) pairs to described. Powercap folders get per-tier
+    scatters + bars, per-arm compare figures and the feasibility chart."""
+    styles = resolve_styles(exp.base_algorithms if exp.is_powercap
+                            else exp.algorithms)
+    base_opts = {'show_legend': True}
+
+    def save(fig, fname, desc):
+        p = os.path.join(outdir, fname)
+        fig.savefig(p, dpi=dpi)
+        described.append((p, desc))
 
     for n in sorted(exp.scenarios):
         scn = exp.scenarios[n]
-        fig = build_scatter_figure(exp, scn, styles, dict(opts))
-        p = os.path.join(outdir, f'scatter_scenario_{n}.png')
-        fig.savefig(p, dpi=dpi)
-        written.append(p)
-        for metric in ('HV_fixed', 'HV', 'GD', 'IGD', 'Spacing',
-                       'ParetoContribution', 'TimeMs'):
-            piv, info = pivot_metric_table(scn, metric)
-            if piv is None:
-                continue
-            p = os.path.join(outdir, f'table_scenario_{n}_{metric}.csv')
-            with open(p, 'w') as fh:
-                piv.to_csv(fh, index_label='Seed', float_format='%.6f')
-                if info:
-                    fh.write(f'\n# {info}\n')
-            written.append(p)
-        piv, info = collab_table(scn)
-        if piv is not None:
-            p = os.path.join(outdir, f'table_scenario_{n}_seed_collaboration.csv')
-            with open(p, 'w') as fh:
-                piv.to_csv(fh, index_label='Seed', float_format='%.6f')
-                if info:
-                    fh.write(f'\n# {info}\n')
-            written.append(p)
+        if exp.is_powercap:
+            for tier in exp.tier_names:
+                opts = dict(base_opts, mode='cap', tier=tier)
+                fig = build_scatter_figure(exp, scn, styles, opts)
+                save(fig, f'scatter_scenario_{n}_{tier.lower()}.png',
+                     f'scenario {n} fronts at {tier_display(tier)} '
+                     '(+ tier universal front)')
+            for base in exp.base_algorithms:
+                opts = dict(base_opts, mode='cmp', cmp_algo=base)
+                fig = build_compare_figure(exp, scn, base, styles, opts)
+                save(fig, f'compare_{base}_scenario_{n}.png',
+                     f'{base} across all cap tiers, scenario {n}')
+        else:
+            fig = build_scatter_figure(exp, scn, styles, dict(base_opts))
+            save(fig, f'scatter_scenario_{n}.png',
+                 f'scenario {n} fronts + universal front')
 
-    for key, display, ylabel, source in available_metrics(exp):
-        fig = build_metric_figure(exp, key, display, ylabel, source, styles, dict(opts))
-        p = os.path.join(outdir, f'bars_{key}.png')
-        fig.savefig(p, dpi=dpi)
-        written.append(p)
+    if exp.is_powercap:
+        for tier in exp.tier_names:
+            for key, display, ylabel, source in powercap_metrics(exp):
+                opts = dict(base_opts, mode='cap', tier=tier)
+                fig = build_metric_figure(exp, key, display, ylabel, source,
+                                          styles, opts)
+                save(fig, f'bars_{key}_{tier.lower()}.png',
+                     f'{display}, all scenarios, {tier_display(tier)}')
+            fig = build_runtime_figure(exp, styles,
+                                       dict(base_opts, mode='cap', tier=tier))
+            save(fig, f'bars_runtime_{tier.lower()}.png',
+                 f'runtime per arm at {tier_display(tier)}')
+        fig = build_feasibility_figure(exp, styles, dict(base_opts))
+        save(fig, 'feasibility.png',
+             'uncapped arms\' feasibility under each derived cap vs the '
+             'calibration targets')
+    else:
+        for key, display, ylabel, source in available_metrics(exp):
+            fig = build_metric_figure(exp, key, display, ylabel, source,
+                                      styles, dict(base_opts))
+            save(fig, f'bars_{key}.png', f'{display}, all scenarios')
+        fig = build_runtime_figure(exp, styles, dict(base_opts))
+        save(fig, 'bars_runtime.png', 'runtime per algorithm')
 
-    fig = build_runtime_figure(exp, styles, dict(opts))
-    p = os.path.join(outdir, 'bars_runtime.png')
-    fig.savefig(p, dpi=dpi)
-    written.append(p)
 
+def _emit_tables(exp, outdir, described):
+    """Writes every pivot table as a real CSV into outdir (per tier for
+    powercap folders), plus powercap-only copies of the universal fronts and
+    the feasibility summary."""
+    for n in sorted(exp.scenarios):
+        scn = exp.scenarios[n]
+        if exp.is_powercap:
+            for tier in exp.tier_names:
+                td = scn.tiers.get(tier)
+                if td is None:
+                    continue
+                for metric in TABLE_METRICS:
+                    piv, info = pivot_metric_table(td, metric)
+                    if piv is None:
+                        continue
+                    p = _write_table(
+                        os.path.join(outdir,
+                                     f'table_scenario_{n}_{metric}_{tier.lower()}.csv'),
+                        piv, info)
+                    described.append((p, f'seeds × arms pivot of {metric}, '
+                                         f'scenario {n}, {tier_display(tier)}'))
+                piv, info = collab_table(td)
+                if piv is not None:
+                    p = _write_table(
+                        os.path.join(
+                            outdir,
+                            f'table_scenario_{n}_seed_collaboration_{tier.lower()}.csv'),
+                        piv, info)
+                    described.append((p, f'near-tie collaboration shares, '
+                                         f'scenario {n}, {tier_display(tier)}'))
+            # Universal fronts of every tier (works for native and recomputed).
+            rows = []
+            for tier in exp.tier_names:
+                td = scn.tiers.get(tier)
+                if td is None or td.universal is None:
+                    continue
+                block = td.universal[scn.obj_names].copy()
+                block.insert(0, 'CapTier', tier)
+                rows.append(block)
+            if rows:
+                p = os.path.join(outdir, f'scenario_{n}_universal_fronts_by_cap.csv')
+                pd.concat(rows, ignore_index=True).to_csv(p, index=False,
+                                                          float_format='%.9f')
+                described.append((p, f'every tier\'s universal front, scenario {n}'))
+        else:
+            for metric in TABLE_METRICS:
+                piv, info = pivot_metric_table(scn, metric)
+                if piv is None:
+                    continue
+                p = _write_table(
+                    os.path.join(outdir, f'table_scenario_{n}_{metric}.csv'), piv, info)
+                described.append((p, f'seeds × algorithms pivot of {metric}, '
+                                     f'scenario {n}'))
+            piv, info = collab_table(scn)
+            if piv is not None:
+                p = _write_table(
+                    os.path.join(outdir, f'table_scenario_{n}_seed_collaboration.csv'),
+                    piv, info)
+                described.append((p, f'near-tie collaboration shares, scenario {n}'))
+
+    if exp.is_powercap and exp.feasibility is not None:
+        p = os.path.join(outdir, 'feasibility_summary.csv')
+        exp.feasibility.to_csv(p, index=False)
+        described.append((p, 'per (scenario, arm, cap) feasibility rates '
+                             '(copy of the campaign file)'))
+
+
+def export_all(exp, outdir, dpi=300):
+    """Headless export of every figure/table + the markdown bundle into a
+    directory (the --export-all path). Same emitters feed the Claude zip."""
+    os.makedirs(outdir, exist_ok=True)
+    described = []
+    _emit_figures(exp, outdir, dpi, described)
+    _emit_tables(exp, outdir, described)
     p = os.path.join(outdir, f'claude_bundle_{exp.name}.md')
     with open(p, 'w') as fh:
         fh.write(build_claude_bundle(exp))
-    written.append(p)
-    return written
+    described.append((p, 'all tables inline as markdown'))
+    return [p for p, _ in described]
+
+
+def export_claude_zip(exp, zip_path, dpi=200):
+    """One self-briefing zip for LLM analysis: INSTRUCTIONS_FOR_CLAUDE.md
+    (generated), bundle.md (all tables inline), figures/ (every plot) and
+    tables/ (every pivot as a real CSV). Works for every study; powercap
+    folders add the tier dimension and powercap-only files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fig_dir = os.path.join(tmp, 'figures')
+        tab_dir = os.path.join(tmp, 'tables')
+        os.makedirs(fig_dir)
+        os.makedirs(tab_dir)
+        described = []
+        _emit_figures(exp, fig_dir, dpi, described)
+        _emit_tables(exp, tab_dir, described)
+
+        bundle_path = os.path.join(tmp, 'bundle.md')
+        with open(bundle_path, 'w') as fh:
+            fh.write(build_claude_bundle(exp))
+
+        file_map = [('INSTRUCTIONS_FOR_CLAUDE.md', 'this file — read it first'),
+                    ('bundle.md', 'every table inline as markdown CSV blocks '
+                                  '(self-contained fallback if you can only '
+                                  'read one file)')]
+        file_map += [(os.path.relpath(p, tmp), desc) for p, desc in described]
+        with open(os.path.join(tmp, 'INSTRUCTIONS_FOR_CLAUDE.md'), 'w') as fh:
+            fh.write(build_instructions_md(exp, file_map))
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, _dirs, files in os.walk(tmp):
+                for fname in sorted(files):
+                    full = os.path.join(root, fname)
+                    zf.write(full, os.path.relpath(full, tmp))
+    return zip_path
 
 # =============================================================================
 # GUI — Tkinter is imported only inside launch_gui() so headless use
 # (--export-all) works on machines without a display or python3-tk.
 # =============================================================================
 
-PLOT_TABS = ('scatter', 'metrics', 'runtime')
+PLOT_TABS = ('scatter', 'metrics', 'runtime', 'feas')
 
 
 class ResultsExplorerApp:
@@ -955,10 +2201,11 @@ class ResultsExplorerApp:
         self.tabs = {}
         for key, title in (('scatter', 'Scatter'), ('metrics', 'Metrics'),
                            ('runtime', 'Runtime'), ('tables', 'Tables'),
-                           ('details', 'Details')):
+                           ('details', 'Details'), ('feas', 'Feasibility')):
             frame = ttk.Frame(self.notebook)
             self.notebook.add(frame, text=title)
             self.tabs[key] = frame
+        self.notebook.hide(self.tabs['feas'])  # powercap folders only
         self.notebook.bind('<<NotebookTabChanged>>', lambda e: self._on_tab_changed())
 
         self._build_metrics_controls()
@@ -969,21 +2216,34 @@ class ResultsExplorerApp:
                                 anchor='w', padding=(8, 3))
         self.status.pack(side='bottom', fill='x')
 
+    def _sideheader(self, parent, text):
+        self.ttk.Label(parent, text=text.upper(), foreground='#888',
+                       font=('TkDefaultFont', 8, 'bold')).pack(anchor='w', pady=(10, 2))
+
     def _build_sidebar(self, side):
         tk, ttk = self.tk, self.ttk
 
         def header(text):
-            ttk.Label(side, text=text.upper(), foreground='#888',
-                      font=('TkDefaultFont', 8, 'bold')).pack(anchor='w', pady=(10, 2))
+            self._sideheader(side, text)
 
         header('Scenario')
         self.scenario_var = tk.IntVar(value=1)
         self.scenario_frame = ttk.Frame(side)
         self.scenario_frame.pack(anchor='w', fill='x')
 
-        header('Algorithms — color & visibility')
-        self.algo_frame = ttk.Frame(side)
-        self.algo_frame.pack(anchor='w', fill='x')
+        # Everything between Scenario and Display is study-shaped: for powercap
+        # folders it carries the view switch, cap dropdown / tier list, and the
+        # Pareto-set toggles. Rebuilt by _rebuild_dynamic_sidebar.
+        self.dyn_frame = ttk.Frame(side)
+        self.dyn_frame.pack(anchor='w', fill='x')
+
+        # PowerCap state (harmless defaults for ordinary folders).
+        self.mode_var = tk.StringVar(value='cap')
+        self.tier_var = tk.StringVar(value='')
+        self.cmp_var = tk.StringVar(value='')
+        self._tier_vars = {}
+        self.show_universal_var = tk.BooleanVar(value=True)
+        self.show_global_universal_var = tk.BooleanVar(value=False)
 
         header('Display')
         self.legend_var = tk.BooleanVar(value=True)
@@ -1174,24 +2434,41 @@ class ResultsExplorerApp:
             self.messagebox.showerror('Could not load experiment', str(e))
             return
         self.exp = exp
-        self.styles = resolve_styles(exp.algorithms)
+        self.styles = resolve_styles(
+            exp.base_algorithms if exp.is_powercap else exp.algorithms)
         self.hidden = set()
         self.custom_titles = {}
+        self.mode_var.set('cap')
+        self.tier_var.set(exp.tier_names[0] if exp.is_powercap else '')
+        self.cmp_var.set(exp.base_algorithms[0] if exp.is_powercap else '')
+        self._tier_vars = {}
+        self.show_universal_var.set(True)
+        self.show_global_universal_var.set(False)
         objs = exp.objective_names
         n_scen = len(exp.scenarios)
         n_seeds = 0
         first = next(iter(exp.scenarios.values()))
         if first.metrics_seed is not None:
             n_seeds = first.metrics_seed['Seed'].nunique()
+        if exp.is_powercap:
+            arms = (f'{len(exp.base_algorithms)} base arms × '
+                    f'{len(exp.tier_names)} cap tiers')
+        else:
+            arms = f'{len(exp.algorithms)} algorithms'
         self.exp_label.config(text=(
             f'{exp.name}   ·   {objs[0]} vs {objs[1]} · {n_scen} scenarios · '
-            f'{len(exp.algorithms)} algorithms · {n_seeds} seeds'))
+            f'{arms} · {n_seeds} seeds'))
+        if exp.is_powercap:
+            self.notebook.add(self.tabs['feas'], text='Feasibility')
+        else:
+            self.notebook.hide(self.tabs['feas'])
         self._rebuild_scenario_controls()
-        self._rebuild_algo_controls()
+        self._rebuild_dynamic_sidebar()
         self._rebuild_metric_choices()
         self._rebuild_table_choices()
         self.refresh_all()
         self.set_status(f'Loaded {exp.folder}')
+        self._update_powercap_status()
 
     def _rebuild_scenario_controls(self):
         for w in self.scenario_frame.winfo_children():
@@ -1209,29 +2486,144 @@ class ResultsExplorerApp:
         self._refresh_tab('tables')
         self._refresh_details_tab()
 
-    def _rebuild_algo_controls(self):
-        tk = self.tk
-        for w in self.algo_frame.winfo_children():
+    def _rebuild_dynamic_sidebar(self):
+        """(Re)builds the study-shaped sidebar block: view switch + cap dropdown
+        + algorithm list + Pareto-set toggles for powercap folders (per mode),
+        or the plain algorithm list + universal toggle otherwise. Preserves the
+        current visibility/color state where labels persist."""
+        tk, ttk = self.tk, self.ttk
+        dyn = self.dyn_frame
+        for w in dyn.winfo_children():
             w.destroy()
-        self._algo_vars = {}
-        for algo in self.exp.algorithms:
-            st = self.styles[algo]
-            row = self.ttk.Frame(self.algo_frame)
+        exp = self.exp
+        if exp is None:
+            return
+        powercap = exp.is_powercap
+        mode = self.mode_var.get() if powercap else 'cap'
+
+        if powercap:
+            self._sideheader(dyn, 'View')
+            for value, text in (('cap', 'Per-cap view'),
+                                ('cmp', 'Compare algorithm across caps')):
+                ttk.Radiobutton(dyn, text=text, value=value, variable=self.mode_var,
+                                command=self._mode_changed).pack(anchor='w')
+
+        if powercap and mode == 'cap':
+            self._sideheader(dyn, 'Power cap')
+            self.tier_combo = ttk.Combobox(dyn, state='readonly', width=26)
+            tiers = exp.tier_names
+            self.tier_combo['values'] = [
+                tier_display(t, exp.cap_watts.get(t)) for t in tiers]
+            if self.tier_var.get() not in tiers:
+                self.tier_var.set(tiers[0])
+            self.tier_combo.current(tiers.index(self.tier_var.get()))
+            self.tier_combo.pack(anchor='w', fill='x')
+            self.tier_combo.bind('<<ComboboxSelected>>', lambda e: self._tier_changed())
+
+        if mode == 'cap':
+            self._sideheader(dyn, 'Algorithms — color & visibility')
+            self.algo_frame = ttk.Frame(dyn)
+            self.algo_frame.pack(anchor='w', fill='x')
+            self._algo_vars = {}
+            algos = exp.base_algorithms if powercap else exp.algorithms
+            for algo in algos:
+                st = self.styles[algo]
+                row = ttk.Frame(self.algo_frame)
+                row.pack(anchor='w', fill='x')
+                var = tk.BooleanVar(value=algo not in self.hidden)
+                self._algo_vars[algo] = var
+                ttk.Checkbutton(row, variable=var,
+                                command=self._visibility_changed).pack(side='left')
+                btn = tk.Button(row, width=2, bg=st['color'],
+                                activebackground=st['color'], relief='raised',
+                                command=lambda a=algo: self.pick_color(a))
+                btn.pack(side='left', padx=(0, 6))
+                st['_swatch'] = btn
+                ttk.Label(row, text=st['display']).pack(side='left')
+
+            self._sideheader(dyn, 'Pareto sets')
+            row = ttk.Frame(dyn)
             row.pack(anchor='w', fill='x')
-            var = tk.BooleanVar(value=True)
-            self._algo_vars[algo] = var
-            self.ttk.Checkbutton(row, variable=var,
-                                 command=self._visibility_changed).pack(side='left')
-            btn = tk.Button(row, width=2, bg=st['color'],
-                            activebackground=st['color'], relief='raised',
-                            command=lambda a=algo: self.pick_color(a))
-            btn.pack(side='left', padx=(0, 6))
-            st['_swatch'] = btn
-            self.ttk.Label(row, text=st['display']).pack(side='left')
+            ttk.Checkbutton(
+                row, variable=self.show_universal_var, command=self.refresh_plots,
+                text=(f'Universal — {tier_display(self.tier_var.get())}'
+                      if powercap else UNIVERSAL_LABEL)).pack(side='left')
+            if powercap:
+                row = ttk.Frame(dyn)
+                row.pack(anchor='w', fill='x')
+                ttk.Checkbutton(row, variable=self.show_global_universal_var,
+                                command=self.refresh_plots,
+                                text='Global universal (all arms)').pack(side='left')
+                ttk.Label(dyn, foreground='#888', font=('TkDefaultFont', 8),
+                          text='global = pooled over uncapped + all caps').pack(anchor='w')
+
+        elif mode == 'cmp':
+            self._sideheader(dyn, 'Algorithm')
+            self.cmp_combo = ttk.Combobox(dyn, state='readonly', width=26)
+            self.cmp_combo['values'] = [self.styles[a]['display']
+                                        for a in exp.base_algorithms]
+            if self.cmp_var.get() not in exp.base_algorithms:
+                self.cmp_var.set(exp.base_algorithms[0])
+            self.cmp_combo.current(exp.base_algorithms.index(self.cmp_var.get()))
+            self.cmp_combo.pack(anchor='w', fill='x')
+            self.cmp_combo.bind('<<ComboboxSelected>>', lambda e: self._cmp_changed())
+
+            self._sideheader(dyn, 'Cap tiers — visibility')
+            old = {t: v.get() for t, v in self._tier_vars.items()}
+            self._tier_vars = {}
+            for tier in exp.tier_names:
+                row = ttk.Frame(dyn)
+                row.pack(anchor='w', fill='x')
+                var = tk.BooleanVar(value=old.get(tier, True))
+                self._tier_vars[tier] = var
+                ttk.Checkbutton(row, variable=var,
+                                command=self.refresh_plots).pack(side='left')
+                sw = tk.Frame(row, width=16, height=6, bg=tier_color(exp, tier))
+                sw.pack(side='left', padx=(0, 6))
+                text = tier_display(tier, exp.cap_watts.get(tier))
+                if tier == UNCAPPED_TIER:
+                    text += ' — dashed'
+                ttk.Label(row, text=text).pack(side='left')
 
     def _visibility_changed(self):
         self.hidden = {a for a, v in self._algo_vars.items() if not v.get()}
         self.refresh_plots()
+
+    def _mode_changed(self):
+        self._rebuild_dynamic_sidebar()
+        self._rebuild_metric_choices()
+        self._rebuild_table_choices()
+        self.refresh_all()
+        self._update_powercap_status()
+
+    def _tier_changed(self):
+        tiers = self.exp.tier_names
+        self.tier_var.set(tiers[self.tier_combo.current()])
+        self._rebuild_dynamic_sidebar()  # refresh the universal-toggle label
+        self._rebuild_table_choices()
+        self.refresh_all()
+        self._update_powercap_status()
+
+    def _cmp_changed(self):
+        self.cmp_var.set(self.exp.base_algorithms[self.cmp_combo.current()])
+        self.refresh_all()
+        self._update_powercap_status()
+
+    def _update_powercap_status(self):
+        exp = self.exp
+        if exp is None or not exp.is_powercap:
+            return
+        src = ('native (*_by_cap.csv)' if exp.by_cap_source == 'native'
+               else 'recomputed in explorer (pre-fix folder)')
+        if self.mode_var.get() == 'cmp':
+            disp = self.styles.get(self.cmp_var.get(), {}).get('display', self.cmp_var.get())
+            self.set_status(f'Compare mode: {disp} across '
+                            f'{sum(v.get() for v in self._tier_vars.values())} cap tiers · '
+                            f'HV frame: run-wide (comparable across caps) · per-tier data: {src}')
+        else:
+            tier = self.tier_var.get()
+            self.set_status(f'{tier_display(tier, exp.cap_watts.get(tier))} · '
+                            f'per-tier data: {src}')
 
     def pick_color(self, algo):
         st = self.styles[algo]
@@ -1243,22 +2635,46 @@ class ResultsExplorerApp:
             self.refresh_plots()
 
     def _rebuild_metric_choices(self):
+        exp = self.exp
+        if exp.is_powercap and self.mode_var.get() == 'cmp':
+            choices = COMPARE_METRIC_CHOICES
+        elif exp.is_powercap:
+            choices = powercap_metrics(exp)
+        else:
+            choices = available_metrics(exp)
         self._metric_defs = {display: (key, ylabel, source)
-                             for key, display, ylabel, source in available_metrics(self.exp)}
+                             for key, display, ylabel, source in choices}
         values = list(self._metric_defs)
         self.metric_combo['values'] = values
         if values:
             self.metric_var.set(values[0])
 
     def _rebuild_table_choices(self):
-        scn = next(iter(self.exp.scenarios.values()))
+        exp = self.exp
         kinds = []
-        if scn.metrics_seed is not None:
-            metric_cols = [c for c in scn.metrics_seed.columns
-                           if c not in ('Algorithm', 'Seed')]
-            kinds += [f'Per-seed metrics — {c}' for c in metric_cols]
-        if any(s.collab_seed is not None for s in self.exp.scenarios.values()):
-            kinds.append('Seed-collaboration share % (near-tie)')
+        if exp.is_powercap and self.mode_var.get() == 'cmp':
+            kinds = ['Across caps — HV_fixed (run-wide frame)',
+                     'Across caps — GD (tier reference)',
+                     'Across caps — IGD (tier reference)',
+                     'Across caps — Spacing']
+        elif exp.is_powercap:
+            tier = self.tier_var.get()
+            scn = next(iter(exp.scenarios.values()))
+            td = scn.tiers.get(tier)
+            if td is not None and td.metrics_seed is not None:
+                metric_cols = [c for c in td.metrics_seed.columns
+                               if c not in ('Algorithm', 'Seed')]
+                kinds += [f'Per-seed metrics — {c}' for c in metric_cols]
+            if td is not None and td.collab_seed is not None:
+                kinds.append('Seed-collaboration share % (near-tie)')
+        else:
+            scn = next(iter(exp.scenarios.values()))
+            if scn.metrics_seed is not None:
+                metric_cols = [c for c in scn.metrics_seed.columns
+                               if c not in ('Algorithm', 'Seed')]
+                kinds += [f'Per-seed metrics — {c}' for c in metric_cols]
+            if any(s.collab_seed is not None for s in exp.scenarios.values()):
+                kinds.append('Seed-collaboration share % (near-tie)')
         self.table_kind_combo['values'] = kinds
         if kinds:
             default = next((k for k in kinds if 'HV_fixed' in k), kinds[0])
@@ -1270,8 +2686,12 @@ class ResultsExplorerApp:
         self.status.config(text=text)
 
     def _current_tab(self):
-        idx = self.notebook.index(self.notebook.select())
-        return list(self.tabs)[idx]
+        # Match by widget path (robust when tabs are hidden, e.g. Feasibility).
+        sel = self.notebook.select()
+        for key, frame in self.tabs.items():
+            if str(frame) == sel:
+                return key
+        return 'scatter'
 
     def _on_tab_changed(self):
         tab = self._current_tab()
@@ -1289,7 +2709,7 @@ class ResultsExplorerApp:
             ms = float(self.marker_var.get())
         except ValueError:
             ms = 7.0
-        return {
+        opts = {
             'swap': self.swap_var.get(),
             'title': self.custom_titles.get(tab, ''),
             'show_legend': self.legend_var.get(),
@@ -1298,7 +2718,19 @@ class ResultsExplorerApp:
             'normalize': self.normalize_var.get(),
             'hidden': self.hidden,
             'marker_size': ms,
+            'show_universal': self.show_universal_var.get(),
         }
+        if self.exp is not None and self.exp.is_powercap:
+            mode = self.mode_var.get()
+            opts['mode'] = mode
+            if mode == 'cap':
+                opts['tier'] = self.tier_var.get() or self.exp.tier_names[0]
+                opts['show_global_universal'] = self.show_global_universal_var.get()
+            else:
+                opts['cmp_algo'] = self.cmp_var.get()
+                opts['tiers_hidden'] = {t for t, v in self._tier_vars.items()
+                                        if not v.get()}
+        return opts
 
     def refresh_all(self):
         self.refresh_plots()
@@ -1314,7 +2746,12 @@ class ResultsExplorerApp:
             return
         if tab == 'scatter':
             scn = self.exp.scenarios[self.scenario_var.get()]
-            fig = build_scatter_figure(self.exp, scn, self.styles, self._opts(tab))
+            opts = self._opts(tab)
+            if self.exp.is_powercap and opts.get('mode') == 'cmp':
+                fig = build_compare_figure(self.exp, scn, self.cmp_var.get(),
+                                           self.styles, opts)
+            else:
+                fig = build_scatter_figure(self.exp, scn, self.styles, opts)
             self._mount_figure(tab, fig, pickable=True)
         elif tab == 'metrics':
             display = self.metric_var.get()
@@ -1326,6 +2763,10 @@ class ResultsExplorerApp:
         elif tab == 'runtime':
             fig = build_runtime_figure(self.exp, self.styles, self._opts(tab))
             self._mount_figure(tab, fig)
+        elif tab == 'feas':
+            if self.exp.is_powercap:
+                fig = build_feasibility_figure(self.exp, self.styles, self._opts(tab))
+                self._mount_figure(tab, fig)
         elif tab == 'tables':
             self._refresh_table()
 
@@ -1367,6 +2808,9 @@ class ResultsExplorerApp:
 
     # ---- scatter pick -> details -------------------------------------------
 
+    def _powercap_full_label(self, base, tier):
+        return base if tier == UNCAPPED_TIER else f'{base}_{tier}'
+
     def _on_pick(self, event):
         gid = event.artist.get_gid()
         if not gid or self.exp is None or not len(event.ind):
@@ -1375,28 +2819,50 @@ class ResultsExplorerApp:
         if not scn.details:
             self.set_status('No solution details in this run — Details tab unavailable.')
             return
-        kind, algo = gid.split('::', 1)
+        kind, name = gid.split('::', 1)
         idx = event.ind[0]
+        powercap = self.exp.is_powercap
+        cap_mode = powercap and self.mode_var.get() == 'cap'
+        tier = self.tier_var.get() if cap_mode else None
+        ox = scn.obj_names[1] if self.swap_var.get() else scn.obj_names[0]
+
         if kind == 'cloud':
-            pts = scn.points[scn.points['Algorithm'] == algo].reset_index()
+            # In per-cap view the artist carries the BASE label and indexes the
+            # tier's cloud rows; details are stored under the full tier label.
+            pts_src = scn.tiers[tier].points if cap_mode else scn.points
+            details_algo = self._powercap_full_label(name, tier) if cap_mode else name
+            pts = pts_src[pts_src['Algorithm'] == name].reset_index()
             if idx >= len(pts):
                 return
             row = pts.iloc[idx]
             seed = int(row['Seed'])
             sol_idx = int(row['index'] -
                           pts[pts['Seed'] == row['Seed']]['index'].min())
-            self._select_details(algo, seed, sol_idx)
+            self._select_details(details_algo, seed, sol_idx)
         elif kind == 'front':
-            fr = scn.fronts.get(algo)
+            fronts_src = scn.tiers[tier].fronts if cap_mode else scn.fronts
+            details_algo = self._powercap_full_label(name, tier) if cap_mode else name
+            fr = fronts_src.get(name)
             if fr is None:
                 return
             # Must mirror the builder's plot order (sorted by the CURRENT x axis).
-            ox = scn.obj_names[1] if self.swap_var.get() else scn.obj_names[0]
             fr = fr.sort_values(ox).reset_index(drop=True)
             if idx >= len(fr):
                 return
             target = fr.iloc[idx][scn.obj_names].to_numpy(dtype=float)
-            self._select_details_by_objectives(algo, target, scn)
+            self._select_details_by_objectives(details_algo, target, scn)
+        elif kind == 'cmpfront':
+            base = self.cmp_var.get()
+            td = scn.tiers.get(name)
+            fr = td.fronts.get(base) if td is not None else None
+            if fr is None:
+                return
+            fr = fr.sort_values(ox).reset_index(drop=True)
+            if idx >= len(fr):
+                return
+            target = fr.iloc[idx][scn.obj_names].to_numpy(dtype=float)
+            self._select_details_by_objectives(
+                self._powercap_full_label(base, name), target, scn)
 
     def _select_details_by_objectives(self, algo, target, scn):
         best, best_err = None, None
@@ -1433,6 +2899,18 @@ class ResultsExplorerApp:
 
     # ---- details tab ---------------------------------------------------------
 
+    def _details_allowed_algorithms(self):
+        """Full labels the Details pickers should offer in the current view
+        (None = no filtering; powercap scopes to the tier / compared arm)."""
+        exp = self.exp
+        if exp is None or not exp.is_powercap:
+            return None
+        if self.mode_var.get() == 'cmp':
+            base = self.cmp_var.get()
+            return {self._powercap_full_label(base, t) for t in exp.tier_names}
+        tier = self.tier_var.get()
+        return {self._powercap_full_label(b, tier) for b in exp.base_algorithms}
+
     def _refresh_details_tab(self):
         scn = self.exp.scenarios[self.scenario_var.get()] if self.exp else None
         if scn is None or not scn.details:
@@ -1441,7 +2919,9 @@ class ResultsExplorerApp:
             return
         self.details_msg.pack_forget()
         self.details_body.pack(fill='both', expand=True)
-        algos = sorted({s.get('algorithm') for s in details_solutions(scn)})
+        allowed = self._details_allowed_algorithms()
+        algos = sorted({s.get('algorithm') for s in details_solutions(scn)
+                        if allowed is None or s.get('algorithm') in allowed})
         self.d_algo_combo['values'] = algos
         if self.d_algo_var.get() not in algos and algos:
             self.d_algo_var.set(algos[0])
@@ -1511,13 +2991,26 @@ class ResultsExplorerApp:
     def _refresh_table(self):
         scn = self.exp.scenarios[self.scenario_var.get()]
         kind = self.table_kind_var.get()
-        if kind.startswith('Per-seed metrics — '):
-            metric = kind.split('— ', 1)[1]
-            df, info = pivot_metric_table(scn, metric)
-        elif kind.startswith('Seed-collaboration'):
-            df, info = collab_table(scn)
+        if self.exp.is_powercap and self.mode_var.get() == 'cmp':
+            metric = {'Across caps — HV_fixed (run-wide frame)': 'HV_fixed_run',
+                      'Across caps — GD (tier reference)': 'GD',
+                      'Across caps — IGD (tier reference)': 'IGD',
+                      'Across caps — Spacing': 'Spacing'}.get(kind)
+            df, info = (compare_pivot_table(self.exp, scn, self.cmp_var.get(), metric)
+                        if metric else (None, ''))
         else:
-            df, info = None, ''
+            # TierData quacks like ScenarioData for the table builders, so the
+            # per-cap view just swaps the source object.
+            src = scn
+            if self.exp.is_powercap:
+                src = scn.tiers.get(self.tier_var.get(), scn)
+            if kind.startswith('Per-seed metrics — '):
+                metric = kind.split('— ', 1)[1]
+                df, info = pivot_metric_table(src, metric)
+            elif kind.startswith('Seed-collaboration'):
+                df, info = collab_table(src)
+            else:
+                df, info = None, ''
         self.current_table = (df, info)
         tree = self.table_tree
         tree.delete(*tree.get_children())
@@ -1625,18 +3118,33 @@ class ResultsExplorerApp:
         if self.exp is None:
             return
         path = self.filedialog.asksaveasfilename(
-            defaultextension='.md',
-            initialfile=f'claude_bundle_{self.exp.name}.md',
-            filetypes=[('Markdown', '*.md'), ('Gzipped Markdown', '*.md.gz')])
+            defaultextension='.zip',
+            initialfile=f'claude_bundle_{self.exp.name}.zip',
+            filetypes=[('Claude bundle (zip: briefing + figures + tables)', '*.zip'),
+                       ('Markdown only', '*.md'),
+                       ('Gzipped Markdown only', '*.md.gz')])
         if not path:
             return
-        text = build_claude_bundle(self.exp)
-        if path.endswith('.gz'):
-            with gzip.open(path, 'wt') as fh:
-                fh.write(text)
+        if path.endswith('.zip'):
+            try:
+                dpi = float(self.dpi_var.get())
+            except ValueError:
+                dpi = 300
+            # Bundles default to 200 DPI (documented) unless the spinner was
+            # moved off its default.
+            if dpi == 300:
+                dpi = 200
+            self.set_status('Building Claude bundle zip (renders every figure)…')
+            self.root.update_idletasks()
+            export_claude_zip(self.exp, path, dpi=dpi)
         else:
-            with open(path, 'w') as fh:
-                fh.write(text)
+            text = build_claude_bundle(self.exp)
+            if path.endswith('.gz'):
+                with gzip.open(path, 'wt') as fh:
+                    fh.write(text)
+            else:
+                with open(path, 'w') as fh:
+                    fh.write(text)
         self.set_status(f'Saved Claude bundle: {path} '
                         f'({os.path.getsize(path) / 1024:.0f} KB)')
 
@@ -1669,16 +3177,26 @@ def main(argv=None):
                         help='experiment results folder (results/<ExperimentId>)')
     parser.add_argument('--export-all', metavar='DIR',
                         help='headless: export all figures/tables/bundle to DIR and exit')
+    parser.add_argument('--claude-zip', metavar='FILE.zip',
+                        help='headless: write the self-briefing Claude bundle zip '
+                             '(instructions + bundle.md + figures/ + tables/) and exit')
     parser.add_argument('--dpi', type=float, default=300.0,
-                        help='DPI for --export-all figures (default 300)')
+                        help='DPI for --export-all figures (default 300; '
+                             'the Claude zip uses 200 unless overridden)')
     args = parser.parse_args(argv)
 
-    if args.export_all:
+    if args.export_all or args.claude_zip:
         if not args.folder:
-            parser.error('--export-all requires a results folder argument')
+            parser.error('--export-all/--claude-zip require a results folder argument')
         exp = ExperimentData.load(args.folder)
-        written = export_all(exp, args.export_all, dpi=args.dpi)
-        print(f'Exported {len(written)} files to {args.export_all}')
+        if args.export_all:
+            written = export_all(exp, args.export_all, dpi=args.dpi)
+            print(f'Exported {len(written)} files to {args.export_all}')
+        if args.claude_zip:
+            dpi = args.dpi if args.dpi != 300.0 else 200.0
+            export_claude_zip(exp, args.claude_zip, dpi=dpi)
+            size = os.path.getsize(args.claude_zip) / (1024 * 1024)
+            print(f'Wrote Claude bundle: {args.claude_zip} ({size:.1f} MB)')
         return 0
     return launch_gui(args.folder)
 

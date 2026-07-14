@@ -200,14 +200,30 @@ public final class CampaignRunner {
         }
 
         try {
-            Path dir = new ExperimentReporter()
-                .writeExperiment(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId, reports);
+            ExperimentReporter reporter = new ExperimentReporter();
+            Path dir = reporter.writeExperiment(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId, reports);
             if (detailsCollector != null) {
                 detailsCollector.writeAll(dir, experimentId);
             }
             if (twoPhase) {
                 // Feasibility of every arm (uncapped + constrained) against the derived caps.
                 PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
+            }
+            if (twoPhase && caps != null && caps.length > 0) {
+                // Per-cap-tier analysis (additive *_by_cap.csv files): every indicator,
+                // universal front and collaboration table recomputed strictly within each
+                // tier via analyzed copies — the global CSVs above are untouched.
+                Map<String, Double> capWattsByTier = new LinkedHashMap<>();
+                for (int c = 0; c < caps.length; c++) {
+                    capWattsByTier.put(
+                        "PC" + String.format(java.util.Locale.US, "%.0f", targets[c]), caps[c]);
+                }
+                for (int s = 0; s < scenarioCount; s++) {
+                    List<ParetoAnalyzer.TierAnalysis> tiers =
+                        ParetoAnalyzer.analyzeScenarioByTier(perScenarioRuns.get(s));
+                    reporter.writeByCapReports(dir, s + 1, spec.getObjectiveNames(), tiers,
+                        capWattsByTier);
+                }
             }
             ConsoleReporter.printDone(dir);
             PostRunScripts.runAll(dir);
