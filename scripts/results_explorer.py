@@ -38,8 +38,9 @@ PowerCap mode (PowerCeiling campaigns, detected from the _PC<N> arm labels):
     bounds from that tier's arms only. The old all-arms global universal stays
     available as an off-by-default dashed overlay.
   * "Compare algorithm across caps" overlays one base arm's four tier fronts
-    (sequential blue ramp, Uncapped dashed); its HV bars use the run-wide
-    frame so they are comparable across caps.
+    (traffic-light tier colors: Uncapped dark green + dashed, then light
+    green / yellow / red loose -> tight); its HV bars use the run-wide frame
+    so they are comparable across caps.
   * A Feasibility tab plots feasibility_summary.csv against the calibration
     targets.
   * Per-tier numbers come from the native scenario_N_*_by_cap.csv files when
@@ -1061,17 +1062,24 @@ def tier_bounds(td, obj_names):
     return _bounds_from(td.points, td.universal, obj_names)
 
 
-# Sequential blue ramp for cap tiers (loose -> tight); Uncapped is drawn dashed
-# so tier identity never rides on color alone.
-TIER_COLOR_RAMP = ['#82B8D8', '#4E94BE', '#1F6690', '#0C3A5C', '#062338', '#031320']
+# Tier identity colors — a traffic-light severity scale (owner-chosen):
+# Uncapped dark green, then loose -> tight caps as light green / yellow / red.
+# Validated for CVD separation; Uncapped additionally draws dashed and grouped
+# bars carry tier order by position, so identity never rides on color alone.
+# Campaigns with extra cap tiers fall back to the trailing spare hues.
+TIER_COLOR_UNCAPPED = '#226B27'
+TIER_COLORS_CAPPED = ['#8BC34A', '#D9A400', '#C62828', '#7B1FA2', '#00838F', '#5D4037']
 GLOBAL_UNIVERSAL_COLOR = '#9AA0A6'
 
 
 def tier_color(exp, tier):
+    if tier == UNCAPPED_TIER:
+        return TIER_COLOR_UNCAPPED
+    capped = [t for t in exp.tier_names if t != UNCAPPED_TIER]
     try:
-        return TIER_COLOR_RAMP[exp.tier_names.index(tier) % len(TIER_COLOR_RAMP)]
+        return TIER_COLORS_CAPPED[capped.index(tier) % len(TIER_COLORS_CAPPED)]
     except ValueError:
-        return TIER_COLOR_RAMP[-1]
+        return TIER_COLORS_CAPPED[-1]
 
 
 def build_scatter_figure(exp, scn, styles, opts):
@@ -1174,8 +1182,9 @@ def build_scatter_figure(exp, scn, styles, opts):
 
 def build_compare_figure(exp, scn, base, styles, opts):
     """PowerCap compare mode: one base algorithm's pooled front at every cap
-    tier, colored by the sequential tier ramp (Uncapped dashed). Normalization
-    (when on) uses the scenario-wide frame, so it is comparable across tiers."""
+    tier, in the tier identity colors (Uncapped dark green + dashed, then
+    light green / yellow / red loose -> tight). Normalization (when on) uses
+    the scenario-wide frame, so it is comparable across tiers."""
     fig = Figure(figsize=(9.2, 6.6), dpi=100)
     ax = fig.add_subplot(111)
     ox, oy = scn.obj_names
