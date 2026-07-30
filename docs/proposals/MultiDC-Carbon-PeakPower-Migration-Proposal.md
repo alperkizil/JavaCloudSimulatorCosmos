@@ -173,6 +173,42 @@ hard constraint (the fully "operational" scenario).
 - **Cap coupling:** migration overhead counts against *both* DCs' caps during the
   transfer window — you cannot migrate into a clean window the destination cannot host.
 
+### 4.5 GT-MOSA — the custom multi-objective SA replacing AMOSA (owner decision)
+
+Rationale from paper-1 evidence: SA's strength on this problem is surgical
+single-objective refinement, and the collaborative front is built by *specialists*;
+AMOSA is a generalist (one chain, domination-amount acceptance, cluster-truncated
+archive that discards extremes) and scored 0% everywhere post-#222. GT-MOSA
+("gap-targeting MOSA") internalizes the specialist pattern into one budget-fair arm:
+
+1. **Segmented budget:** the 40k evaluations are split into short SA runs
+   ("segments"), each with its own reheat + cooling (existing cooling schedules and
+   `autoInitialTemperature` machinery reused unchanged).
+2. **Extreme anchoring:** segments 1–2 run pure-Carbon and pure-Tardiness
+   scalarizations — replicating the proven SA-specialist behavior in-arm.
+3. **Gap targeting:** each later segment finds the widest normalized gap between
+   adjacent points of the arm's own non-dominated archive
+   (`ObjectiveScaleNormalizer` basis) and anneals toward the gap midpoint under a
+   **Tchebycheff scalarization** (reaches non-convex front regions where linear
+   weights cannot).
+4. **Archive reseeding:** each segment warm-starts from the (perturbed) archive
+   member nearest its target — the archive doubles as memory, so refinement
+   compounds.
+5. **Fairness identical to all arms:** every evaluation offered to the ε-pruned
+   publication archive (PR #218 rule); exactly 40k evaluations; **no archive-init
+   grant** (AMOSA's +10 200 footnote disappears).
+6. **Constrained twin for free:** acceptance and archiving wrapped in the Deb's-rules
+   comparator, exactly like the existing `*PowerCeiling*` twins.
+
+Honesty requirements: (a) cite the lineage — Ulungu's MOSA and Czyżak &
+Jaszkiewicz's Pareto SA used weight-diversified SA chains; the novelty here is
+archive-gap-adaptive targeting + the shared publication/fairness protocol; (b) to
+preempt "tuned on your own benchmark": freeze GT-MOSA's parameters (segment count,
+reheat schedule) by tuning on paper 1's problem or a held-out seed block, disclose
+the protocol, and keep AMOSA as the appendix literature baseline it is compared
+against. Implementation ≈ a few hundred lines (segment loop, gap picker, Tchebycheff
+wrapper, reseeding); everything else is reuse.
+
 ---
 
 ## 5. What exists vs. what must be built (verified against the 2026-07-30 code audit)
@@ -214,6 +250,7 @@ functional); rolling-window demand metrics; ramp limits.
 | B8 | **Workload redesign + release times + SLA classes** | New columns in `[TASKS]`/`TaskConfig` (+ `InitializationStep`): release tick, SLA class. `LaneSchedule` gains release-awareness. Instruction masses ×~10³ (minutes–hours per task), diurnal release profile (shape from the Azure/Google traces bundled with artifact v2). Same ~500-task genome; same pure/RNG-free generation discipline as LOG16 |
 | B9 | **Reporting** | Per-DC hourly CSV (power, cap, CI, CO₂); campaign columns: gCO₂ split (compute/idle/migration/WAN), per-DC peak kW, cap-binding hours, migration count/downtime, per-class compliance %; `ParetoAnalyzer` unchanged |
 | B10 | **Campaign scenario builder generalization** | `newExperiments/ExperimentConfig.toExperimentConfiguration()` hard-codes one DC ("DC-Experiment", 400 kW); generalize to a DC-portfolio spec (name, fleet, PUE, trace zone, cap schedule) |
+| B11 | **GT-MOSA implementation** (§4.5) | Segment loop + archive-gap picker + Tchebycheff scalarization wrapper + archive reseeding over the existing SA stack (`SAConfiguration`, cooling, operators, `ObjectiveScaleNormalizer`, `NonDominatedArchive`); Deb's-rules constrained twin; frozen-parameter tuning protocol |
 
 ---
 
@@ -228,14 +265,20 @@ functional); rolling-window demand metrics; ramp limits.
   (owner: heritage 4-city "not set in stone").
 - **D1 Offline** with perfect trace hindsight (paper-1 mode; upper-bound framing).
   Optional robustness pass: re-evaluate best schedules under ±X% perturbed traces.
+- **D7 Arm set (owner, 2026-07-30): AMOSA is dropped from the collaborative arm set**
+  (0% contribution everywhere post-#222). Replaced by a **custom multi-objective SA
+  (working name GT-MOSA, §4.5)**. Arm set stays at seven with paper-1 symmetry:
+  GA-Tardiness, GA-Carbon, SA-Tardiness, SA-Carbon (dominance-archive variants),
+  NSGA-II, SPEA-II, GT-MOSA. ▸ Recommended: retain AMOSA as an appendix baseline
+  (already implemented — a free head-to-head for GT-MOSA's validation).
+- **D11 AvgWait (owner, 2026-07-30):** secondary *reported* performance metric
+  (per-solution diagnostic column + analysis section), not a Pareto axis and not a
+  separate campaign study.
 
 **Open (owner input wanted; ▸ = recommendation):**
 
 - **D2 Migration representation.** ▸ Direct sparse epoch genes, K≤2/VM/day; threshold
   policy as a baseline arm. Alternative: optimize policy parameters only.
-- **D7 Arm set.** AMOSA contributes 0% everywhere post-#222 (paper-1 open issue).
-  ▸ Keep 7 arms for continuity; `MOEA_MOEAD`/`MOEA_OMOPSO` wrappers exist if a swap
-  is preferred. Decide in paper 1 first.
 - **D8 Fleet heterogeneity.** ▸ Identical fleets per DC in the main study (isolates
   grid effects); heterogeneous variant (efficient-hosts-on-dirty-grid tension) as
   sensitivity via `hardwareScaleFactor`.
@@ -298,7 +341,9 @@ under what constraint pressure — spatiotemporal scheduling has real value.
 
 ### 7.3 Arms, campaign shape, ablations
 
-- Arms: the 7-arm portfolio (per D7) + policy baselines (B7). Campaign shape as
+- Arms (7, paper-1 symmetry): GA-Tardiness-dom, GA-Carbon-dom, SA-Tardiness-dom,
+  SA-Carbon-dom, NSGA-II, SPEA-II, **GT-MOSA** (§4.5; AMOSA demoted to appendix
+  baseline) + policy baselines (B7). Campaign shape as
   paper 1: 10 seeds (baseSeed=200), 40k evaluations/arm, per-seed collaboration
   shares + HV_fixed, single-threaded JVM per study, separate processes for
   parallelism.
@@ -309,7 +354,8 @@ under what constraint pressure — spatiotemporal scheduling has real value.
 - Metrics: total gCO₂ (split compute/idle/migration/WAN), Wh, class-weighted
   tardiness, per-class compliance %, per-DC peak kW, cap-binding hours, migration
   count + downtime, savings at iso-SLA vs. carbon-agnostic and static-CI arms,
-  energy–carbon divergence, CUE.
+  energy–carbon divergence, CUE; **AvgWait as the secondary performance metric**
+  (owner decision — reported per solution, analyzed, never an axis).
 
 ### 7.4 Calibration (reusing paper 1's method)
 
@@ -385,6 +431,7 @@ grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
 | Migration overhead parameters contested | Artifact latency matrix + literature WAN-energy constants + sensitivity sweep; stop-and-copy is conservative |
 | Trace anomalies (2022 energy crisis; HK flat feed) | Disclosed year choice; day-selection rule; verify S3 zone feeds before final selection |
 | Determinism regressions | Deterministic traces; extend `CampaignReproducibilityTest` in P0 |
+| "You tuned your own algorithm on your own benchmark" (GT-MOSA) | Freeze parameters on paper-1's problem / held-out seeds before the campaign; disclose protocol; AMOSA kept as appendix literature baseline; cite MOSA lineage (Ulungu; Czyżak & Jaszkiewicz PSA; AMOSA) |
 
 ## 11. Immediate next steps
 
