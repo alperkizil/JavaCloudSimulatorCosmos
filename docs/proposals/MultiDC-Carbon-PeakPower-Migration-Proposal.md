@@ -112,6 +112,12 @@ trade-off as a Pareto frontier with a rigorously fair multi-algorithm methodolog
 - **RQ4 — Algorithmic portfolio.** Which arms of the collaborative portfolio
   contribute which regions of the front in this larger, constrained, time-expanded
   search space? (Same scoreboard as paper 1: per-seed shares, HV_fixed.)
+- **RQ5 — Capturable potential (owner proposal, 2026-07-30).** How much of the
+  clairvoyant frontier's carbon saving survives without clairvoyance? A neural
+  policy is **distilled from the offline oracle**: the metaheuristic campaign's
+  optimal migration schedules become imitation-learning labels; the frozen policy
+  then runs on held-out days with no future knowledge (§4.6) and is scored against
+  the clairvoyant bound, a threshold rule, and a persistence forecast.
 
 ---
 
@@ -209,6 +215,37 @@ the protocol, and keep AMOSA as the appendix literature baseline it is compared
 against. Implementation ≈ a few hundred lines (segment loop, gap picker, Tchebycheff
 wrapper, reseeding); everything else is reuse.
 
+### 4.6 Oracle-distilled migration policy — the online track (owner proposal, RQ5)
+
+Answers the standing critique of clairvoyant-offline studies ("nobody knows the
+future") constructively. Key insight: raw CI history has no labels — *the offline
+campaign is the teacher*. Its hindsight-optimal migration schedules become
+imitation-learning targets. This is also why D2 had to resolve to **direct epoch
+genes**: a policy-parameter encoding would leave nothing to distill.
+
+1. **Label generation (free byproduct of P1–P4):** per-day oracle `(vm, epoch,
+   destination)` decisions from the campaign's best schedules, across scenarios,
+   days, and cap regimes.
+2. **Supervised imitation:** features per epoch = recent per-zone CI history,
+   hour-of-day/day-of-week encodings, **per-DC cap headroom**, per-VM state
+   (remaining work, RAM footprint, SLA class, deadline slack). Labels = oracle
+   decisions (heavy "no-migration" class imbalance handled explicitly). The state
+   features are the point: cap headroom and deadline slack are the herding variables
+   no pure CI forecast sees.
+3. **Frozen-policy replay on held-out days** (strict temporal split): migrations
+   from the policy, task dispatch by the validated heuristics, the full engine
+   scores carbon/tardiness. Scored against (a) the clairvoyant frontier (upper
+   bound), (b) the threshold rule, (c) a persistence-forecast pipeline ("tomorrow's
+   grid = today's" — deceptively strong given CI periodicity). Headline metric: %
+   of the oracle-over-threshold gain captured at matched SLA.
+
+Guardrails: model class starts modest (GBDT/small MLP before sequence models — the
+contribution is the distillation pipeline, not architecture novelty); seeded
+training + committed frozen weights preserve campaign determinism; Python sidecar
+beside the existing pandas pipeline; the policy is an **online-track arm only**,
+never part of the offline collaborative campaign; detaches cleanly as paper 2b if
+the schedule slips.
+
 ---
 
 ## 5. What exists vs. what must be built (verified against the 2026-07-30 code audit)
@@ -274,26 +311,39 @@ functional); rolling-window demand metrics; ramp limits.
 - **D11 AvgWait (owner, 2026-07-30):** secondary *reported* performance metric
   (per-solution diagnostic column + analysis section), not a Pareto axis and not a
   separate campaign study.
+- **D2 Migration representation: direct sparse epoch genes**, ≤K/VM/day (K=2
+  default), threshold policy as baseline arm — required by the oracle-distillation
+  track (§4.6): a policy-parameter encoding would leave nothing to distill.
+- **RQ5/online track (owner, 2026-07-30):** neural migration policy distilled from
+  the offline oracle, evaluated on held-out days without future knowledge (§4.6).
+  Amends D1: offline remains the core; the online replay is a separate track.
+- **D10 Idle-host power (owner, 2026-07-30): idle power is ASSUMED (not free)** in
+  this study. Powered-on hosts draw the measured idle floor
+  (`REFERENCE_IDLE_POWER = 75.79 W` × `hardwareScaleFactor`); the engine's 0 W
+  idle-gating and its `EnergyObjective` mirror are switched consistently (parity
+  test). P0 detail to fix: "on" = full horizon (recommended — simplest, conservative,
+  service-fleet realistic) vs. first-to-last-use window. The 0 W-gating variant is
+  kept as an ablation for paper-1 comparability; deviation from paper 1 disclosed.
+- **D12 SLA classes (owner, 2026-07-30): three** (gold/silver/bronze), thresholds
+  calibrated per §7.4; class mix ratio remains a scenario knob.
+- **D13 S1 fourth zone (owner, 2026-07-30): Spain stays** — S1 = ES/FI/CH/BE, all-EU,
+  as pre-analyzed (26.8% headroom).
 
 **Open (owner input wanted; ▸ = recommendation):**
 
-- **D2 Migration representation.** ▸ Direct sparse epoch genes, K≤2/VM/day; threshold
-  policy as a baseline arm. Alternative: optimize policy parameters only.
 - **D8 Fleet heterogeneity.** ▸ Identical fleets per DC in the main study (isolates
   grid effects); heterogeneous variant (efficient-hosts-on-dirty-grid tension) as
   sensitivity via `hardwareScaleFactor`.
-- **D10 Idle-host power semantics.** Hosts with no busy lane are gated to **0 W** with
-  free suspend/wake (`Host.java:561-597`; `EnergyObjective` mirrors it). This makes
-  "parking" a DC free and flatters geo-shifting. ▸ Keep as base semantics (paper 1
-  continuity) but add an idle-floor sensitivity (e.g. 10–30% of
-  `REFERENCE_IDLE_POWER=75.79 W`) and/or wake penalty; disclose either way.
-- **D11 Continuity plane.** ▸ Keep one AvgWait–Carbon study as an appendix bridge to
-  paper 1, or drop for focus.
-- **D12 SLA classes.** ▸ Three (gold/silver/bronze) with calibrated thresholds
-  (§7.4); mix ratio a scenario knob. Alternative: two classes for simplicity.
-- **D13 Fourth zone of S1.** ES (top headroom, solar profile) vs GB (adds wind) vs
-  US-CAL-CISO (adds 9-h time-zone offset + duck curve at slightly lower headroom).
-  ▸ ES, keeping S1 all-EU (low latencies make migration realistic and cheap).
+- **D14 PUE values.** ▸ One uniform constant (e.g. 1.2) for clean comparison;
+  site-realistic per-DC values as an optional variant (adds a confounder).
+- **D15 Cap tiers.** ▸ Reuse paper 1's percentile-calibration method
+  (`PowerCapCalibrator`, 90/60/30% feasibility targets) per DC; sign-off only.
+- **D16 Horizon.** ▸ 24 h main study, 72 h sensitivity (or the reverse).
+- **D17 Tenancy.** ▸ Single user as in paper 1 (comparability); multi-user with
+  DC-preference constraints as future realism.
+- **D18 Online-track dispatcher.** In the §4.6 replay, tasks are dispatched by ▸ the
+  validated greedy heuristics (simple, honest) vs. short rolling GA/SA bursts
+  (stronger but needs its own budget-accounting rules).
 
 ---
 
@@ -408,7 +458,11 @@ fronts); constant-trace parity (carbon ≡ k × energy) as a standing unit test.
   baselines → RQ1 and the spatial share of RQ2 on S1/S2/S3.
 - **P2 — Constraints:** B4 caps + calibration → RQ3 herding analysis.
 - **P3 — Migration:** B5 mechanics + B6 genes + policy baseline → completes RQ2.
-- **P4 — Campaign + paper.** Optional **P5:** trace-perturbation robustness.
+- **P4 — Campaign + paper (offline core).**
+- **P5 — Oracle distillation + online replay (§4.6, RQ5):** consumes P4's schedules,
+  so it cannot start earlier and cannot delay P0–P4; detaches as paper 2b if needed.
+  (Supersedes the earlier trace-perturbation idea — forecast realism is now tested
+  by the distilled policy itself.)
 
 ### 9.1 Workload redesign note (the biggest modeling lift)
 
@@ -427,7 +481,8 @@ grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
 | Search-space blow-up from migration genes | Epoch-restricted, K-capped sparse genes; surgical moves; repair operator |
 | Tardiness objective plateaus (many schedules meet all deadlines) | SLA calibration §7.4 makes deadlines bind by construction |
 | Carbon savings look small | Pre-analysis already bounds what's achievable per scenario (§7.1) and the frontier/herding/decomposition contributions stand independent of magnitude; S1 chosen for real signal |
-| 0 W idle gating flatters geo-shifting | D10 idle-floor/wake-cost sensitivity; disclose base semantics |
+| Idle-power semantics diverge from paper 1 (D10: idle floor now assumed) | Consistent switch in engine + analytic mirrors, guarded by the parity test; 0 W-gating ablation kept for paper-1 comparability; deviation disclosed |
+| ML track scope creep, or the NN fails to beat persistence + threshold | Staged as P5 consuming campaign outputs (cannot delay P0–P4); modest-model-first protocol; a small capturable gap is itself a publishable finding |
 | Migration overhead parameters contested | Artifact latency matrix + literature WAN-energy constants + sensitivity sweep; stop-and-copy is conservative |
 | Trace anomalies (2022 energy crisis; HK flat feed) | Disclosed year choice; day-selection rule; verify S3 zone feeds before final selection |
 | Determinism regressions | Deterministic traces; extend `CampaignReproducibilityTest` in P0 |
@@ -435,11 +490,16 @@ grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
 
 ## 11. Immediate next steps
 
-1. Owner decisions: D2, D7, D8, D10–D13 (§6).
-2. P0 spike: trace loader + constant-trace parity test + sweep-line binning profiling.
-3. Extract and commit the chosen per-zone 2022 trace columns with provenance README.
-4. Verify direct-vs-lifecycle CI and the S3 zone feeds from the artifact's prep
-   scripts; re-run `scripts/proposal_trace_preanalysis.py` if zones change.
+1. Remaining owner decisions: D8, D14–D18 (§6) — none block P0.
+2. P0 spike: trace loader + constant-trace parity test + sweep-line binning
+   profiling + idle-floor semantics switch (D10) with its "on-window" definition.
+3. Extract and commit the ES/FI/CH/BE + S2/S3 2022 trace columns with provenance
+   README.
+4. Verify direct-vs-lifecycle CI and the S3 zone feeds (HK variance ≈ 0) from the
+   artifact's prep scripts; re-run `scripts/proposal_trace_preanalysis.py` if zones
+   change.
+5. GT-MOSA prototype + frozen-parameter tuning on paper-1's problem (can proceed in
+   parallel with P0).
 
 ---
 
