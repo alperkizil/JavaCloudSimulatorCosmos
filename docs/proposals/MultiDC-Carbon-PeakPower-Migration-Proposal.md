@@ -127,8 +127,11 @@ trade-off as a Pareto frontier with a rigorously fair multi-algorithm methodolog
 
 ### 4.1 World model
 
-- Horizon `H` = 24 h (sensitivity: 72 h) at the engine's native 1-second ticks; CI
-  piecewise-constant per hour from the 2022 traces; caps piecewise-constant per hour.
+- Horizon `H` = **72 h** (owner decision D16): three consecutive trace days at the
+  engine's native 1-second ticks (259 200 ticks — engine cost modest, search-side
+  evaluators are event-based); CI piecewise-constant per hour from the 2022 traces;
+  caps piecewise-constant per hour. Migrations amortize across days, diluting the
+  end-of-horizon artifact.
 - Datacenters `d ∈ D` (4 per scenario, §7.2), each with: a host fleet (existing `Host`
   model, MeasurementBased power), `PUE_d`, carbon trace `CI_d(t)`, peak cap `Cap_d(t)`
   [W], and pairwise WAN bandwidth/latency from the artifact's measured GCP
@@ -345,28 +348,21 @@ functional); rolling-window demand metrics; ramp limits.
 - **D17 Tenancy (owner, 2026-07-30): single tenant**, as in paper 1.
 - **D18 Online-track dispatcher (owner, 2026-07-30): validated greedy heuristics**
   place tasks in the §4.6 replay; no rolling metaheuristic bursts.
+- **D16 Horizon (owner, 2026-07-30): 72 hours** — three consecutive trace days per
+  experiment. **Reason (cited at owner request): the end-of-horizon effect.** A
+  migration is an investment — cost paid at transfer time (downtime, transfer
+  energy), recouped over the VM's *remaining* runtime. In a short (24 h) window, a
+  migration late in the day has too little remaining runtime to amortize, so the
+  optimizer artificially learns "never migrate near the end" — an artifact of where
+  the tape is cut, not of real operations. A 72 h horizon lets migrations amortize
+  across days, dilutes the artifact, and additionally captures multi-day grid
+  structure (windy→calm sequences, weekday↔weekend transitions), at 3× simulation
+  length. Window-selection rule (§7.2) picks 72 h spans; the migration cap stays
+  per-day (≤2/VM/day ⇒ ≤6 over a horizon).
 
-**Open (owner input wanted; ▸ = recommendation):**
-
-- **D8 Fleet heterogeneity.** ▸ Identical fleets per DC in the main study (isolates
-  grid effects); heterogeneous variant (efficient-hosts-on-dirty-grid tension) as
-  sensitivity via `hardwareScaleFactor`.
-- **D14 PUE values.** ▸ One uniform constant (e.g. 1.2) for clean comparison;
-  site-realistic per-DC values as an optional variant (adds a confounder).
-- **D15 Cap tiers.** ▸ Reuse paper 1's percentile-calibration method
-  (`PowerCapCalibrator`, 90/60/30% feasibility targets) per DC; sign-off only.
-- **D16 Horizon** (= how long one simulated experiment runs). Explained to owner
-  2026-07-30: the *end-of-horizon effect* — a migration late in a 24 h window has no
-  remaining runtime to amortize its cost, so short horizons artificially teach
-  "never migrate in the evening"; 72 h dilutes the artifact and captures multi-day
-  weather structure, at 3× simulation length and fewer distinct sampled days.
-  ▸ 24 h main study + one 72 h sensitivity (which also *measures* the end effect).
-  Pending owner call.
-- **D17 Tenancy.** ▸ Single user as in paper 1 (comparability); multi-user with
-  DC-preference constraints as future realism.
-- **D18 Online-track dispatcher.** In the §4.6 replay, tasks are dispatched by ▸ the
-  validated greedy heuristics (simple, honest) vs. short rolling GA/SA bursts
-  (stronger but needs its own budget-accounting rules).
+**Open: none.** All design decisions are resolved as of 2026-07-30. What remains are
+the verification chores in §11 (direct-vs-lifecycle CI; S3's HK feed) and P0
+implementation details flagged inline (e.g. the D10 "on-window" definition).
 
 ---
 
@@ -408,7 +404,7 @@ under what constraint pressure — spatiotemporal scheduling has real value.
   (headroom 0.0%); any claimed savings is noise or overhead. Real-data replacement for
   a synthetic control. (HK's CV of 0.00 suggests an estimated/static feed — verify
   before final selection; TW/SG/IN-MH have genuine but tiny variation.)
-- Day windows within 2022: one high-variance and one low-variance day per scenario
+- 72 h windows within 2022 (D16): one high-variance and one low-variance window per scenario
   (disclosed rule, e.g. deciles of intra-day CI std), since CI variance is the
   resource the optimizer exploits. 2022's European energy-crisis context is disclosed.
 
@@ -493,7 +489,7 @@ Paper 1's LOG16 workload has seconds-scale makespans (measured 15–20 s in comm
 results) — three orders of magnitude below the hourly CI signal, so carbon-awareness
 would have zero leverage. Fix: keep the ~500-task genome (search space unchanged),
 scale instruction masses ~10³ (tasks run minutes–hours), spread release times
-diurnally, attach SLA classes. Engine cost stays modest (86 400 ticks/day, small
+diurnally, attach SLA classes. Engine cost stays modest (259 200 ticks per 72 h run, small
 fleet); the search-loop evaluators are event-based sweep-lines whose cost does not
 grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
 
@@ -513,7 +509,7 @@ grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
 
 ## 11. Immediate next steps
 
-1. Remaining owner decisions: D8, D14–D18 (§6) — none block P0.
+1. All design decisions resolved (§6); nothing blocks P0.
 2. P0 spike: trace loader + constant-trace parity test + sweep-line binning
    profiling + idle-floor semantics switch (D10) with its "on-window" definition.
 3. Extract and commit the ES/FI/CH/BE + S2/S3 2022 trace columns with provenance
