@@ -133,8 +133,11 @@ trade-off as a Pareto frontier with a rigorously fair multi-algorithm methodolog
   end-of-horizon artifact.
 - Datacenters `d ∈ D` (4 per scenario, §7.2), each with: a host fleet (existing `Host`
   model, MeasurementBased power), `PUE_d`, carbon trace `CI_d(t)`, peak cap `Cap_d(t)`
-  [W], and pairwise WAN bandwidth/latency from the artifact's measured GCP
-  inter-region latency matrix (§8). Zones sit in different time zones; traces are UTC.
+  [W], and pairwise WAN links: **latency is measured data** (the artifact's GCP
+  inter-region RTT matrix, §8); **effective bandwidth is an assumed, RTT-tiered
+  parameter with a sensitivity sweep** — an RTT matrix measures distance, not
+  throughput, and the paper must never imply otherwise. Zones sit in different
+  time zones; traces are UTC.
 - Workload: VMs carrying task queues (existing model) with tasks given **release
   times** over the day (diurnal profile) and **SLA classes** (§4.3); instruction
   masses scaled so meaningful work spans hours (§9.1). Offline = all releases,
@@ -241,6 +244,15 @@ genes**: a policy-parameter encoding would leave nothing to distill.
    few million samples — comfortable for the modest model class. Fallback if
    λ-conditioning underperforms: knee-point-only labels
    (`ParetoFront.getKneePoint()`), a single consistent operating point.
+   *Optional refinement (owner-approved as option):* subsample fronts by
+   **decision-space clustering** — similarity of migration-gene sets — instead of
+   pure λ-quantiles, taking one representative per distinct *strategy*; this
+   avoids feeding near-duplicate schedules as "diversity" and measures front
+   multimodality (how many distinct optimal playbooks a window admits), which in
+   turn explains imitation noise. λ-quantiles remain the default. Note on
+   discipline: clustering is used for *selection and analysis only*, never for
+   truncating result fronts — archive truncation by clustering is precisely the
+   AMOSA failure mode this study retired.
 2. **Sample/label/output spec.** One training sample = one **(solution, epoch,
    VM)** triple.
    *Inputs:* λ; clock (hour-of-day sin/cos, day index); per-DC grid features —
@@ -268,7 +280,14 @@ genes**: a policy-parameter encoding would leave nothing to distill.
    dispose. Task dispatch by the validated heuristics (D18); the full engine
    scores carbon/tardiness. Scored against (a) the clairvoyant frontier (upper
    bound), (b) the threshold rule, (c) a persistence-forecast pipeline
-   ("tomorrow's grid = today's" — deceptively strong given CI periodicity).
+   ("tomorrow's grid = today's" — deceptively strong given CI periodicity), and
+   (d) a **cluster-lookup policy** (owner-approved): the oracle's decision states
+   clustered on the same features (no network), majority oracle action stored per
+   cluster, nearest-cluster lookup at deployment. This completes the rent-paying
+   ladder — if-statement < cluster-lookup < NN — and yields free interpretability:
+   the clusters are nameable oracle situation-types ("cap-saturated clean window",
+   "pre-dawn rotation", "bronze backlog with slack"), giving the paper a
+   qualitative *when does the oracle migrate?* section beside the black box.
    **Sweeping λ traces an achieved online frontier**, so RQ5's headline figure is
    two fronts on one plot — clairvoyant vs. learned-without-clairvoyance — and the
    area between them is the measured value of knowing the future. Imitation
@@ -437,9 +456,16 @@ under what constraint pressure — spatiotemporal scheduling has real value.
   (headroom 0.0%); any claimed savings is noise or overhead. Real-data replacement for
   a synthetic control. (HK's CV of 0.00 suggests an estimated/static feed — verify
   before final selection; TW/SG/IN-MH have genuine but tiny variation.)
-- 72 h windows within 2022 (D16): one high-variance and one low-variance window per scenario
-  (disclosed rule, e.g. deciles of intra-day CI std), since CI variance is the
-  resource the optimizer exploits. 2022's European energy-crisis context is disclosed.
+- **72 h window selection by grid-weather-regime clustering (owner-approved).**
+  Every candidate 2022 window is described by a feature vector (per-zone CI profile
+  shape, intra-day variance, leader-rotation count, cross-zone spread) and
+  clustered (k-means/hierarchical — trivial at 8 760 rows). The clusters are the
+  year's natural regimes (calm-flat, solar-dominated, windy-rotating,
+  crisis-spiky); we simulate **one representative window per regime per scenario**
+  — systematic, immune to cherry-picking. Train/test splits for the §4.6 track are
+  **stratified by regime**, and RQ5 capture rates are reported per regime (e.g.
+  "the policy keeps 75% of the oracle's edge on rotating windows, 20% on flat
+  ones"). 2022's European energy-crisis context is disclosed.
 
 ### 7.3 Arms, campaign shape, ablations
 
@@ -489,9 +515,13 @@ fronts); constant-trace parity (carbon ≡ k × energy) as a standing unit test.
   Google/Azure workload traces, single 6.6 GB tar, no need to mirror it in-repo).
   Year 2022 selected (owner decision). To verify from the artifact's prep scripts:
   whether values are direct or lifecycle intensity — disclose whichever.
-- **Inter-DC latencies:** the artifact's `gcp_latency_matrix.csv` (measured
-  Google-Cloud inter-region RTTs) + `gcp_dc_zonecode_mapper.json` (region→zone map)
-  parameterize the migration network model with citable real data.
+- **Inter-DC network:** the artifact's `gcp_latency_matrix.csv` (measured
+  Google-Cloud inter-region RTTs; verified, e.g. TW↔JP-TK 34 ms, TW↔BE 253 ms) +
+  `gcp_dc_zonecode_mapper.json` (region→zone map). **What is real vs. modeled:**
+  RTTs are measured; per-pair effective bandwidth is an *assumed* parameter,
+  RTT-tiered and sensitivity-swept (the matrix contains no throughput); host-side
+  migration power comes from the measured wall-plug model; per-GB WAN energy is a
+  literature constant (estimates span an order of magnitude — swept, disclosed).
 - **Static-CI baseline:** per-zone 2022 annual means computed from the same traces
   (internal consistency). The GCP fossil-CO₂ dataset (Zenodo `10065794`, annual
   national totals) is **motivation/context only** — it is neither electricity-specific
