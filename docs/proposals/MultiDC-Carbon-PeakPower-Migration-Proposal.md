@@ -522,6 +522,28 @@ fronts); constant-trace parity (carbon ≡ k × energy) as a standing unit test.
   RTT-tiered and sensitivity-swept (the matrix contains no throughput); host-side
   migration power comes from the measured wall-plug model; per-GB WAN energy is a
   literature constant (estimates span an order of magnitude — swept, disclosed).
+
+  *Plain-language version of the above (keep for the paper's disclosure section).*
+  A migration is shipping a big file (the VM's memory) between cities. Four
+  numbers describe the shipment, from four different places:
+  1. **Distance between cities — real.** Actual measured ping times between
+     Google's datacenters. A real map.
+  2. **Width of the highway — assumed.** Ping tells you how *far* the other city
+     is, not how many *lanes* the road has — and shipping time depends on lanes
+     (GB/s), not distance. No dataset provides the lanes, so we assume them —
+     nearby cities faster than far ones, anchored to the real map — and rerun the
+     experiments with wider and narrower assumptions to show no conclusion
+     depends on the guess (that is all "sensitivity sweep" means).
+  3. **What the servers burn while packing/unpacking — real.** Our own wall-plug
+     measurements cover what a server draws while busy, and copying memory is
+     busy work.
+  4. **What the internet burns per GB carried — borrowed.** Published estimates
+     disagree by ~10×; we pick one, name it, and stress-test bigger and smaller.
+  One-line summary: *the map is real, the highway width is an educated guess we
+  stress-test, the server cost is our own measurement, the internet's cost is a
+  borrowed number we stress-test.* Each number is labeled as exactly what it is —
+  a reviewer who catches a guess presented as a measurement stops trusting the
+  real measurements too.
 - **Static-CI baseline:** per-zone 2022 annual means computed from the same traces
   (internal consistency). The GCP fossil-CO₂ dataset (Zenodo `10065794`, annual
   national totals) is **motivation/context only** — it is neither electricity-specific
