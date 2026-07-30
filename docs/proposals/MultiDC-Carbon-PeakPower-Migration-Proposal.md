@@ -167,6 +167,10 @@ concurrency limit), user→DC preference sets (existing model) where used.
 - **Migration energy:** source and destination hosts each draw an overhead power during
   transfer (proportional to NIC utilization), plus per-GB WAN energy (constant from
   literature) → both enter energy and carbon accounting.
+- **Speed re-clamping (free realism):** on arrival, the VM's `effectiveIpsPerVcpu` is
+  re-clamped to the destination host's per-core IPS — existing `Host.assignVM` behavior.
+  Migrating to a slower-but-cleaner fleet automatically slows the VM's tasks: a third
+  endogenous migration cost the simulator already models.
 - Effects on caps: migration overhead power counts against *both* DCs' caps during the
   transfer window (this is exactly the kind of coupling that makes the problem
   interesting — you cannot migrate *into* a clean window if the destination is
