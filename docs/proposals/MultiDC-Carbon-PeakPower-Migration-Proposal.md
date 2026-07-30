@@ -1,11 +1,14 @@
 # Research Proposal — Carbon- and Peak-Power-Aware VM Scheduling with Migration across Geo-Distributed Datacenters
 
-**Status:** DRAFT for discussion — nothing here is committed; §6 lists the decisions the
-owner needs to make. Written 2026-07-30 on branch `claude/multi-datacenter-proposal-jromkx`.
+**Status:** DRAFT v2 for discussion (2026-07-30, branch `claude/multi-datacenter-proposal-jromkx`).
+v2 incorporates the code audit of the simulator, the owner's decisions from the
+2026-07-30 brainstorm (objectives = Carbon × SLA; trace year 2022; datacenter
+locations free to choose), and a quantitative pre-analysis of the real carbon
+traces (`scripts/proposal_trace_preanalysis.py`). Open decisions are in §6.
 
-**Working title (paper):** *Joint carbon- and peak-power-aware scheduling and VM migration
-in geo-distributed datacenters: a collaborative multi-objective metaheuristic study with
-real-world carbon-intensity traces.*
+**Working title (paper):** *Joint carbon- and peak-power-aware scheduling and VM
+migration in geo-distributed datacenters: a collaborative multi-objective
+metaheuristic study with real-world carbon-intensity traces.*
 
 ---
 
@@ -19,94 +22,96 @@ fairness methodology (single publication rule, per-seed collaboration shares, HV
 
 Paper 2 keeps that validated core — offline optimization, measurement-based power,
 deterministic seeds, the collaborative-Pareto scoreboard — and expands the *world model*
-along three axes that are individually topical and jointly under-studied:
+along three axes:
 
 1. **Multiple, geographically distributed datacenters** whose grid **carbon intensity
-   (CI) varies by region and by hour**, driven by real-world trace data (already in hand).
-2. **Peak-power limitations** per datacenter — evolving paper 1's static power ceiling
-   into time-varying caps (grid demand-response windows, demand-charge avoidance).
-3. **VM migration** as the runtime mechanism that lets a schedule exploit spatial and
-   temporal CI variation after initial placement — at a cost (transfer energy, downtime)
-   that the optimizer must weigh.
+   (CI) varies by region and by hour**, driven by real 2022 hourly traces (§8).
+2. **Peak-power limitations** per datacenter — evolving paper 1's static ceiling into
+   per-DC (optionally time-varying) caps.
+3. **VM migration** as the runtime mechanism for exploiting spatial and temporal CI
+   variation after initial placement — at an endogenous cost (transfer energy,
+   downtime, speed re-clamping) the optimizer must weigh.
 
-### Why these three together (the core of the idea)
+### Why these three together — now with evidence
 
-Each ingredient alone has literature; the **interactions** are the research substance:
+Each ingredient alone has literature; the **interactions** are the research substance,
+and the trace pre-analysis (§7.1) turned one hypothesis into a measured fact:
 
-- **Carbon-chasing causes herding.** If every scheduler independently shifts load into
-  the cleanest region/hours, the clean datacenter's power peaks precisely in the clean
-  window. Peak caps couple otherwise-independent placement decisions and clip the naive
-  "follow-the-renewables" policy. Question: what does the carbon–performance frontier
-  look like when the caps bind, and does joint optimization beat greedy-then-repair?
-- **Migration is a lever with a price.** Moving a VM to a cleaner grid saves carbon on
-  future work but spends energy/carbon/time on the move itself (RAM transfer over WAN,
-  downtime that hurts makespan/wait). Whether a migration pays off depends on the VM's
-  remaining work, the CI gap, and the cap headroom at the destination — a genuinely
-  non-trivial scheduling decision. Crucially, migration overhead is *endogenously*
-  penalized through the existing objectives (its energy/carbon enters the carbon
-  objective; its downtime enters makespan/wait) — no ad-hoc penalty weights needed.
-- **Energy-optimal ≠ carbon-optimal.** With time- and region-varying CI, a schedule that
-  consumes *more* kWh can emit *less* CO₂ (run at night in a hydro region vs. at noon in
-  a coal region). This decouples carbon from energy — today, in this simulator, carbon is
-  a constant × energy, so they are the *same* objective up to scale. The decoupling is
-  what makes "carbon" a legitimate new objective for the multi-objective machinery, and
-  quantifying the divergence is itself a publishable observation.
+- **Uncapped, migration is nearly worthless — the caps resurrect it.** Across realistic
+  portfolios, one zone is the cleanest ~90–100% of hours, so an oracle that migrates
+  freely to the hourly-cleanest zone beats perfect *fixed* placement by only 0.1–3.3%
+  (consistent with Sukprasert et al., EuroSys'24). But when the dominant clean zone is
+  unavailable — the situation a binding peak-power cap creates — the residual
+  portfolio's headroom roughly doubles (3.3%→7.4% global; 26.8%→16.6% remains in the
+  rotating-leader portfolio) and lead changes become daily events. **Peak caps are not
+  a side-constraint; they are the mechanism that makes spatiotemporal shifting and
+  migration worth studying.** No prior work treats this coupling as the object of study.
+- **Carbon-chasing causes herding, and herding has a measurable price.** If every
+  scheduler independently targets the cleanest zone, that DC's power peaks exactly in
+  the clean window and the cap clips the policy. The *spillover price* — the mean gap
+  between cleanest and second-cleanest zone — is 41–162 gCO₂/kWh depending on
+  portfolio (§7.1): the marginal carbon cost of saturation, i.e. the stakes of RQ3.
+- **Migration overhead is endogenously priced.** Transfer energy enters the carbon
+  objective; downtime enters the SLA objective; arriving on a slower host re-clamps
+  `effectiveIpsPerVcpu` (existing `Host.assignVM` behavior) and slows the VM. No
+  ad-hoc penalty weights anywhere.
+- **Energy-optimal ≠ carbon-optimal once CI varies.** Today the simulator computes
+  carbon as one static constant × total kWh (post-hoc), making carbon a rescaled copy
+  of energy — as does most "green metaheuristic" literature. With hourly, per-region
+  CI, the two decouple: a schedule may burn more kWh yet emit less CO₂. Quantifying
+  the divergence is a standalone publishable observation and motivates carbon as a
+  genuine objective.
 
 ---
 
 ## 2. Research gap and positioning
 
-Landscape (to be deepened into a proper related-work section later):
+- **Temporal shifting:** Google's Carbon-Intelligent Computing (Radovanović et al.);
+  "Let's Wait Awhile" (Wiesner et al., Middleware'21) — single-mechanism, policy-based,
+  no migration, caps not first-class.
+- **Spatial shifting / migration:** "Free Lunch" (Akoush et al.); electricity-cost geo
+  load balancing (Qureshi et al.) — single-objective, simplified overheads.
+- **Skeptical quantification:** Sukprasert et al. (EuroSys'24) measure the *limits* of
+  spatiotemporal shifting with fixed policies in an *unconstrained* setting. Our
+  pre-analysis reproduces their pessimism for dominant-leader portfolios — and shows
+  the picture inverts for rotating-leader portfolios and under capacity/power
+  contention. We characterize the attainable **Pareto frontier** of *jointly optimized*
+  schedules under peak-power constraints with honest migration overhead. We also use
+  their published traces (§8), which makes the comparison direct and reviewer-friendly.
+- **Carbon-aware multi-objective metaheuristics:** overwhelmingly static-CI, which
+  reduces the carbon objective to rescaled energy (see §1). RQ1 measures what that
+  misses.
+- **Simulators:** CloudSim/CloudSimPlus have power + migration but no hourly CI traces
+  or carbon objectives; Vessim/LEAF are carbon-aware but not offline multi-objective
+  benchmarks. A reproducible benchmark (real traces + caps + migration +
+  measurement-based power + deterministic multi-seed campaigns) is a citable artifact.
 
-- **Temporal shifting:** Google's Carbon-Intelligent Computing (Radovanović et al.) and
-  "Let's Wait Awhile" (Wiesner et al., Middleware '21) defer flexible load into cleaner
-  hours — single-mechanism, policy-based, no migration, caps treated (if at all) as a
-  fixed capacity curve, not a first-class constraint interacting with the carbon signal.
-- **Spatial shifting / migration:** "Free Lunch" (Akoush et al.) migrates VMs to follow
-  renewables; geo load balancing for electricity cost (Qureshi et al.) — typically
-  single-objective, simplified overhead accounting.
-- **Skeptical quantification:** Sukprasert et al. (EuroSys '24) measure the *limits* of
-  spatiotemporal shifting on real workloads — an excellent foil: they evaluate fixed
-  policies in an unconstrained setting; we characterize the attainable **Pareto
-  frontier** of a *jointly optimized* schedule under peak-power constraints, with honest
-  migration overhead, using perfect-hindsight offline optimization as the upper bound.
-- **Carbon-aware multi-objective metaheuristics:** existing NSGA-II-style "green cloud"
-  papers overwhelmingly use a **static** regional CI factor — which, per the decoupling
-  argument above, silently reduces the carbon objective to a rescaled energy objective.
-  Calling this out (and measuring what static-CI optimization *misses*) is a clean,
-  quantifiable critique that motivates the whole study. RQ1 operationalizes it.
-- **Simulators:** CloudSim/CloudSimPlus have power + migration but no native hourly CI
-  traces or carbon objectives; Vessim/LEAF are carbon-aware but not built for offline
-  multi-objective placement benchmarking. A reproducible benchmark (real traces + caps +
-  migration + measurement-based power + deterministic multi-seed campaigns) is a citable
-  artifact in its own right.
-
-**Gap statement (one sentence):** No existing study jointly optimizes initial placement,
-task scheduling, and VM migration across geo-distributed datacenters under *time-varying*
-carbon intensity **and** peak-power constraints, characterizing the carbon–performance
+**Gap statement:** No existing study jointly optimizes initial placement, task
+scheduling, and VM migration across geo-distributed datacenters under time-varying
+carbon intensity **and** peak-power constraints, characterizing the carbon–SLA
 trade-off as a Pareto frontier with a rigorously fair multi-algorithm methodology.
 
 ---
 
 ## 3. Research questions
 
-- **RQ1 — Value of the carbon signal.** How much CO₂ does hourly-trace-aware scheduling
-  save versus (a) carbon-agnostic scheduling and (b) *static average-CI* carbon-aware
-  scheduling, at equal performance? ((b) isolates the value of temporal information and
-  doubles as the critique of static-CI literature. It also directly measures the
-  energy–carbon decoupling: the static-CI optimum *is* the energy optimum.)
-- **RQ2 — Mechanism decomposition.** Decompose the savings into **spatial** (where work
-  initially lands), **temporal** (when it runs / execution order), and **migration**
-  (runtime re-placement) contributions, via ablations (§7). When is migration worth its
-  overhead? Sensitivity to VM memory size, WAN bandwidth, migration energy coefficient.
-- **RQ3 — Constraint coupling ("herding").** How do per-DC peak-power caps reshape the
-  frontier? Do caps bind precisely in low-CI windows (herding)? Does jointly optimized
-  scheduling beat "greedy carbon-first, then repair to caps"? What is the carbon price
-  of a demand-response event (cap tightening during grid stress hours)?
-- **RQ4 — Algorithmic portfolio.** Which arms of the collaborative portfolio contribute
-  which regions of the front in this larger, constrained, time-expanded search space?
-  (Methodological continuity: same scoreboard — per-seed shares, HV_fixed — as paper 1;
-  tests whether paper 1's algorithm findings generalize to a harder problem.)
+- **RQ1 — Value of the carbon signal.** How much CO₂ does hourly-trace-aware
+  scheduling save versus (a) carbon-agnostic and (b) *static annual-average-CI*
+  scheduling, at equal SLA attainment? ((b) doubles as the critique of static-CI
+  literature; the static-CI optimum coincides with the energy optimum, so RQ1 also
+  measures the energy–carbon decoupling.)
+- **RQ2 — Mechanism decomposition.** Decompose savings into **spatial** (initial
+  placement), **temporal** (deferral/ordering), and **migration** contributions via
+  the ablation grid (§7.3). When does migration beat its overhead? Sensitivity to VM
+  memory size, WAN bandwidth, migration energy. The trace-derived oracle headrooms
+  (§7.1) provide a priori upper bounds to compare achieved savings against.
+- **RQ3 — Constraint coupling ("herding").** How do per-DC peak-power caps reshape
+  the frontier? Do caps bind precisely in low-CI windows? Does joint optimization
+  beat "greedy carbon-first, then repair to caps"? What is the carbon price of a
+  demand-response event (cap tightening during grid stress hours)?
+- **RQ4 — Algorithmic portfolio.** Which arms of the collaborative portfolio
+  contribute which regions of the front in this larger, constrained, time-expanded
+  search space? (Same scoreboard as paper 1: per-seed shares, HV_fixed.)
 
 ---
 
@@ -114,213 +119,282 @@ trade-off as a Pareto frontier with a rigorously fair multi-algorithm methodolog
 
 ### 4.1 World model
 
-- Horizon `H` (proposed: 24h; sensitivity: 72h) at the engine's 1-second ticks; CI and
-  caps piecewise-constant per hour (or per 15/30 min if the data supports it).
-- Datacenters `d ∈ D` (proposed 3–5), each with: a host fleet (existing `Host` model,
-  MeasurementBased power), `PUE_d`, carbon trace `CI_d(t)` [gCO₂/kWh], peak cap
-  `Cap_d(t)` [W], and pairwise WAN bandwidth `BW(d,d')` for migrations. Regions sit in
-  different time zones — the diurnal offset between grids (solar noon moving westward)
-  is a real, exploitable structure in the data.
-- Workload: long-running VMs carrying task queues (existing model), with tasks given
-  **release times over the day** (diurnal arrival pattern) and instruction masses scaled
-  so that meaningful work spans hours (see workload redesign, §8.3). Offline means: all
-  releases, lengths, and traces are known at t=0 (clairvoyant offline with release
-  dates); this matches paper 1's mode and gives a clean upper-bound ("potential") study.
+- Horizon `H` = 24 h (sensitivity: 72 h) at the engine's native 1-second ticks; CI
+  piecewise-constant per hour from the 2022 traces; caps piecewise-constant per hour.
+- Datacenters `d ∈ D` (4 per scenario, §7.2), each with: a host fleet (existing `Host`
+  model, MeasurementBased power), `PUE_d`, carbon trace `CI_d(t)`, peak cap `Cap_d(t)`
+  [W], and pairwise WAN bandwidth/latency from the artifact's measured GCP
+  inter-region latency matrix (§8). Zones sit in different time zones; traces are UTC.
+- Workload: VMs carrying task queues (existing model) with tasks given **release
+  times** over the day (diurnal profile) and **SLA classes** (§4.3); instruction
+  masses scaled so meaningful work spans hours (§9.1). Offline = all releases,
+  lengths, and traces known at t=0 (clairvoyant offline with release dates), exactly
+  paper 1's mode: an upper-bound/"potential" study.
 
 ### 4.2 Decision variables
 
 1. Task → VM assignment + per-VM execution order (existing chromosome, unchanged).
-2. **NEW:** initial VM → datacenter/host placement (today fixed by config + placement
-   step before optimization).
-3. **NEW:** migration plan — a sparse set of `(vm, epoch, destination-DC)` genes, where
-   **epochs are the hour boundaries** (aligned with CI changes, which is where moving
-   ever becomes newly attractive). Cap of `K` migrations per VM per day (proposed K=2)
-   keeps the space tractable and is operationally realistic.
+2. **NEW:** initial VM → datacenter/host placement.
+3. **NEW:** sparse migration plan `(vm, epoch, destination-DC)`, epochs at hour
+   boundaries (aligned with CI changes), ≤ K migrations per VM per day (proposed K=2).
 
-### 4.3 Objectives and constraints
+### 4.3 Objectives and constraints (updated per 2026-07-30 decision: Carbon × SLA)
 
-Pairwise planes, following paper 1's study structure:
+**Primary plane: Carbon – SLA**, where the SLA axis is optimized as **class-weighted
+total tardiness** `Σ_tasks w_class · max(0, turnaround − threshold_class)` and
+*reported* as per-class compliance %. Rationale: compliance % is a step function (≤501
+distinct values at 500 tasks — plateaus kill search gradients and produce staircase
+fronts); tardiness is continuous, classic in scheduling, and hits zero exactly at 100%
+compliance. SLA classes: gold/silver/bronze (e.g. 1 h / 4 h / end-of-day; final values
+calibrated, §7.4). Makespan is retired for this study: with diurnal release times it
+degenerates (dominated by the last arrivals). An AvgWait–Carbon plane may be kept as a
+continuity appendix to paper 1 (open decision D11).
 
-- **Study A: Makespan – Carbon.**
-- **Study B: AvgWait – Carbon.**
-- **Study C (successor of the PowerCeiling study): A/B repeated under binding
-  time-varying caps** — constrained twins via the existing Deb's-rules machinery.
+Carbon objective:
+`CO₂ = Σ_t Σ_d PUE_d · P_IT,d(t) · CI_d(t) · dt + Σ_migrations E_WAN · CI_path`.
+Energy (Wh) stays a reported diagnostic everywhere; the energy–carbon divergence
+(Δ between energy-optimal and carbon-optimal front points) is a headline number.
 
-Carbon objective: `CO₂ = Σ_t Σ_d PUE_d · P_IT,d(t) · CI_d(t) · dt + Σ_migrations
-E_WAN · CI_path`, i.e. time-resolved power × time-resolved intensity, plus migration
-transfer energy carbonized at a defensible network intensity constant. Energy (Wh) stays
-reported as a diagnostic column everywhere (the energy–carbon divergence is a headline
-number), but is not a third Pareto axis in v1 — the analyzer/scoreboard is 2-D; a
-3-objective extension is flagged as optional stretch (§6, D6).
-
-Hard constraints: `P_IT,d(t) ≤ Cap_d(t)` for all t (generalizes paper 1's single-DC
-static ceiling; same constrained-dominance handling), no oversubscription (unchanged
-invariant), migration feasibility (bandwidth, ≤1 concurrent migration per VM, per-link
-concurrency limit), user→DC preference sets (existing model) where used.
+Hard constraints: `P_IT,d(t) ≤ Cap_d(t)` ∀t (generalizes paper 1's ceiling; same
+Deb's-rules constrained-dominance machinery); no oversubscription; migration
+feasibility (per-link bandwidth/concurrency, ≤1 concurrent migration per VM).
+Study variants (§7.3) toggle caps. Optional constrained twin: compliance ≥ X% as a
+hard constraint (the fully "operational" scenario).
 
 ### 4.4 VM migration model (v1: simple, honest, tick-native)
 
-- **Stop-and-copy** live-migration approximation: at epoch boundary, VM pauses; transfer
-  time `T_mig = RAM_dirty / BW_eff(d,d')` (v1: full RAM; pre-copy dirty-page refinement
-  is future work and only tightens downtime); tasks in the VM stall during `T_mig`
-  (hurts makespan/wait endogenously).
-- **Migration energy:** source and destination hosts each draw an overhead power during
-  transfer (proportional to NIC utilization), plus per-GB WAN energy (constant from
-  literature) → both enter energy and carbon accounting.
-- **Speed re-clamping (free realism):** on arrival, the VM's `effectiveIpsPerVcpu` is
-  re-clamped to the destination host's per-core IPS — existing `Host.assignVM` behavior.
-  Migrating to a slower-but-cleaner fleet automatically slows the VM's tasks: a third
-  endogenous migration cost the simulator already models.
-- Effects on caps: migration overhead power counts against *both* DCs' caps during the
-  transfer window (this is exactly the kind of coupling that makes the problem
-  interesting — you cannot migrate *into* a clean window if the destination is
-  cap-saturated by everyone else doing the same).
+- **Stop-and-copy approximation:** at an epoch boundary the VM pauses; transfer time
+  `T_mig = RAM / BW_eff(d,d')`; tasks stall during `T_mig` (hurts tardiness
+  endogenously). Pre-copy/dirty-page refinement is future work (only tightens downtime).
+- **Migration energy:** overhead power on source and destination during transfer +
+  per-GB WAN energy (literature constant), all entering energy/carbon accounting.
+- **Speed re-clamping:** existing `Host.assignVM` re-clamps `effectiveIpsPerVcpu` to
+  the destination host — heterogeneous-fleet migrations change execution speed for free.
+- **Cap coupling:** migration overhead counts against *both* DCs' caps during the
+  transfer window — you cannot migrate into a clean window the destination cannot host.
 
 ---
 
-## 5. What exists vs. what must be built (simulator gap analysis)
-
-Grounded in README/HANDOFF; exact file-level extension points to be confirmed against
-the code audit (this section will be refined after review).
+## 5. What exists vs. what must be built (verified against the 2026-07-30 code audit)
 
 ### Already in place (reuse as-is or with small extensions)
 
-| Capability | Where | Notes |
+| Capability | Where (verified) | Notes |
 |---|---|---|
-| Multi-DC model with per-DC power budget | `model/CloudDatacenter` (`totalMaxPowerDrawWatts`, `isPowerLimitReached()`), `.cosc [DATACENTERS]` | Dormant in current studies (1 DC); becomes load-bearing |
-| Host placement across DCs | `PlacementStrategy/hostPlacement/*` incl. power-aware load balancing | Noted "inert at 1 DC" in HANDOFF §3.3 — activates here |
-| User → DC preferences | `model/User` (`selectedDatacenterNames`) | Optional constraint dimension |
-| Static carbon + PUE + cost accounting | `steps/EnergyCalculationStep`, `CarbonIntensityRegion` enum | Post-hoc constant × kWh — the exact thing RQ1 critiques; keep as the static-CI baseline |
-| Power-capped constrained optimization | PowerCeiling study: `PowerCeilingSchedulingProblem`, `ConstrainedNonDominatedArchive` (Deb's rules), constrained-AMOSA comparator | Generalize cap from scalar to `Cap_d(t)` schedule |
-| Measurement-based energy | `MeasurementBasedPowerModel` (speed–power exponent 1.5) | Untouched invariant: all published energy/carbon from this model |
-| 7-arm portfolio + fairness machinery | `newExperiments/` (`CampaignRunner`, `AlgorithmRegistry`), PR #218 publication rule, PR #220 scoreboard (`ParetoAnalyzer`, per-seed shares, HV_fixed), PR #222 operator settings | Reuse wholesale; same 10-seed × 40k-eval campaign shape |
-| Determinism | `RandomGenerator` singleton, `CampaignReproducibilityTest` | Traces are deterministic inputs; discipline unchanged |
-| Time-stepped engine | `steps/VMExecutionStep` (dt = 1 s) | Hour-scale horizons = ~86 400 ticks/day — fine for a single sim, but see two-level evaluation below |
+| Multi-DC model with per-DC power cap | `model/CloudDatacenter` (`totalMaxPowerDraw`, `totalMomentaryPowerDraw`, `isPowerLimitReached()`, `canAccommodateHost()`); `.cosc [DATACENTERS]`; `config/DatacenterConfig` | Dormant in current campaigns (1 DC). A 4-DC corpus exists (`configs/sampleScenario/`, Istanbul/London/Tokyo/Atlanta) and the archived `oldExperiments/{SampleScenarioRunner,BatchExperimentRunner}` are the only code that ever exercised multi-DC + the carbon/PUE API |
+| Host→DC and VM→host routing | `PlacementStrategy/hostPlacement/*` (3 strategies incl. PowerAware); `steps/VMPlacementStep.getCandidateHosts()` filters to the owner's preferred DCs (`User.userSelectedDatacenters`) | The existing multi-DC routing mechanism |
+| Static carbon + PUE + cost accounting | `steps/EnergyCalculationStep` (`CarbonIntensityRegion` enum, `setPUE`, `setCarbonIntensityKgPerKWh`, `setElectricityCostPerKWh`); `carbon_footprint_kg` in `SummaryReporter`; `simulated_carbon_kg` in `ParetoFrontReporter` + `MultiObjectiveSimulationResult` | One global scalar × kWh, post-hoc — the RQ1 baseline. Carbon is already *reported* per solution, never optimized |
+| Time-resolved power, engine side | `Host.powerSeriesWatts`, `vmPowerSeriesWatts`, `busySeries` (per-tick, migration-tolerant zero-padding `Host.java:635`); coincident fleet peak in `EnergyCalculationStep.computeCoincidentPeakPower()` | Hourly per-DC binning is cheap aggregation of recorded data |
+| Time-resolved power, search side | `PowerCeilingEnergyObjective` (sweep-line power profile: peak W, overflow s, avg W), `LaneSchedule` (single source of truth for start/again ticks), `EnergyObjective` (analytic mirror of the tick engine incl. idle gating) | **The** foundation for the carbon objective: same sweep-line, binned per DC per hour, dotted with `CI_d(t)`. Event-based cost — does not scale with horizon length |
+| Power-cap constrained optimization | `PowerCeilingViolationObjective` (3 modes); `ConstrainedNonDominatedArchive` (Deb's rules); `FixedAMOSAConstrained`; 5 `*PowerCeiling*` strategy twins; runtime admission `PowerCeilingAdmissionTaskAssignmentStrategy`; calibration `newExperiments/PowerCapCalibrator` (cap tiers from observed peak percentiles); two-phase `CampaignRunner` | Generalize scalar cap → `Cap_d(t)`; reuse the calibration methodology per-DC — and for SLA thresholds (§7.4) |
+| Measurement-based energy | `MeasurementBasedPowerModel` (empirical wall-plug profiles, speed–power exponent 1.5, `hardwareScaleFactor`) | Untouched invariant: all published energy/carbon from this model |
+| 7-arm portfolio + fairness machinery | `newExperiments/{CampaignRunner,AlgorithmRegistry}`; publication rule via `TaskSchedulingProblem.evaluate()`; `observer/ParetoAnalyzer` (HV_fixed, per-seed collaboration shares — objective-agnostic) | Reuse wholesale; `MOEA_MOEAD` / `MOEA_OMOPSO` wrappers exist unused if the arm set changes (D7) |
+| Two-level evaluation | `SimulationEngine.runMultiObjective()`: analytic objectives inside the search, then re-simulates every Pareto solution in the full engine | The validation pattern §7.5 needs, already built |
+| Migration-ready detach/attach | `Host.removeVM`/`deallocateResources` ↔ `Host.assignVM` (re-clamps `effectiveIpsPerVcpu`, rebinds cores/GPUs) | Complete pair; everything around it is B5 |
+| Determinism | `RandomGenerator` singleton; `CampaignReproducibilityTest` | Traces are deterministic inputs |
 
-### To build (the project's engineering content)
+**Confirmed absent (full-repo audit):** any location/region/timezone attribute; any
+trace/time-series loader; per-DC carbon intensity; time-varying CI/caps/tariffs; task
+arrival times (`TaskConfig` has no field; all tasks created at t=0); deadlines or
+priorities (SLA is reporting-only: `MetricsCollectionStep.calculateSLACompliance`);
+inter-DC network model; migration code of any kind (repo-wide grep: 3 hits, none
+functional); rolling-window demand metrics; ramp limits.
+
+### To build
 
 | # | Component | Sketch |
 |---|---|---|
-| B1 | **Carbon-intensity traces** | `CarbonIntensityProvider` interface: `getIntensity(dcId, tick)`. Impls: `StaticRegionProvider` (wraps existing enum — backward compat + RQ1 baseline), `TraceBasedProvider` (CSV: `region,timestamp_utc,gco2_per_kwh`, hourly, validated coverage + timezone alignment), `SyntheticProvider` (parameterized sinusoids for controlled experiments) |
-| B2 | **Time-resolved power accounting** | Today energy is a cumulative scalar; carbon needs `P_d(t)`. Engine side: per-tick per-DC power is already computed each tick — bin it per hour (cheap). Optimizer side: extend the fast analytic evaluator (LaneSchedule completion-tick projections) to emit a time-binned per-DC power profile instead of only totals — **the** key perf-critical piece (see E1 risk) |
-| B3 | **Carbon objective** | New `CarbonObjective` alongside Makespan/Energy/Wait in `metaheuristic/objectives/`, consuming B1+B2. Same normalization treatment as PR #208's objective-scale fix |
-| B4 | **Time-varying caps** | `Cap_d(t)` schedule in config; generalize PowerCeiling constraint check to per-hour-bin max; violation = max-over-bins excess (keeps a scalar constraint value for Deb's rules). Scenario option: derive cap-tightening windows from the same grid data (demand-response during the grid's top-load hours — realistically correlated with dirty hours) |
-| B5 | **Migration mechanics (engine)** | `VmState.MIGRATING`; VM pause/transfer/resume at epoch boundaries; RAM/BW transfer time; overhead power on both hosts; WAN energy; per-link concurrency. New events in `VMExecutionStep` loop |
-| B6 | **Chromosome extension** | `[task→VM + order (existing)] ⊕ [VM→DC initial placement] ⊕ [sparse migration genes (vm, epoch, dest), ≤K per VM]`. New mutation moves (retarget/add/remove migration, re-place VM) in the surgical-move style of PR #208/#222; `RepairOperator` extension for cap/bandwidth/preference feasibility |
-| B7 | **Baselines** | Carbon-greedy initial placement ("lowest-CI-first"); follow-the-renewables migration *policy* (threshold rule: migrate when ΔCI × remaining-energy > β × migration-cost — also interpretable as the rule-based alternative to direct encoding); static-CI arm; no-migration arm; existing LPT/WA/EnergyAware seeds retained |
-| B8 | **Workload redesign** | Hour-scale instruction masses + diurnal release times (see §8.3). Same pure/RNG-free task-generation discipline as LOG16 (HANDOFF §2.2 change 3) |
-| B9 | **Reporting** | Per-DC hourly CSV (power, cap, CI, CO₂); campaign columns: total gCO₂ (split compute/idle/migration/WAN), peak kW per DC, cap-binding hours, migration count/downtime; carbon columns through `ParetoAnalyzer` unchanged (it is objective-agnostic) |
+| B1 | **Carbon-intensity traces** | `CarbonIntensityProvider`: `getIntensity(dcId, tick)`. Impls: `TraceBasedProvider` (CSV from the artifact, §8; UTC alignment + coverage validation), `StaticRegionProvider` (wraps existing enum / annual means — RQ1 baseline), `SyntheticProvider` (controlled experiments) |
+| B2 | **Time-binned per-DC power in the search evaluator** | Extend the `PowerCeilingEnergyObjective` sweep-line + `EnergyObjective` mirror to emit per-DC per-hour energy bins (cost scales with task events, not ticks) . Engine side: aggregate existing per-tick host series by DC and hour |
+| B3 | **CarbonObjective + TardinessObjective** | Two new `SchedulingObjective` impls (interface designed for this). Carbon = B2 bins × B1. Tardiness = class-weighted `max(0, completion − deadline)` from `LaneSchedule` ticks. Parity test: constant trace ⇒ carbon ≡ k × energy exactly |
+| B4 | **Per-DC (time-varying) caps** | `Cap_d(t)` schedule in config; constraint value = max-over-bins excess (scalar for Deb's rules). Scenario option: demand-response windows derived from the trace's dirtiest/stress hours |
+| B5 | **Migration mechanics (engine)** | `VmState.MIGRATING`; pause/transfer/resume around the detach/attach pair; RAM/BW time; overhead power both sides; WAN energy; per-link concurrency. Needs a per-tick placement hook in the `VMExecutionStep` loop (none exists) + an inter-DC bandwidth/latency matrix (artifact data) |
+| B6 | **Chromosome extension** | `[task→VM + order (existing)] ⊕ [VM→DC initial placement] ⊕ [sparse migration genes, ≤K/VM]`. Surgical mutation moves (retarget/add/remove migration; re-place VM) in the PR #208/#222 style; `RepairOperator` extension for cap/bandwidth/preference feasibility |
+| B7 | **Baselines** | Carbon-greedy placement; follow-the-renewables threshold policy (also the rule-based alternative to direct encoding); **CI-threshold admission** (adapt `PowerCeilingAdmissionTaskAssignmentStrategy` — the Google-CICS-style baseline, nearly free); static-CI arm; no-migration arm; LPT/WA/EnergyAware seeds retained |
+| B8 | **Workload redesign + release times + SLA classes** | New columns in `[TASKS]`/`TaskConfig` (+ `InitializationStep`): release tick, SLA class. `LaneSchedule` gains release-awareness. Instruction masses ×~10³ (minutes–hours per task), diurnal release profile (shape from the Azure/Google traces bundled with artifact v2). Same ~500-task genome; same pure/RNG-free generation discipline as LOG16 |
+| B9 | **Reporting** | Per-DC hourly CSV (power, cap, CI, CO₂); campaign columns: gCO₂ split (compute/idle/migration/WAN), per-DC peak kW, cap-binding hours, migration count/downtime, per-class compliance %; `ParetoAnalyzer` unchanged |
+| B10 | **Campaign scenario builder generalization** | `newExperiments/ExperimentConfig.toExperimentConfiguration()` hard-codes one DC ("DC-Experiment", 400 kW); generalize to a DC-portfolio spec (name, fleet, PUE, trace zone, cap schedule) |
 
 ---
 
-## 6. Key design decisions (owner input wanted; recommendations marked ▸)
+## 6. Design decisions
 
-- **D1 — Offline vs. online.** ▸ Offline with perfect trace hindsight, exactly like
-  paper 1 (clean upper-bound/"potential" framing, reuses everything). Optional final
-  experiment: re-run best schedules against ±X% perturbed traces to measure robustness
-  (cheap bridge toward practicality, without building an online scheduler). A true
-  online/forecast study is paper 3 material.
-- **D2 — Migration decision representation.** ▸ Direct sparse genes at hour epochs with
-  K≤2 per VM (searchable, analyzable), with the threshold-rule policy as a *baseline
-  arm* rather than the primary representation. Alternative (smaller space, less direct):
-  optimize only the rule's parameters.
-- **D3 — Objective planes.** ▸ Makespan–Carbon and Wait–Carbon (+ capped twins), energy
-  as reported diagnostic. Alternative: replace one plane with Cost–Carbon using price
-  traces (data permitting) — operators' actual tension. Defer 3-objective fronts (D6).
-- **D4 — Migration model fidelity.** ▸ Stop-and-copy v1 (honest, tick-native, few
-  parameters). Pre-copy dirty-page model as sensitivity/future work. Literature
-  constants for WAN J/GB and overhead power; disclose.
-- **D5 — Average vs. marginal CI.** ▸ Average CI (attributional; matches most reporting
-  and most datasets, incl. ElectricityMaps). If the in-hand dataset has marginal
-  signals, add a sensitivity appendix. Must be stated explicitly either way.
-- **D6 — Scoreboard scope.** ▸ Keep 2-D planes + existing analyzer. Stretch: 3-objective
-  (Perf, Energy, Carbon) would need HV_fixed and contribution logic generalized —
-  meaningful analyzer work; only if a reviewer-visible payoff is expected.
-- **D7 — AMOSA.** Carries the paper-1 open issue (0% contribution post-#222). ▸ Keep the
-  7-arm portfolio for continuity and report honestly; decide in paper 1 first.
-- **D8 — Fleet heterogeneity across DCs.** ▸ Identical fleets per DC in the main study
-  (isolates grid effects from hardware effects); a heterogeneous-fleet scenario as
-  sensitivity (efficiency-vs-cleanliness tension: efficient hosts on a dirty grid).
-- **D9 — Where does the real data come from / licensing.** Owner has real CI data —
-  need: source, regions covered, resolution, license for publication, and whether
-  price traces are also available (affects D3). Public complements if gaps: ENTSO-E,
-  ElectricityMaps academic, EIA, EPİAŞ.
+**Resolved (2026-07-30 brainstorm):**
+
+- **Objectives = Carbon × SLA** (owner). SLA optimized as class-weighted tardiness,
+  reported as compliance % (§4.3). Energy demoted to diagnostic.
+- **Data = EuroSys'24 artifact traces, year 2022** (owner: "2022 is close enough").
+  Cite v2 DOI (§8). Datacenter locations are free variables, chosen by trace analysis
+  (owner: heritage 4-city "not set in stone").
+- **D1 Offline** with perfect trace hindsight (paper-1 mode; upper-bound framing).
+  Optional robustness pass: re-evaluate best schedules under ±X% perturbed traces.
+
+**Open (owner input wanted; ▸ = recommendation):**
+
+- **D2 Migration representation.** ▸ Direct sparse epoch genes, K≤2/VM/day; threshold
+  policy as a baseline arm. Alternative: optimize policy parameters only.
+- **D7 Arm set.** AMOSA contributes 0% everywhere post-#222 (paper-1 open issue).
+  ▸ Keep 7 arms for continuity; `MOEA_MOEAD`/`MOEA_OMOPSO` wrappers exist if a swap
+  is preferred. Decide in paper 1 first.
+- **D8 Fleet heterogeneity.** ▸ Identical fleets per DC in the main study (isolates
+  grid effects); heterogeneous variant (efficient-hosts-on-dirty-grid tension) as
+  sensitivity via `hardwareScaleFactor`.
+- **D10 Idle-host power semantics.** Hosts with no busy lane are gated to **0 W** with
+  free suspend/wake (`Host.java:561-597`; `EnergyObjective` mirrors it). This makes
+  "parking" a DC free and flatters geo-shifting. ▸ Keep as base semantics (paper 1
+  continuity) but add an idle-floor sensitivity (e.g. 10–30% of
+  `REFERENCE_IDLE_POWER=75.79 W`) and/or wake penalty; disclose either way.
+- **D11 Continuity plane.** ▸ Keep one AvgWait–Carbon study as an appendix bridge to
+  paper 1, or drop for focus.
+- **D12 SLA classes.** ▸ Three (gold/silver/bronze) with calibrated thresholds
+  (§7.4); mix ratio a scenario knob. Alternative: two classes for simplicity.
+- **D13 Fourth zone of S1.** ES (top headroom, solar profile) vs GB (adds wind) vs
+  US-CAL-CISO (adds 9-h time-zone offset + duck curve at slightly lower headroom).
+  ▸ ES, keeping S1 all-EU (low latencies make migration realistic and cheap).
 
 ---
 
 ## 7. Experimental design
 
-- **Scenarios (DC portfolios), 3 proposed:**
-  - S1 *High spatial contrast:* coal-heavy + nuclear/hydro + solar-duck-curve regions
-    (e.g., PL + FR + DE-style traces) — spatial signal dominates.
-  - S2 *Temporal-only control:* all DCs on the *same* trace (or homogeneous synthetic) —
-    spatial savings ≡ 0 by construction; isolates temporal + ordering effects and gives
-    the migration arms nothing spatial to exploit (falsification control).
-  - S3 *Time-zone spread:* similar mix but offset diurnal cycles (e.g., EU + US-East +
-    US-West-style) — migration should "follow the night/sun"; the showcase scenario.
-  - Day selection from the real dataset: one high-variance day, one low-variance day
-    (disclosed rule, e.g., top/bottom decile of intra-day CI std) — CI variance is the
-    resource the optimizer exploits, so it must be a controlled variable.
-- **Arms:** the 7-arm portfolio (per D7) + policy baselines (B7). Campaign shape as
-  paper 1: 10 seeds (baseSeed=200), 40k evaluations/arm, per-seed collaboration shares +
-  HV_fixed, single-threaded JVM per study, separate processes for parallelism.
-- **Ablation grid (the RQ2/RQ3 engine):** {CI: static avg | hourly} × {migration: off |
-  on} × {caps: off | loose | tight | demand-response event} — 4 corners headline the
-  paper: static/no-mig (≈ paper-1 world), hourly/no-mig (temporal+spatial placement
-  only), hourly/mig (full), each ± caps.
-- **Metrics:** total gCO₂ (split: compute / idle / migration / WAN), Wh, makespan, avg
-  wait, per-DC peak kW, cap-binding hours, migration count + total downtime, % savings
-  vs. carbon-agnostic and vs. static-CI at matched performance (iso-performance
-  comparison read off the fronts), energy–carbon divergence (Δ between energy-optimal
-  and carbon-optimal points), CUE. Constraint studies: zero violations by construction
-  (hard constraint), report cap headroom profiles instead.
-- **Validation:** final fronts re-simulated in the full engine (two-level evaluation:
-  fast analytic evaluator inside the search, engine as ground truth — same pattern as
-  paper 1); `CampaignReproducibilityTest`-style bit-identical same-seed check extended
-  to traces.
+### 7.1 Trace pre-analysis (2022; `scripts/proposal_trace_preanalysis.py`)
 
-## 8. Phased roadmap (each phase independently runnable/testable)
+Definitions: *migration headroom* = CO₂ savings of an oracle running each hour in the
+hourly-cleanest zone vs. the best **fixed** zone (upper bound on spatial shifting
+beyond perfect initial placement); *noLeader* = same with the dominant zone removed
+(proxy for a saturated/capped clean DC); *spill* = mean gap between cleanest and
+2nd-cleanest zone (the marginal carbon price of herding); *sw/day* = cleanest-zone
+identity changes per day.
 
-- **P0 — Temporal foundations:** B1 traces + B2 time-binned power + B3 carbon objective
-  + B8 workload redesign + unit tests (incl. parity: constant trace ⇒ carbon ≡
-  k × energy, the invariant that must hold exactly).
-- **P1 — Spatial study (no migration, no caps):** multi-DC initial placement genes (B6
-  partial) + baselines; first results for RQ1 and the spatial share of RQ2.
-- **P2 — Constraints:** B4 time-varying caps; herding analysis (RQ3).
-- **P3 — Migration:** B5 engine mechanics + B6 migration genes + B7 policy baseline;
-  completes RQ2.
-- **P4 — Campaign + paper.** Optional **P5:** forecast-perturbation robustness (D1).
+| Portfolio | headroom | sw/day | spill | leader (share) | noLeader |
+|---|---|---|---|---|---|
+| **S1 rotating leaders: ES/FI/CH/BE** | **26.8%** | 2.9 | 41 g | FI (39%) | 16.6% |
+| S1-alt global: CISO/DE/KR/ERCO | 3.3% | 1.2 | 124 g | CISO (83%) | 7.4% |
+| **S2 dominant leader: PL/DE/FR/GB** | 0.1% | 0.2 | **135 g** | FR (99%) | 0.1% |
+| **S3 flat control: SG/TW/HK/IN-MH** | 0.0% | 0.0 | 55 g | HK (100%) | 0.2% |
+| heritage: TR/GB/JP-TK/US-SE-SOCO | 1.0% | 0.2 | 162 g | GB (96%) | 1.0% |
 
-### 8.3 Workload redesign note (the biggest modeling risk, so it's called out)
+S1 was found by brute-forcing all 4-zone portfolios over GCP-region zones — ES/FI/CH/BE
+is the global maximum, and all four are real Google Cloud regions per the artifact's
+mapping (Madrid, Hamina, Zurich, St-Ghislain), with real measured inter-region latencies
+in the artifact. This table belongs in the paper's motivation section: it reproduces the
+EuroSys'24 "limitations" result for dominant-leader portfolios and shows where — and
+under what constraint pressure — spatiotemporal scheduling has real value.
 
-Paper 1's LOG16 workload has seconds-scale makespans (~13–37 s) — three orders of
-magnitude below the hourly CI signal. For carbon-awareness to have anything to exploit,
-meaningful work must span CI changes: scale instruction masses so per-VM busy time is
-hours, and spread task release times over the day (diurnal profile). This changes
-absolute numbers vs. paper 1 (fine — different study), but the generation discipline
-(pure, RNG-free, mass-matched across scenario variants for comparability) carries over
-verbatim. Engine cost stays modest (86 400 ticks × small fleet), but the *search-loop*
-evaluator must stay analytic (B2); full-engine evaluation inside 40k-eval runs is off
-the table, exactly as in paper 1.
+### 7.2 Scenarios (each stresses one mechanism; mirrors paper 1's 3-scenario shape)
 
-## 9. Risks
+- **S1 — Rotating leaders (migration showcase):** ES/FI/CH/BE. Cleanest zone rotates
+  ~3×/day; 26.8% oracle headroom; migration and temporal shifting should genuinely pay.
+- **S2 — Dominant leader (herding/caps showcase):** PL/DE/FR/GB. FR is cleanest 99% of
+  hours at 99 gCO₂/kWh mean; uncapped, everything goes to FR and migration is
+  worthless (0.1%). Under a binding FR cap, every spilled kWh pays +135 g — the caps
+  carry the whole story, and spillover *ordering* (GB 235 < DE 481 < PL 819) matters.
+- **S3 — Flat control (falsification):** SG/TW/HK/IN-MH. No signal to exploit
+  (headroom 0.0%); any claimed savings is noise or overhead. Real-data replacement for
+  a synthetic control. (HK's CV of 0.00 suggests an estimated/static feed — verify
+  before final selection; TW/SG/IN-MH have genuine but tiny variation.)
+- Day windows within 2022: one high-variance and one low-variance day per scenario
+  (disclosed rule, e.g. deciles of intra-day CI std), since CI variance is the
+  resource the optimizer exploits. 2022's European energy-crisis context is disclosed.
 
-| Risk | Mitigation |
-|---|---|
-| Search-space blow-up from migration genes | Epoch-restricted, K-capped sparse genes (D2); surgical mutation moves; repair operator |
-| Fast evaluator with time-binned power too slow at 40k evals | Piecewise-constant CI ⇒ per-hour binning of lane busy-ticks is O(tasks + bins) per eval; profile early in P0 |
-| Carbon savings look small (Sukprasert-style outcome) | Still publishable: frontier + decomposition + herding analysis are contributions independent of savings magnitude; scenario S1/S3 chosen for real signal diversity; upper-bound framing is honest |
-| Migration overhead parameters contested by reviewers | Literature-sourced constants + sensitivity sweep (B7/RQ2); stop-and-copy is conservative (overstates downtime) |
-| Time-zone/DST alignment bugs in traces | UTC-only internal clock; alignment unit tests; trace-coverage validation at load |
-| Determinism regressions | Traces deterministic; same seed discipline; extend reproducibility test in P0 |
+### 7.3 Arms, campaign shape, ablations
 
-## 10. Immediate next steps
+- Arms: the 7-arm portfolio (per D7) + policy baselines (B7). Campaign shape as
+  paper 1: 10 seeds (baseSeed=200), 40k evaluations/arm, per-seed collaboration
+  shares + HV_fixed, single-threaded JVM per study, separate processes for
+  parallelism.
+- Ablation grid (the RQ1/RQ2/RQ3 engine): {CI: static annual | hourly} ×
+  {migration: off | on} × {caps: off | calibrated tiers | demand-response window}.
+  Headline corners: static/no-mig (≈ paper-1 world), hourly/no-mig (placement +
+  deferral only), hourly/mig (full), each ± caps.
+- Metrics: total gCO₂ (split compute/idle/migration/WAN), Wh, class-weighted
+  tardiness, per-class compliance %, per-DC peak kW, cap-binding hours, migration
+  count + downtime, savings at iso-SLA vs. carbon-agnostic and static-CI arms,
+  energy–carbon divergence, CUE.
 
-1. Owner review of this document — especially decisions D1–D9.
-2. Inventory the in-hand carbon dataset against D9 (regions, resolution, license).
-3. P0 spike: trace loader + constant-trace parity test + evaluator profiling.
+### 7.4 Calibration (reusing paper 1's method)
+
+- **Caps:** per-DC tiers from observed uncapped peak percentiles at target
+  feasibility (the `PowerCapCalibrator` method), applied per scenario. Optional
+  demand-response variant: cap tightening during the trace's dirtiest hours.
+- **SLA thresholds:** same philosophy — run carbon-agnostic and carbon-greedy
+  baselines, take the turnaround distribution, set class thresholds at percentiles
+  that make deadlines bind for a target fraction of tasks. Without this, the
+  carbon-greediest schedule may hit 100% compliance and the front collapses to a
+  point.
+
+### 7.5 Validation
+
+Final fronts re-simulated in the full engine (`runMultiObjective` phase-3 pattern);
+reproducibility test extended to traces (same seed + same trace ⇒ bit-identical
+fronts); constant-trace parity (carbon ≡ k × energy) as a standing unit test.
 
 ---
 
-*Prepared as a discussion artifact; supersedes nothing. Companion to `HANDOFF.md`
-(paper-1 state). Comments welcome directly on the PR.*
+## 8. Data plan (resolved)
+
+- **Drive signal:** `combined_carbon.csv` from the EuroSys'24 artifact — Sukprasert,
+  Souza, Bashir, Irwin, Shenoy, *"On the Limitations of Carbon-Aware Temporal and
+  Spatial Workload Shifting in the Cloud"* — **hourly average CI, 123 zones,
+  2020–2022, gCO₂/kWh, UTC; CC-BY-4.0** (Electricity Maps data republished). Cite
+  the artifact DOI (v2: `10.5281/zenodo.10790855`; v1 `10682335` is the 40 MB
+  variant whose 22 MB carbon CSV we verified directly — v2 adds the bundled
+  Google/Azure workload traces, single 6.6 GB tar, no need to mirror it in-repo).
+  Year 2022 selected (owner decision). To verify from the artifact's prep scripts:
+  whether values are direct or lifecycle intensity — disclose whichever.
+- **Inter-DC latencies:** the artifact's `gcp_latency_matrix.csv` (measured
+  Google-Cloud inter-region RTTs) + `gcp_dc_zonecode_mapper.json` (region→zone map)
+  parameterize the migration network model with citable real data.
+- **Static-CI baseline:** per-zone 2022 annual means computed from the same traces
+  (internal consistency). The GCP fossil-CO₂ dataset (Zenodo `10065794`, annual
+  national totals) is **motivation/context only** — it is neither electricity-specific
+  nor sub-annual, so it cannot drive scheduling.
+- **Diurnal release profile:** shape from the Azure/Google cluster traces (bundled in
+  artifact v2; also independently public), applied via the pure/RNG-free generator.
+- **In-repo:** commit only the extracted per-zone 2022 columns actually used
+  (≈ 8760 rows × ≤6 zones, trivial size), with a provenance README; the full
+  artifact stays a cited download.
+
+## 9. Phased roadmap
+
+- **P0 — Temporal foundations:** B1 traces + B2 time-binned power + B3 objectives +
+  B8 workload/SLA redesign + parity/reproducibility tests.
+- **P1 — Spatial study (no migration, no caps):** multi-DC placement genes + B7
+  baselines → RQ1 and the spatial share of RQ2 on S1/S2/S3.
+- **P2 — Constraints:** B4 caps + calibration → RQ3 herding analysis.
+- **P3 — Migration:** B5 mechanics + B6 genes + policy baseline → completes RQ2.
+- **P4 — Campaign + paper.** Optional **P5:** trace-perturbation robustness.
+
+### 9.1 Workload redesign note (the biggest modeling lift)
+
+Paper 1's LOG16 workload has seconds-scale makespans (measured 15–20 s in committed
+results) — three orders of magnitude below the hourly CI signal, so carbon-awareness
+would have zero leverage. Fix: keep the ~500-task genome (search space unchanged),
+scale instruction masses ~10³ (tasks run minutes–hours), spread release times
+diurnally, attach SLA classes. Engine cost stays modest (86 400 ticks/day, small
+fleet); the search-loop evaluators are event-based sweep-lines whose cost does not
+grow with horizon. `SimulationClock.timeStep` stays 1 s (hard-coded `final`).
+
+## 10. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Search-space blow-up from migration genes | Epoch-restricted, K-capped sparse genes; surgical moves; repair operator |
+| Tardiness objective plateaus (many schedules meet all deadlines) | SLA calibration §7.4 makes deadlines bind by construction |
+| Carbon savings look small | Pre-analysis already bounds what's achievable per scenario (§7.1) and the frontier/herding/decomposition contributions stand independent of magnitude; S1 chosen for real signal |
+| 0 W idle gating flatters geo-shifting | D10 idle-floor/wake-cost sensitivity; disclose base semantics |
+| Migration overhead parameters contested | Artifact latency matrix + literature WAN-energy constants + sensitivity sweep; stop-and-copy is conservative |
+| Trace anomalies (2022 energy crisis; HK flat feed) | Disclosed year choice; day-selection rule; verify S3 zone feeds before final selection |
+| Determinism regressions | Deterministic traces; extend `CampaignReproducibilityTest` in P0 |
+
+## 11. Immediate next steps
+
+1. Owner decisions: D2, D7, D8, D10–D13 (§6).
+2. P0 spike: trace loader + constant-trace parity test + sweep-line binning profiling.
+3. Extract and commit the chosen per-zone 2022 trace columns with provenance README.
+4. Verify direct-vs-lifecycle CI and the S3 zone feeds from the artifact's prep
+   scripts; re-run `scripts/proposal_trace_preanalysis.py` if zones change.
+
+---
+
+*Discussion artifact; companion to `HANDOFF.md` (paper-1 state). Pre-analysis numbers
+are reproducible via `scripts/proposal_trace_preanalysis.py` against the artifact CSV.*
