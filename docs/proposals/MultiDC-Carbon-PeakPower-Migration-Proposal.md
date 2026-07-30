@@ -12,17 +12,19 @@ metaheuristic study with real-world carbon-intensity traces.*
 
 ---
 
-## 1. From paper 1 to paper 2
+## 1. Scope: an independent study on the existing framework
 
-Paper 1 (in progress, see `HANDOFF.md`) studies **offline task scheduling in a single
-power-capped datacenter**, finding collaborative Pareto fronts for Makespan–Energy and
-WaitingTime–Energy with a 7-arm metaheuristic portfolio (GA/SA dominance-archive variants,
-NSGA-II, SPEA-II, AMOSA), MeasurementBased energy, no oversubscription, and a hardened
-fairness methodology (single publication rule, per-seed collaboration shares, HV_fixed).
+**This is a standalone study, not a sequel** (owner decision, 2026-07-30): it does not
+depend on the previous paper's results, narrative, or publication timeline. What it
+reuses is the **framework** — the validated simulator and methodology built for the
+earlier single-datacenter power-capped study (see `HANDOFF.md`): offline optimization,
+MeasurementBased energy, no oversubscription, deterministic seeds, and the
+collaborative-Pareto fairness machinery (single publication rule, per-seed
+collaboration shares, HV_fixed). Mentions of "paper 1" below are engineering
+references to that framework and its calibrated components, never narrative
+dependencies.
 
-Paper 2 keeps that validated core — offline optimization, measurement-based power,
-deterministic seeds, the collaborative-Pareto scoreboard — and expands the *world model*
-along three axes:
+The study's world model extends the framework along three axes:
 
 1. **Multiple, geographically distributed datacenters** whose grid **carbon intensity
    (CI) varies by region and by hour**, driven by real 2022 hourly traces (§8).
@@ -295,6 +297,9 @@ functional); rolling-window demand metrics; ramp limits.
 
 **Resolved (2026-07-30 brainstorm):**
 
+- **Independence (owner): standalone study**, not a sequel — reuses the existing
+  framework only; no dependence on the previous paper's results or timeline (§1).
+
 - **Objectives = Carbon × SLA** (owner). SLA optimized as class-weighted tardiness,
   reported as compliance % (§4.3). Energy demoted to diagnostic.
 - **Data = EuroSys'24 artifact traces, year 2022** (owner: "2022 is close enough").
@@ -328,6 +333,18 @@ functional); rolling-window demand metrics; ramp limits.
   calibrated per §7.4; class mix ratio remains a scenario knob.
 - **D13 S1 fourth zone (owner, 2026-07-30): Spain stays** — S1 = ES/FI/CH/BE, all-EU,
   as pre-analyzed (26.8% headroom).
+- **D8 Fleet composition (owner, 2026-07-30): identical fleets in every DC.**
+  Owner rationale, stronger than mere experimental control: the MeasurementBased
+  power model is calibrated on **one** physical reference system — heterogeneous
+  fleets via `hardwareScaleFactor` would be synthetic scaling presented as
+  measurement. Heterogeneity deferred until new wall-plug measurement campaigns
+  exist. Goes in the method section as-is.
+- **D14 PUE (owner, 2026-07-30): uniform 1.2** across all DCs.
+- **D15 Cap tiers (owner, 2026-07-30):** per-DC `PowerCapCalibrator` percentile
+  calibration at **90 / 60 / 30 %** feasibility targets, as in paper 1.
+- **D17 Tenancy (owner, 2026-07-30): single tenant**, as in paper 1.
+- **D18 Online-track dispatcher (owner, 2026-07-30): validated greedy heuristics**
+  place tasks in the §4.6 replay; no rolling metaheuristic bursts.
 
 **Open (owner input wanted; ▸ = recommendation):**
 
@@ -338,7 +355,13 @@ functional); rolling-window demand metrics; ramp limits.
   site-realistic per-DC values as an optional variant (adds a confounder).
 - **D15 Cap tiers.** ▸ Reuse paper 1's percentile-calibration method
   (`PowerCapCalibrator`, 90/60/30% feasibility targets) per DC; sign-off only.
-- **D16 Horizon.** ▸ 24 h main study, 72 h sensitivity (or the reverse).
+- **D16 Horizon** (= how long one simulated experiment runs). Explained to owner
+  2026-07-30: the *end-of-horizon effect* — a migration late in a 24 h window has no
+  remaining runtime to amortize its cost, so short horizons artificially teach
+  "never migrate in the evening"; 72 h dilutes the artifact and captures multi-day
+  weather structure, at 3× simulation length and fewer distinct sampled days.
+  ▸ 24 h main study + one 72 h sensitivity (which also *measures* the end effect).
+  Pending owner call.
 - **D17 Tenancy.** ▸ Single user as in paper 1 (comparability); multi-user with
   DC-preference constraints as future realism.
 - **D18 Online-track dispatcher.** In the §4.6 replay, tasks are dispatched by ▸ the
