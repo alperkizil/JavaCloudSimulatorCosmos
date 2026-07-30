@@ -1,10 +1,9 @@
 # Research Proposal — Carbon- and Peak-Power-Aware VM Scheduling with Migration across Geo-Distributed Datacenters
 
-**Status:** DRAFT v2 for discussion (2026-07-30, branch `claude/multi-datacenter-proposal-jromkx`).
-v2 incorporates the code audit of the simulator, the owner's decisions from the
-2026-07-30 brainstorm (objectives = Carbon × SLA; trace year 2022; datacenter
-locations free to choose), and a quantitative pre-analysis of the real carbon
-traces (`scripts/proposal_trace_preanalysis.py`). Open decisions are in §6.
+**Status:** v3 — **fully specified; all design decisions resolved** (§6, none open).
+v2 (code audit, owner decisions, trace pre-analysis) was merged to `main` via
+PR #239. v3 adds the §4.6 distillation spec: universal-Pareto-set teacher corpus,
+λ-conditioned imitation, and the concrete sample/label/output schema.
 
 **Working title (paper):** *Joint carbon- and peak-power-aware scheduling and VM
 migration in geo-distributed datacenters: a collaborative multi-objective
@@ -228,21 +227,55 @@ campaign is the teacher*. Its hindsight-optimal migration schedules become
 imitation-learning targets. This is also why D2 had to resolve to **direct epoch
 genes**: a policy-parameter encoding would leave nothing to distill.
 
-1. **Label generation (free byproduct of P1–P4):** per-day oracle `(vm, epoch,
-   destination)` decisions from the campaign's best schedules, across scenarios,
-   days, and cap regimes.
-2. **Supervised imitation:** features per epoch = recent per-zone CI history,
-   hour-of-day/day-of-week encodings, **per-DC cap headroom**, per-VM state
-   (remaining work, RAM footprint, SLA class, deadline slack). Labels = oracle
-   decisions (heavy "no-migration" class imbalance handled explicitly). The state
-   features are the point: cap headroom and deadline slack are the herding variables
-   no pure CI forecast sees.
-3. **Frozen-policy replay on held-out days** (strict temporal split): migrations
-   from the policy, task dispatch by the validated heuristics, the full engine
+1. **Teacher corpus — the universal Pareto set, λ-conditioned.** For each
+   (scenario, 72 h window, seed), the teacher is the **universal front** (pooled
+   all-arms non-dominated set — the paper's central object, arm-agnostic). A front
+   is a committee that disagrees: the carbon-extreme member migrates aggressively,
+   the SLA-extreme member barely at all; pooling their decisions naively teaches
+   the average of opposing policies. Resolution: **preference-conditioned
+   imitation** — each solution carries λ ∈ [0,1], its normalized position along its
+   front (0 = SLA-extreme, 1 = carbon-extreme), fed to the network as an input.
+   One network distills the *entire* frontier; the disagreement becomes signal
+   ("at λ=0.9 move this bronze VM tonight; at λ=0.2 don't"). Fronts are
+   subsampled at λ-quantiles (~10–20 deduplicated solutions each), landing at a
+   few million samples — comfortable for the modest model class. Fallback if
+   λ-conditioning underperforms: knee-point-only labels
+   (`ParetoFront.getKneePoint()`), a single consistent operating point.
+2. **Sample/label/output spec.** One training sample = one **(solution, epoch,
+   VM)** triple.
+   *Inputs:* λ; clock (hour-of-day sin/cos, day index); per-DC grid features —
+   current CI, ~24 h backward CI history/rolling stats, current cleanliness rank
+   (never future values); per-DC system state — cap headroom fraction,
+   utilization, VM count (the herding variables no CI forecast sees); per-VM
+   state — remaining work, RAM footprint (≈ transfer cost), SLA class, minimum
+   deadline slack, current DC, migration budget spent. System-state features are
+   computed by **replaying the teacher's own schedule up to epoch t** (standard
+   behavior cloning; deployment-time state drift is the known, accepted v1 caveat).
+   *Labels:* read off the solution's migration genes — gene `(v, t, d)` ⇒ class
+   MIGRATE→d, else STAY; a (1 + D−1)-way categorical. Severe imbalance by design
+   (≤2 migrations/VM/day over 24 epochs/day ⇒ >90% STAY): class weighting or a
+   two-stage migrate-then-destination head. Temporal tolerance: smooth labels over
+   adjacent epochs (±1 h) — moving at 13:00 vs 14:00 is near-equivalent and
+   exact-epoch scoring would punish irrelevant precision.
+   *Output:* per-(VM, epoch) softmax over {STAY, →each other DC}, **factorized
+   per-VM** — which also dissolves interchangeable-VM label conflicts (twin bronze
+   VMs get twin probabilities instead of fighting over one joint label).
+3. **Deployment rule + frozen-policy replay on held-out windows** (strict temporal
+   split): each epoch, score all VMs at the operator's chosen λ; accept migrations
+   whose confidence clears a validation-tuned threshold τ, ranked by confidence,
+   then pass through the hard feasibility filters (per-link concurrency, per-VM
+   budget, destination cap headroom) — the network proposes, the constraints
+   dispose. Task dispatch by the validated heuristics (D18); the full engine
    scores carbon/tardiness. Scored against (a) the clairvoyant frontier (upper
-   bound), (b) the threshold rule, (c) a persistence-forecast pipeline ("tomorrow's
-   grid = today's" — deceptively strong given CI periodicity). Headline metric: %
-   of the oracle-over-threshold gain captured at matched SLA.
+   bound), (b) the threshold rule, (c) a persistence-forecast pipeline
+   ("tomorrow's grid = today's" — deceptively strong given CI periodicity).
+   **Sweeping λ traces an achieved online frontier**, so RQ5's headline figure is
+   two fronts on one plot — clairvoyant vs. learned-without-clairvoyance — and the
+   area between them is the measured value of knowing the future. Imitation
+   accuracy is only a proxy metric; replay results are the truth. Note: some
+   oracle decisions are unpredictable in principle (they conditioned on the
+   future); that irreducible residue *is* the quantity RQ5 measures, not a
+   nuisance.
 
 Guardrails: model class starts modest (GBDT/small MLP before sequence models — the
 contribution is the distillation pipeline, not architecture novelty); seeded
