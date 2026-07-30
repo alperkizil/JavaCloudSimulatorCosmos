@@ -5,6 +5,32 @@ merge of PR #222. Read `README.md` (in chunks) and `CLAUDE.md` first, as always.
 
 ---
 
+## 0. NEW SECOND STUDY (added 2026-07-30) — multi-DC / carbon / peak-power / migration
+
+An **independent second study** (not a sequel; reuses the framework only) was fully
+specified with the owner on 2026-07-30 and merged via PR #239:
+
+- **Read:** `docs/proposals/MultiDC-Carbon-PeakPower-Migration-Proposal.md` — the
+  complete plan. **Every design decision is resolved** (§6 of that doc: objectives
+  Carbon × 3-class tardiness with AvgWait secondary; 2022 hourly CI traces from the
+  EuroSys'24 artifact, Zenodo `10.5281/zenodo.10790855`; scenarios ES/FI/CH/BE,
+  PL/DE/FR/GB, flat control; 72 h horizon; idle power assumed; uniform PUE 1.2;
+  identical fleets; single tenant; caps at 90/60/30 calibration; direct hourly
+  migration genes ≤2/VM/day; 7 arms with new **GT-MOSA** replacing AMOSA; NN
+  oracle-distillation online track, λ-conditioned, spec in §4.6). Do not
+  re-litigate resolved decisions — extend from them.
+- **Reproduce the scenario numbers:** `scripts/proposal_trace_preanalysis.py`
+  against the artifact's `combined_carbon.csv`.
+- **Work queue (nothing blocks):** P0 (trace loader, constant-trace parity test,
+  idle-floor semantics switch, sweep-line binning profiling); GT-MOSA prototype
+  (tune frozen on the paper-1 benchmark); data chores (direct-vs-lifecycle CI;
+  replace HK in the flat-control portfolio if its feed is static — variance ≈ 0).
+
+Everything below concerns the original single-DC study and remains valid; its
+outstanding items (notably the PowerCeiling campaign re-run, §3.1) still stand.
+
+---
+
 ## 1. Research background (original brief, from the project owner)
 
 > We are trying to publish a scientific journal article on Task Scheduling in Cloud
