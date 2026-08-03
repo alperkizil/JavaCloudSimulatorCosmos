@@ -103,6 +103,27 @@ Two-objective minimization, both computed from the measurement-based power model
 | **Carbon** | CO₂ = Σₜ Σ_d PUE_d · P_IT,d(t) · CI_d(t) · dt + Σ_migrations E_WAN · CI_path | Hourly per-DC energy bins × the zone's hourly trace value; migration transfer energy included |
 | **SLA (tardiness)** | Σ_tasks w_class · max(0, turnaround − threshold_class) | Class-weighted total tardiness (gold ≫ silver ≫ bronze). Continuous, zero exactly at 100% compliance |
 
+Carbon-formula symbols (Σₜ Σ_d = sum over every time slice and every datacenter):
+
+| Symbol | Meaning | Where it comes from |
+|---|---|---|
+| `P_IT,d(t)` | Computing power the servers in datacenter *d* are drawing at time *t* (watts) | The measured wall-plug power model, given which VMs are busy at that moment under the plan being scored |
+| `PUE_d` | ×1.2 — converts server power to whole-building power (cooling, conversion losses) | Design constant, uniform across DCs |
+| `CI_d(t)` | Grid carbon intensity of *d*'s zone at hour *t* (gCO₂/kWh) | `combined_carbon.csv`, 2022 column for that zone |
+| `dt` | Length of the time slice — power × time = energy | 1 s ticks in the engine; hourly bins in the search evaluator (exact, since CI is constant within an hour) |
+| `E_WAN` | Wide-area-network energy of one migration (per-GB constant × GB of VM RAM moved) | Literature constant, sensitivity-swept. Server-side migration power needs no extra term — it is already inside `P_IT` of both DCs during the transfer |
+| `CI_path` | Carbon intensity charged to that network energy | Derived from the endpoint zones' traces (exact convention fixed in P3) |
+
+Tardiness-formula symbols (read per task, then sum):
+
+| Symbol | Meaning |
+|---|---|
+| `turnaround` | Clock time from the task's release (customer submission) to its completion |
+| `threshold_class` | The class's promise: gold ≈ 1 h, silver ≈ 4 h, bronze ≈ end-of-day (final values calibrated so deadlines bind) |
+| `turnaround − threshold` | How far past the promise the task finished |
+| `max(0, ·)` | The hinge: on-time or early ⇒ contributes exactly zero — no reward for early, no penalty unless late |
+| `w_class` | Class weight: an hour of gold lateness costs far more than an hour of bronze lateness |
+
 Compliance % is *reported*, not optimized: at 500 tasks it is a step function
 (plateaus kill search gradients and produce staircase fronts). Deadline thresholds are
 **calibrated to bind** (percentiles of baseline turnaround distributions), otherwise
