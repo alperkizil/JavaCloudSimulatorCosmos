@@ -19,6 +19,16 @@ specified with the owner on 2026-07-30 and merged via PR #239:
   migration genes ≤2/VM/day; 7 arms with new **GT-MOSA** replacing AMOSA; NN
   oracle-distillation online track, λ-conditioned, spec in §4.6). Do not
   re-litigate resolved decisions — extend from them.
+- **PR #240 Codex review adjudicated (2026-08-03; 2 findings, both P2, both
+  accepted and folded into the proposal, now v4):** (1) ±1 h migration-label
+  smoothing was state-inconsistent under teacher replay — at t+1 the VM already
+  sits at the destination, which the action vocabulary excludes; §4.6 now keeps
+  labels exact-epoch and applies the tolerance in scoring/loss behind an
+  action-validity guard. (2) One window per regime cannot support the strict
+  temporal split (same-trace leak, or a partition loses the regime); §7.2 now
+  selects one representative per regime **per partition** (train/val/test,
+  non-overlapping, temporally ordered; campaign cost multiplies by partition
+  count; rare-regime fallback disclosed).
 - **Reproduce the scenario numbers:** `scripts/proposal_trace_preanalysis.py`
   against the artifact's `combined_carbon.csv`.
 - **Work queue (nothing blocks):** P0 (trace loader, constant-trace parity test,

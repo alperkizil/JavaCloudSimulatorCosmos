@@ -1,9 +1,14 @@
 # Research Proposal — Carbon- and Peak-Power-Aware VM Scheduling with Migration across Geo-Distributed Datacenters
 
-**Status:** v3 — **fully specified; all design decisions resolved** (§6, none open).
+**Status:** v4 — **fully specified; all design decisions resolved** (§6, none open).
 v2 (code audit, owner decisions, trace pre-analysis) was merged to `main` via
-PR #239. v3 adds the §4.6 distillation spec: universal-Pareto-set teacher corpus,
-λ-conditioned imitation, and the concrete sample/label/output schema.
+PR #239. v3 added the §4.6 distillation spec: universal-Pareto-set teacher corpus,
+λ-conditioned imitation, and the concrete sample/label/output schema (merged via
+PR #240). v4 folds in the two Codex-review findings on PR #240, both accepted:
+temporal label tolerance moved from label smoothing into validity-guarded
+scoring/loss (§4.6), and window selection extended to one representative per
+regime **per partition**, so the §4.6 temporal split rests on disjoint windows
+(§7.2).
 
 **Working title (paper):** *Joint carbon- and peak-power-aware scheduling and VM
 migration in geo-distributed datacenters: a collaborative multi-objective
@@ -266,14 +271,29 @@ genes**: a policy-parameter encoding would leave nothing to distill.
    *Labels:* read off the solution's migration genes — gene `(v, t, d)` ⇒ class
    MIGRATE→d, else STAY; a (1 + D−1)-way categorical. Severe imbalance by design
    (≤2 migrations/VM/day over 24 epochs/day ⇒ >90% STAY): class weighting or a
-   two-stage migrate-then-destination head. Temporal tolerance: smooth labels over
-   adjacent epochs (±1 h) — moving at 13:00 vs 14:00 is near-equivalent and
-   exact-epoch scoring would punish irrelevant precision.
+   two-stage migrate-then-destination head. Temporal tolerance (revised per the
+   PR #240 Codex review): moving at 13:00 vs 14:00 is near-equivalent and
+   exact-epoch scoring would punish irrelevant precision — but naive smoothing
+   of labels onto adjacent epochs is state-inconsistent under teacher replay:
+   from t+1 onward the VM already sits at d, and MIGRATE→d is not even in that
+   sample's action vocabulary (the softmax excludes the current DC) — the
+   smeared label would demand migrating to where the VM already is. Labels
+   therefore stay exact-epoch and hard; the tolerance lives in scoring and
+   (optionally) the loss: (a) proxy imitation metrics count a teacher migration
+   (v, t, d) as matched if the policy proposes →d at t or at an adjacent epoch
+   whose replayed state still has v at the source with →d legal — in practice
+   t−1; t+1 is structurally unreachable under teacher replay; (b) optional
+   loss-side softening spreads target mass over those same valid-state epochs
+   only, and never overwrites another exact migration label (back-to-back
+   migrations of one VM); (c) the truth metric — held-out replay
+   carbon/tardiness — needs no tolerance at all: a ±1 h-shifted migration
+   prices itself endogenously.
    *Output:* per-(VM, epoch) softmax over {STAY, →each other DC}, **factorized
    per-VM** — which also dissolves interchangeable-VM label conflicts (twin bronze
    VMs get twin probabilities instead of fighting over one joint label).
-3. **Deployment rule + frozen-policy replay on held-out windows** (strict temporal
-   split): each epoch, score all VMs at the operator's chosen λ; accept migrations
+3. **Deployment rule + frozen-policy replay on held-out windows** (strict
+   temporal split over disjoint per-partition windows, §7.2): each epoch, score
+   all VMs at the operator's chosen λ; accept migrations
    whose confidence clears a validation-tuned threshold τ, ranked by confidence,
    then pass through the hard feasibility filters (per-link concurrency, per-VM
    budget, destination cap headroom) — the network proposes, the constraints
@@ -456,15 +476,34 @@ under what constraint pressure — spatiotemporal scheduling has real value.
   (headroom 0.0%); any claimed savings is noise or overhead. Real-data replacement for
   a synthetic control. (HK's CV of 0.00 suggests an estimated/static feed — verify
   before final selection; TW/SG/IN-MH have genuine but tiny variation.)
-- **72 h window selection by grid-weather-regime clustering (owner-approved).**
-  Every candidate 2022 window is described by a feature vector (per-zone CI profile
-  shape, intra-day variance, leader-rotation count, cross-zone spread) and
-  clustered (k-means/hierarchical — trivial at 8 760 rows). The clusters are the
-  year's natural regimes (calm-flat, solar-dominated, windy-rotating,
-  crisis-spiky); we simulate **one representative window per regime per scenario**
-  — systematic, immune to cherry-picking. Train/test splits for the §4.6 track are
-  **stratified by regime**, and RQ5 capture rates are reported per regime (e.g.
-  "the policy keeps 75% of the oracle's edge on rotating windows, 20% on flat
+- **72 h window selection by grid-weather-regime clustering (owner-approved;
+  split rule revised per the PR #240 Codex review).** Every candidate 2022
+  window is described by a feature vector (per-zone CI profile shape, intra-day
+  variance, leader-rotation count, cross-zone spread) and clustered
+  (k-means/hierarchical — trivial at 8 760 rows). The clusters are the year's
+  natural regimes (calm-flat, solar-dominated, windy-rotating, crisis-spiky);
+  we simulate **one representative window per regime per partition per
+  scenario** — a single window per regime cannot serve both sides of a temporal
+  split (reusing it leaks the same 72 h trace into evaluation; giving it to one
+  partition strips the regime from the others and voids stratification).
+  Concretely: three partitions (train/validation/test) ⇒ three non-overlapping
+  representatives per regime, each the nearest-to-centroid member within its
+  temporally eligible span, so that within every regime all train windows
+  precede all validation windows precede all test windows (global cross-regime
+  ordering preferred where seasonality permits; the achieved ordering is
+  reported). Compute-bound fallback: two partitions (train/test) with τ and
+  model selection tuned on the temporally latest train window, disclosed as
+  in-sample tuning. Consequences, stated plainly: (a) every selected window —
+  test included — receives the full offline campaign, because held-out replay
+  is scored against the clairvoyant frontier of its own window, so campaign
+  cost multiplies by the partition count; (b) the leakage discipline binds only
+  the §4.6 learned track — RQ1–RQ4 are offline claims and may pool all windows;
+  (c) a regime too rare or too seasonally concentrated to yield ordered,
+  non-overlapping representatives for every partition is merged into its
+  nearest regime or kept train-only and excluded from per-regime held-out
+  capture claims — disclosed either way. Selection stays systematic and immune
+  to cherry-picking; RQ5 capture rates are reported per regime (e.g. "the
+  policy keeps 75% of the oracle's edge on rotating windows, 20% on flat
   ones"). 2022's European energy-crisis context is disclosed.
 
 ### 7.3 Arms, campaign shape, ablations
