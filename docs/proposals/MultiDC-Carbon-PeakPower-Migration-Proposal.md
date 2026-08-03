@@ -1,6 +1,6 @@
 # Research Proposal — Carbon- and Peak-Power-Aware VM Scheduling with Migration across Geo-Distributed Datacenters
 
-**Status:** v4 — **fully specified; all design decisions resolved** (§6, none open).
+**Status:** v5 — **fully specified; all design decisions resolved** (§6, none open).
 v2 (code audit, owner decisions, trace pre-analysis) was merged to `main` via
 PR #239. v3 added the §4.6 distillation spec: universal-Pareto-set teacher corpus,
 λ-conditioned imitation, and the concrete sample/label/output schema (merged via
@@ -8,7 +8,10 @@ PR #240). v4 folds in the two Codex-review findings on PR #240, both accepted:
 temporal label tolerance moved from label smoothing into validity-guarded
 scoring/loss (§4.6), and window selection extended to one representative per
 regime **per partition**, so the §4.6 temporal split rests on disjoint windows
-(§7.2).
+(§7.2). v5 (owner decision, 2026-08-03) refines the §4.6 cluster-lookup
+baseline: per-cluster action rates with distance-weighted soft voting over the
+k nearest prototypes as its confidence mechanism, feeding the shared
+τ-threshold machinery; hard nearest-card lookup retained as an ablation.
 
 **Working title (paper):** *Joint carbon- and peak-power-aware scheduling and VM
 migration in geo-distributed datacenters: a collaborative multi-objective
@@ -301,9 +304,25 @@ genes**: a policy-parameter encoding would leave nothing to distill.
    scores carbon/tardiness. Scored against (a) the clairvoyant frontier (upper
    bound), (b) the threshold rule, (c) a persistence-forecast pipeline
    ("tomorrow's grid = today's" — deceptively strong given CI periodicity), and
-   (d) a **cluster-lookup policy** (owner-approved): the oracle's decision states
-   clustered on the same features (no network), majority oracle action stored per
-   cluster, nearest-cluster lookup at deployment. This completes the rent-paying
+   (d) a **cluster-lookup policy** (owner-approved; confidence mechanism
+   refined per owner decision 2026-08-03): the oracle's decision states
+   clustered on the same features (no network); each cluster stores its
+   **action rates** (fraction of member states that migrated, per
+   destination), not just a majority action. At deployment the policy blends
+   the **k nearest prototypes** — distance-weighted soft voting over their
+   action rates — into a migrate-probability that feeds the same
+   τ-threshold/ranking machinery as the NN (rung parity: same confidence
+   semantics, same feasibility filters). Rationale: hard single-card lookup
+   has knife-edge Voronoi boundaries and yields only a yes/no where the
+   deployment rule requires a graded, rankable confidence. The nearest card
+   is still reported as the situation-type diagnosis, keeping the taxonomy
+   nameable; hard nearest-card majority lookup is retained as a one-line
+   ablation (measures what boundary smoothing alone buys). Simplicity
+   guardrail: no trained weights — only the centers, their action rates, and
+   two dials (k, distance-discount width) tuned on the validation window
+   exactly like τ; fitting blend weights would turn the playbook into a
+   small RBF network and collapse the ladder's rung separation. This
+   completes the rent-paying
    ladder — if-statement < cluster-lookup < NN — and yields free interpretability:
    the clusters are nameable oracle situation-types ("cap-saturated clean window",
    "pre-dawn rotation", "bronze backlog with slack"), giving the paper a
