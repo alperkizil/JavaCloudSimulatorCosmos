@@ -230,14 +230,16 @@ def split_tier(label):
 
 
 def tier_sort_key(tier):
-    """Uncapped first, then descending target percent (PC90, PC60, PC30)."""
+    """Uncapped first, then descending percent of P_ref (PC90, PC85, PC80, PC75)."""
     return (0, 0) if tier == UNCAPPED_TIER else (1, -int(tier[2:]))
 
 
 def tier_display(tier, cap_watts=None):
+    """Tier label. The percent is the cap's share of P_ref (the peak drawn by the
+    latency-optimal schedule), not a target feasibility fraction."""
     if tier == UNCAPPED_TIER:
         return 'Uncapped'
-    label = f'Cap {tier[2:]}%'
+    label = f'Cap {tier[2:]}% of P_ref'
     if cap_watts is not None and np.isfinite(cap_watts):
         label += f' (≈{cap_watts / 1000.0:.1f} kW)'
     return label

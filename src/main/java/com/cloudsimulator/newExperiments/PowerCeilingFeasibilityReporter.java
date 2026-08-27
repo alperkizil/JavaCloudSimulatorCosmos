@@ -44,12 +44,43 @@ public final class PowerCeilingFeasibilityReporter {
 
     private PowerCeilingFeasibilityReporter() {}
 
+    /**
+     * Writes the feasibility CSVs against one cap ladder shared by every scenario.
+     * Prefer {@link #writeReports(String, List, Map)} when the caps are derived per
+     * scenario (the anchored scheme), so each scenario is scored against its own.
+     */
     public static void writeReports(String reportsDir,
                                     List<ScenarioReport> scenarios,
                                     double[] capLevelsWatts) {
-        writeFeasibilitySummary(reportsDir, scenarios, capLevelsWatts);
-        writeFeasibleParetoFronts(reportsDir, scenarios, capLevelsWatts);
+        Map<Integer, double[]> shared = new LinkedHashMap<>();
+        if (scenarios != null) {
+            for (ScenarioReport sr : scenarios) {
+                shared.put(sr.scenarioNumber, capLevelsWatts);
+            }
+        }
+        writeReports(reportsDir, scenarios, shared);
+    }
+
+    /**
+     * Writes the feasibility CSVs, scoring each scenario against the caps derived for
+     * that scenario. A scenario absent from {@code capLevelsByScenario} contributes no
+     * rows to the per-cap CSVs (it still appears in {@code pareto_3d_all.csv}).
+     */
+    public static void writeReports(String reportsDir,
+                                    List<ScenarioReport> scenarios,
+                                    Map<Integer, double[]> capLevelsByScenario) {
+        writeFeasibilitySummary(reportsDir, scenarios, capLevelsByScenario);
+        writeFeasibleParetoFronts(reportsDir, scenarios, capLevelsByScenario);
         writeAllPoints3D(reportsDir, scenarios);
+    }
+
+    /** This scenario's caps, or an empty ladder when none were derived for it. */
+    private static double[] capsFor(Map<Integer, double[]> capLevelsByScenario, int scenarioNumber) {
+        if (capLevelsByScenario == null) {
+            return new double[0];
+        }
+        double[] caps = capLevelsByScenario.get(scenarioNumber);
+        return caps == null ? new double[0] : caps;
     }
 
     // ---------------------------------------------------------------------
@@ -58,7 +89,7 @@ public final class PowerCeilingFeasibilityReporter {
 
     private static void writeFeasibilitySummary(String reportsDir,
                                                 List<ScenarioReport> scenarios,
-                                                double[] capLevelsWatts) {
+                                                Map<Integer, double[]> capLevelsByScenario) {
         Path filePath = Paths.get(reportsDir, "feasibility_summary.csv");
 
         try (PrintWriter w = new PrintWriter(new FileWriter(filePath.toFile()))) {
@@ -67,6 +98,7 @@ public final class PowerCeilingFeasibilityReporter {
                 + "TotalSolutionsAcrossSeeds,TotalFeasibleAcrossSeeds");
 
             for (ScenarioReport sr : scenarios) {
+                double[] capLevelsWatts = capsFor(capLevelsByScenario, sr.scenarioNumber);
                 for (Map.Entry<String, List<AlgorithmRunResult>> entry : sr.runsByLabel.entrySet()) {
                     String label = entry.getKey();
                     List<AlgorithmRunResult> seeds = entry.getValue();
@@ -114,13 +146,14 @@ public final class PowerCeilingFeasibilityReporter {
 
     private static void writeFeasibleParetoFronts(String reportsDir,
                                                   List<ScenarioReport> scenarios,
-                                                  double[] capLevelsWatts) {
+                                                  Map<Integer, double[]> capLevelsByScenario) {
         Path filePath = Paths.get(reportsDir, "pareto_3d_feasible.csv");
 
         try (PrintWriter w = new PrintWriter(new FileWriter(filePath.toFile()))) {
             w.println("Scenario,ScenarioName,Algorithm,CapWatts,WaitingTime,Energy,PeakPowerWatts,Seed");
 
             for (ScenarioReport sr : scenarios) {
+                double[] capLevelsWatts = capsFor(capLevelsByScenario, sr.scenarioNumber);
                 for (Map.Entry<String, List<AlgorithmRunResult>> entry : sr.runsByLabel.entrySet()) {
                     String label = entry.getKey();
                     List<AlgorithmRunResult> seeds = entry.getValue();

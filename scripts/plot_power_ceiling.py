@@ -97,7 +97,7 @@ def plot_feasibility_bars(reports_dir, summary_df):
             offset = (ci - (len(caps) - 1) / 2.0) * bar_width
             ax.bar(
                 x + offset, means, bar_width, yerr=stds,
-                label=f'{int(cap/1000)} kW',
+                label=f'{cap / 1000.0:.1f} kW',
                 capsize=2, edgecolor='black', linewidth=0.3,
             )
 
@@ -120,7 +120,12 @@ def plot_feasibility_bars(reports_dir, summary_df):
 # 3D projection coloured by feasibility
 # -----------------------------------------------------------------------------
 
-def plot_3d_projection(reports_dir, all_df, primary_cap_watts):
+def plot_3d_projection(reports_dir, all_df, primary_cap_by_scenario):
+    """One 3D scatter per scenario, with that scenario's own cap plane.
+
+    Caps are derived per scenario (anchored to each scenario's P_ref), so the plane
+    and the feasible/infeasible split must be looked up per scenario rather than
+    shared across all of them."""
     try:
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
     except ImportError:
@@ -130,6 +135,10 @@ def plot_3d_projection(reports_dir, all_df, primary_cap_watts):
     for scenario, sub in all_df.groupby('Scenario'):
         scenario_name = sub['ScenarioName'].iloc[0]
         algos = sorted(sub['Algorithm'].unique())
+        primary_cap_watts = primary_cap_by_scenario.get(scenario)
+        if primary_cap_watts is None:
+            print(f'  Skipping 3D projection for scenario {scenario}: no caps recorded')
+            continue
 
         fig = plt.figure(figsize=(10, 7))
         ax = fig.add_subplot(111, projection='3d')
@@ -162,7 +171,7 @@ def plot_3d_projection(reports_dir, all_df, primary_cap_watts):
         ax.set_ylabel('Energy (kWh)')
         ax.set_zlabel('Peak power (W)')
         ax.set_title(f'Scenario {scenario} — {scenario_name}\n'
-                     f'3D solutions; cap plane at {int(primary_cap_watts/1000)} kW')
+                     f'3D solutions; cap plane at {primary_cap_watts / 1000.0:.1f} kW')
         # Legend (algorithms only — feasibility via marker style)
         handles, labels = ax.get_legend_handles_labels()
         seen = {}
@@ -223,13 +232,14 @@ def plot_constrained_fronts(reports_dir, feasible_df):
         ax.set_ylabel('Energy (kWh)')
         ax.set_title(f'Scenario {scenario} — {scenario_name}\n'
                      f'Feasibility-filtered constrained Pareto front at '
-                     f'{int(cap/1000)} kW')
+                     f'{cap / 1000.0:.1f} kW')
         ax.grid(True, linestyle=':', alpha=0.4)
         ax.legend(fontsize=7, loc='best', framealpha=0.9)
         fig.tight_layout()
         out = os.path.join(
             reports_dir,
-            f'power_ceiling_constrained_front_scenario_{scenario}_cap{int(cap/1000)}kW.png'
+            f'power_ceiling_constrained_front_scenario_{scenario}'
+            f'_cap{cap / 1000.0:.1f}kW.png'
         )
         fig.savefig(out, dpi=300, bbox_inches='tight')
         plt.close(fig)
@@ -260,13 +270,19 @@ def main():
     feasible_df = pd.read_csv(feasible_path)
     all_df = pd.read_csv(all_path)
 
-    # Primary cap = median of the distinct caps present (usually the middle tier).
-    caps_present = sorted(summary_df['CapWatts'].unique())
-    primary_cap = caps_present[len(caps_present) // 2] if caps_present else 190000.0
+    # Primary cap per scenario = the middle tier of that scenario's own ladder.
+    # (Caps are anchored to each scenario's P_ref, so they differ between scenarios.)
+    primary_cap_by_scenario = {}
+    for scenario, sub in summary_df.groupby('Scenario'):
+        caps_present = sorted(sub['CapWatts'].unique())
+        if caps_present:
+            primary_cap_by_scenario[scenario] = caps_present[len(caps_present) // 2]
 
-    print(f'  Primary cap for 3D projection: {int(primary_cap/1000)} kW')
+    for scenario in sorted(primary_cap_by_scenario):
+        print(f'  Primary cap for 3D projection, scenario {scenario}: '
+              f'{primary_cap_by_scenario[scenario] / 1000.0:.3f} kW')
     plot_feasibility_bars(reports_dir, summary_df)
-    plot_3d_projection(reports_dir, all_df, primary_cap)
+    plot_3d_projection(reports_dir, all_df, primary_cap_by_scenario)
     plot_constrained_fronts(reports_dir, feasible_df)
 
     print('  power_ceiling plots complete.')

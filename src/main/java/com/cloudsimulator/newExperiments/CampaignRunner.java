@@ -97,8 +97,8 @@ public final class CampaignRunner {
      * Runs the campaign, writing into {@code results/<experimentId>/} (fixed id).
      *
      * <p>For studies with an auxiliary peak (PowerCeiling) this is a two-phase run:
-     * <b>Phase 1</b> runs the base arms uncapped and derives the cap tiers globally
-     * from the observed coincident-peak distribution; <b>Phase 2</b> re-runs each base
+     * <b>Phase 1</b> runs the base arms uncapped and derives each scenario's cap tiers
+     * from that scenario's own coincident peaks; <b>Phase 2</b> re-runs each base
      * arm as a constrained {@code _PC<tier>} variant under each derived cap. The final
      * report combines the uncapped baselines with all constrained arms. Studies
      * without an aux peak run Phase 1 only.</p>
@@ -107,7 +107,7 @@ public final class CampaignRunner {
         AlgorithmRegistry registry = new AlgorithmRegistry(params, primary);
         boolean twoPhase = spec.hasAuxPeak();
         int scenarioCount = infra.scenarioCount();
-        double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
+        double[] targets = PowerCapCalibrator.DEFAULT_ANCHOR_FRACTIONS;
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
 
@@ -122,9 +122,8 @@ public final class CampaignRunner {
         CampaignProgress progress = new CampaignProgress(
             System.out, experimentId, plannedTotal, !params.verboseLogging);
 
-        // ---- Phase 1: uncapped pass (all scenarios); pool peaks for cap derivation ----
+        // ---- Phase 1: uncapped pass (all scenarios); each scenario's peaks feed its own caps ----
         List<List<AlgorithmRunResult>> perScenarioRuns = new ArrayList<>();
-        List<AlgorithmRunResult> allUncapped = new ArrayList<>();
         for (int s = 0; s < scenarioCount; s++) {
             int scenarioNum = s + 1;
             String scenarioName = infra.scenarioNames[s];
@@ -145,25 +144,37 @@ public final class CampaignRunner {
                 }
             }
             perScenarioRuns.add(scenarioRuns);
-            allUncapped.addAll(scenarioRuns);
         }
 
         // ---- Phase 2 (PowerCeiling): derive caps, re-run constrained under each ----
-        double[] caps = null;
+        // Caps are anchored to P_ref (the peak drawn by the latency-optimal schedule),
+        // which is a per-scenario quantity — so they are derived inside the scenario
+        // loop rather than once from the pooled distribution. A tier then states the
+        // same physical demand ("run at 80% of what the fastest schedule wants") in
+        // every scenario.
+        double[][] capsByScenario = null;
         if (twoPhase) {
-            caps = PowerCapCalibrator.deriveCaps(allUncapped, targets);
+            capsByScenario = new double[scenarioCount][];
             progress.clearLine();
-            logDerivedCaps(caps, targets);
             System.out.printf(java.util.Locale.US,
-                "Phase 2: constrained re-run of %d arms under %d derived caps.%n",
-                labels.size(), caps.length);
-            if (caps.length != targets.length) {
-                progress.setTotal(phase1Runs + phase1Runs * caps.length);
-            }
+                "Phase 2: constrained re-run of %d arms under %d derived caps per scenario.%n",
+                labels.size(), targets.length);
             for (int s = 0; s < scenarioCount; s++) {
                 int scenarioNum = s + 1;
                 String scenarioName = infra.scenarioNames[s];
                 List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
+
+                double referencePeak = PowerCapCalibrator.referencePeakWatts(scenarioRuns);
+                double[] caps = PowerCapCalibrator.capsFromAnchor(referencePeak, targets);
+                capsByScenario[s] = caps;
+                progress.clearLine();
+                logDerivedCaps(scenarioNum, scenarioName, referencePeak, caps, targets);
+                if (caps.length == 0) {
+                    // No peaks captured for this scenario: nothing to constrain against.
+                    plannedTotal -= labels.size() * infra.numRuns * targets.length;
+                    progress.setTotal(plannedTotal);
+                    continue;
+                }
                 for (int c = 0; c < caps.length; c++) {
                     final double capWatts = caps[c];
                     String tier = String.format(java.util.Locale.US, "%.0f", targets[c]);
@@ -206,19 +217,30 @@ public final class CampaignRunner {
                 detailsCollector.writeAll(dir, experimentId);
             }
             if (twoPhase) {
-                // Feasibility of every arm (uncapped + constrained) against the derived caps.
-                PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
-            }
-            if (twoPhase && caps != null && caps.length > 0) {
+                // Feasibility of every arm (uncapped + constrained) against the caps
+                // derived for that arm's own scenario.
+                Map<Integer, double[]> capsByScenarioNumber = new LinkedHashMap<>();
+                for (int s = 0; s < scenarioCount; s++) {
+                    if (capsByScenario[s] != null && capsByScenario[s].length > 0) {
+                        capsByScenarioNumber.put(s + 1, capsByScenario[s]);
+                    }
+                }
+                PowerCeilingFeasibilityReporter.writeReports(
+                    dir.toString(), reports, capsByScenarioNumber);
+
                 // Per-cap-tier analysis (additive *_by_cap.csv files): every indicator,
                 // universal front and collaboration table recomputed strictly within each
                 // tier via analyzed copies — the global CSVs above are untouched.
-                Map<String, Double> capWattsByTier = new LinkedHashMap<>();
-                for (int c = 0; c < caps.length; c++) {
-                    capWattsByTier.put(
-                        "PC" + String.format(java.util.Locale.US, "%.0f", targets[c]), caps[c]);
-                }
                 for (int s = 0; s < scenarioCount; s++) {
+                    double[] caps = capsByScenario[s];
+                    if (caps == null || caps.length == 0) {
+                        continue;
+                    }
+                    Map<String, Double> capWattsByTier = new LinkedHashMap<>();
+                    for (int c = 0; c < caps.length; c++) {
+                        capWattsByTier.put(
+                            "PC" + String.format(java.util.Locale.US, "%.0f", targets[c]), caps[c]);
+                    }
                     List<ParetoAnalyzer.TierAnalysis> tiers =
                         ParetoAnalyzer.analyzeScenarioByTier(perScenarioRuns.get(s));
                     reporter.writeByCapReports(dir, s + 1, spec.getObjectiveNames(), tiers,
@@ -233,13 +255,21 @@ public final class CampaignRunner {
         }
     }
 
-    /** Prints the dynamically derived power-cap tiers (global, pooled across scenarios). */
-    private void logDerivedCaps(double[] caps, double[] targets) {
-        StringBuilder sb = new StringBuilder(
-            "Derived power-cap tiers (global, from uncapped coincident peaks):");
+    /** Prints one scenario's P_ref-anchored power-cap tiers. */
+    private void logDerivedCaps(int scenarioNum, String scenarioName,
+                                double referencePeakWatts, double[] caps, double[] targets) {
+        if (caps.length == 0) {
+            System.out.printf(java.util.Locale.US,
+                "Scenario %d (%s): no coincident peaks captured - skipping constrained arms.%n",
+                scenarioNum, scenarioName);
+            return;
+        }
+        StringBuilder sb = new StringBuilder(String.format(java.util.Locale.US,
+            "Scenario %d (%s): P_ref = %.3f kW (latency-optimal schedule); derived tiers:",
+            scenarioNum, scenarioName, referencePeakWatts / 1000.0));
         for (int i = 0; i < caps.length; i++) {
-            sb.append(String.format(java.util.Locale.US, "%n    ~%.0f%% feasible -> %.3f kW",
-                targets[i], caps[i] / 1000.0));
+            sb.append(String.format(java.util.Locale.US, "%n    PC%.0f = %.0f%% of P_ref -> %.3f kW",
+                targets[i], targets[i], caps[i] / 1000.0));
         }
         System.out.println(sb);
     }
