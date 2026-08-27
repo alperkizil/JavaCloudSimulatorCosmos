@@ -505,8 +505,9 @@ class ExperimentData:
         # PowerCap mode (set by _load_powercap when _PC<N> arms are present):
         self.is_powercap = False
         self.base_algorithms = []  # encounter-ordered base labels (7 arms)
-        self.tier_names = []       # ordered: Uncapped, PC90, PC60, PC30
-        self.cap_watts = {}        # tier -> derived cap (W), when known
+        self.tier_names = []       # ordered: Uncapped, then tightening tiers
+        self.cap_watts = {}                    # tier -> cap (W), only when scenarios agree
+        self.cap_watts_by_scenario = {}        # (scenario, tier) -> derived cap (W)
         self.feasibility = None    # feasibility_summary.csv DataFrame (or None)
         self.by_cap_source = None  # 'native' | 'recomputed' | None
 
@@ -742,22 +743,46 @@ class ExperimentData:
                 self.feasibility = None
 
     def _resolve_cap_watts(self):
-        """Tier -> derived cap Watts: native CapWatts columns first, else the
-        distinct CapWatts of feasibility_summary.csv matched to the PC tiers in
-        descending order (looser target = higher cap by construction)."""
-        watts = {}
-        for scn in self.scenarios.values():
+        """(scenario, tier) -> derived cap Watts.
+
+        Caps are anchored per scenario, so the same tier is a different wattage in
+        each: they must be keyed by (scenario, tier), never by tier alone. Native
+        CapWatts columns win; otherwise the distinct CapWatts of
+        feasibility_summary.csv are matched per scenario to the PC tiers in
+        descending order (looser tier = higher cap by construction).
+
+        self.cap_watts stays keyed by tier for callers that want one representative
+        value, but it is only populated when a tier really has a single wattage
+        across scenarios -- so a per-scenario campaign leaves it empty rather than
+        advertising scenario 1's cap as everyone's."""
+        pc_tiers = [t for t in self.tier_names if t != UNCAPPED_TIER]
+        by_scenario = {}
+        for num, scn in self.scenarios.items():
             for tier, td in scn.tiers.items():
                 if td.cap_watts is not None and np.isfinite(td.cap_watts):
-                    watts.setdefault(tier, float(td.cap_watts))
-        pc_tiers = [t for t in self.tier_names if t != UNCAPPED_TIER]
-        if not watts and self.feasibility is not None and 'CapWatts' in self.feasibility:
-            caps = sorted(pd.unique(self.feasibility['CapWatts'].dropna()), reverse=True)
-            watts = {t: float(w) for t, w in zip(pc_tiers, caps)}
-        self.cap_watts = watts
-        for scn in self.scenarios.values():
+                    by_scenario[(num, tier)] = float(td.cap_watts)
+
+        if not by_scenario and self.feasibility is not None and 'CapWatts' in self.feasibility:
+            feas = self.feasibility
+            scn_col = 'Scenario' if 'Scenario' in feas else None
+            for num in self.scenarios:
+                sub = feas[feas[scn_col] == num] if scn_col else feas
+                caps = sorted(pd.unique(sub['CapWatts'].dropna()), reverse=True)
+                for tier, w in zip(pc_tiers, caps):
+                    by_scenario[(num, tier)] = float(w)
+
+        self.cap_watts_by_scenario = by_scenario
+        # Tier-level view: only meaningful where every scenario agrees.
+        tier_view = {}
+        for tier in pc_tiers:
+            vals = {w for (_, t), w in by_scenario.items() if t == tier}
+            if len(vals) == 1:
+                tier_view[tier] = vals.pop()
+        self.cap_watts = tier_view
+
+        for num, scn in self.scenarios.items():
             for tier, td in scn.tiers.items():
-                td.cap_watts = watts.get(tier)
+                td.cap_watts = by_scenario.get((num, tier), td.cap_watts)
 
     # ---- native *_by_cap.csv loaders --------------------------------------
 

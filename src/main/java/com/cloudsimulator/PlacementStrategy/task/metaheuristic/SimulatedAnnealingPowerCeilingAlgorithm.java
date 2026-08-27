@@ -1,5 +1,6 @@
 package com.cloudsimulator.PlacementStrategy.task.metaheuristic;
 
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.selection.ConstrainedTournamentSelection;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.cooling.CoolingSchedule;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerCeilingEnergyObjective;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
@@ -17,8 +18,9 @@ import java.util.Map;
 
 /**
  * Constraint-aware duplicate of {@link SimulatedAnnealingAlgorithm}. Search
- * dynamics (fitness, neighbour operator, acceptance probability, cooling,
- * reheat) are identical; the archive is replaced with a
+ * dynamics (fitness, neighbour operator, cooling, reheat) are unchanged, but the
+ * <b>acceptance rule</b> now applies Deb's constrained-domination against the
+ * peak-power violation (see {@link #acceptNeighbor}); the archive is likewise a
  * {@link ConstrainedNonDominatedArchive} that applies Deb's constrained-
  * domination against a per-evaluation peak-power violation.
  *
@@ -41,6 +43,9 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
     private SchedulingSolution bestSolution;
     private double currentFitness;
     private double bestFitness;
+    /** Peak-power violation (W above the cap; 0 = feasible) of the current / best solution. */
+    private double currentViolation;
+    private double bestViolation;
     private double temperature;
     private double initialTemperatureActual;
     private int reheatsPerformed;
@@ -108,12 +113,13 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
         currentSolution = generateInitialSolution();
         currentFitness = evaluateFitness(currentSolution);
         statistics.incrementEvaluations();
-        offerToArchive(currentSolution);
+        currentViolation = offerToArchive(currentSolution);
 
         offerExtraSeedsToArchive();
 
         bestSolution = currentSolution.copy();
         bestFitness = currentFitness;
+        bestViolation = currentViolation;
 
         if (config.isAutoInitialTemperature()) {
             temperature = calculateInitialTemperature();
@@ -151,27 +157,29 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
                 SchedulingSolution neighbor = generateNeighbor(currentSolution);
                 double neighborFitness = evaluateFitness(neighbor);
                 statistics.incrementEvaluations();
-                offerToArchive(neighbor);
+                double neighborViolation = offerToArchive(neighbor);
 
-                double deltaE = neighborFitness - currentFitness;
+                // "Improving" now means better under Deb's rules, so the adaptive
+                // iteration/reheat logic reacts to constrained progress.
+                boolean isImproving = ConstrainedTournamentSelection.constrainedCompare(
+                    neighborFitness, neighborViolation,
+                    currentFitness, currentViolation, isMinimization()) <= 0;
+                boolean accept = acceptNeighbor(neighborFitness, neighborViolation, temperature);
 
-                boolean accept = false;
-                if (deltaE <= 0) {
-                    accept = true;
-                    improving++;
-                } else {
-                    double probability = Math.exp(-deltaE / temperature);
-                    if (random.nextDouble() < probability) accept = true;
-                }
+                if (isImproving) improving++;
 
                 if (accept) {
                     currentSolution = neighbor;
                     currentFitness = neighborFitness;
+                    currentViolation = neighborViolation;
                     accepted++;
 
-                    if (isBetter(currentFitness, bestFitness)) {
+                    if (ConstrainedTournamentSelection.constrainedCompare(
+                            currentFitness, currentViolation,
+                            bestFitness, bestViolation, isMinimization()) < 0) {
                         bestSolution = currentSolution.copy();
                         bestFitness = currentFitness;
+                        bestViolation = currentViolation;
                     }
                 } else {
                     rejected++;
@@ -198,6 +206,7 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
                     reheatsPerformed++;
                     currentSolution = bestSolution.copy();
                     currentFitness = bestFitness;
+                    currentViolation = bestViolation;
                 }
             }
 
@@ -226,13 +235,61 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
         return bestSolution;
     }
 
-    private void offerToArchive(SchedulingSolution solution) {
-        if (archive == null) return;
+    /**
+     * Offers a solution to the archive and returns its peak-power violation (W above
+     * the cap; 0 = feasible). The meter pass runs regardless of whether an archive is
+     * attached, because the acceptance rule needs the violation.
+     */
+    private double offerToArchive(SchedulingSolution solution) {
         // evaluateFitness above already ran any EnergyObjective in the
         // objective list; skip the meter's parent energy integral.
         meter.computePowerProfileOnly(solution, tasks, vms);
         double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
-        archive.offer(solution, violation);
+        if (archive != null) {
+            archive.offer(solution, violation);
+        }
+        return violation;
+    }
+
+    /**
+     * Constrained acceptance — the SA counterpart of Deb's rules.
+     *
+     * <pre>
+     *   both feasible            -&gt; Metropolis on the fitness delta (unchanged)
+     *   neighbour feasible only  -&gt; always accept
+     *   current feasible only    -&gt; Metropolis on the neighbour's relative violation
+     *   both infeasible          -&gt; accept if less violating, else Metropolis on the
+     *                               relative violation delta
+     * </pre>
+     *
+     * <p>Violations enter the Metropolis exponent as a <em>fraction of the cap</em>
+     * rather than in Watts. Raw Watts (hundreds to thousands) against a temperature
+     * calibrated from fitness deltas of order 1 would drive every infeasible move's
+     * probability to zero — a hard reject that can strand the search in whatever
+     * region it started in, which under a tight cap is the infeasible one.</p>
+     */
+    private boolean acceptNeighbor(double neighborFitness, double neighborViolation,
+                                   double temperature) {
+        boolean neighborFeasible = neighborViolation <= 0.0;
+        boolean currentFeasible = currentViolation <= 0.0;
+
+        if (neighborFeasible && currentFeasible) {
+            double deltaE = neighborFitness - currentFitness;
+            if (!isMinimization()) deltaE = -deltaE;
+            return deltaE <= 0 || metropolis(deltaE, temperature);
+        }
+        if (neighborFeasible) {
+            return true;                                   // feasible always beats infeasible
+        }
+        double delta = currentFeasible
+            ? neighborViolation / powerCapWatts            // leaving the feasible region
+            : (neighborViolation - currentViolation) / powerCapWatts;
+        return delta <= 0 || metropolis(delta, temperature);
+    }
+
+    /** Metropolis criterion for a positive (worsening) delta. */
+    private boolean metropolis(double delta, double temperature) {
+        return random.nextDouble() < Math.exp(-delta / temperature);
     }
 
     private SchedulingSolution generateInitialSolution() {
@@ -402,11 +459,6 @@ public class SimulatedAnnealingPowerCeilingAlgorithm {
     private boolean isMinimization() {
         if (config.isWeightedSum()) return true;
         return config.getPrimaryObjective().isMinimization();
-    }
-
-    private boolean isBetter(double fitness1, double fitness2) {
-        if (isMinimization()) return fitness1 < fitness2;
-        return fitness1 > fitness2;
     }
 
     private boolean[] buildMinimizationArray() {

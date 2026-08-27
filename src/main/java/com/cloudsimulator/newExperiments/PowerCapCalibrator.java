@@ -4,8 +4,9 @@ import com.cloudsimulator.observer.AlgorithmRunResult;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Derives power-cap thresholds dynamically from an <em>uncapped</em> run's observed
@@ -17,9 +18,8 @@ import java.util.List;
  * of <em>P_ref</em>, the peak drawn by the latency-optimal schedule — see
  * {@link #referencePeakWatts}. A tier then states a physically meaningful demand
  * ("run this workload at 80% of the power the fastest schedule wants") that means the
- * same thing in every scenario, and does not depend on how many points each arm
- * happens to contribute to the pool. Intended to be derived <em>per scenario</em>,
- * since P_ref is a per-scenario quantity.</p>
+ * same thing in every scenario. Intended to be derived <em>per scenario</em>, since
+ * P_ref is a per-scenario quantity.</p>
  *
  * <p><b>Percentile ({@link #deriveCaps}).</b> Each cap sits at the peak percentile
  * matching a target feasibility fraction: a cap at the <em>t</em>-th percentile of the
@@ -39,13 +39,6 @@ public final class PowerCapCalibrator {
     /** Default anchor fractions (% of P_ref) for the cap tiers, loose→tight. */
     public static final double[] DEFAULT_ANCHOR_FRACTIONS = {90.0, 85.0, 80.0, 75.0};
 
-    /**
-     * Fraction of the fastest solutions whose median peak defines P_ref. Anchoring on
-     * the head of the distribution rather than on the single fastest point keeps the
-     * tiers from riding on one lucky seed — the per-seed spread of the single
-     * fastest solution's peak is a few percent — while landing within ~2.5% of it.
-     */
-    private static final double ANCHOR_HEAD_FRACTION = 0.01;
 
     /**
      * Pools every non-null coincident peak across the given runs and returns the cap
@@ -77,24 +70,42 @@ public final class PowerCapCalibrator {
      * P_ref for the given runs: the coincident peak drawn by the latency-optimal
      * schedule, in Watts.
      *
-     * <p>Taken as the median peak over the fastest {@link #ANCHOR_HEAD_FRACTION} of
-     * solutions (ranked by the primary objective, index 0 of each front vector —
-     * average waiting time for the PowerCeiling study), so a single outlying seed
-     * cannot move every tier. Returns {@code NaN} when no run carries peaks.</p>
+     * <p>Computed with <em>one anchor per seed</em>: within each seed, the solution
+     * with the lowest primary objective (index 0 of each front vector — average
+     * waiting time for the PowerCeiling study) across all arms, taking its peak; P_ref
+     * is the median of those per-seed peaks. Returns {@code NaN} when no run carries
+     * peaks.</p>
+     *
+     * <p>Equal weight per seed is what makes the tiers independent of archive size.
+     * Pooling every published solution and taking the fastest slice does not: the fast
+     * end of a pooled distribution is populated by whichever arm published the most
+     * near-fast points, so that one arm sets P_ref for everyone. Aggregating per
+     * <em>run</em> (arm × seed) instead would over-correct in the other direction — it
+     * would average in the fastest solution of arms that never run fast at all, pulling
+     * the anchor off the latency-optimal schedule it is meant to describe.</p>
      */
     public static double referencePeakWatts(List<AlgorithmRunResult> runs) {
-        List<double[]> byPrimary = poolPrimaryAndPeak(runs);
-        if (byPrimary.isEmpty()) {
+        // seed -> peak of that seed's lowest-primary-objective solution, across arms
+        Map<Long, double[]> bestPerSeed = new LinkedHashMap<>();
+        if (runs != null) {
+            for (AlgorithmRunResult run : runs) {
+                for (double[] pair : primaryAndPeak(run)) {
+                    double[] incumbent = bestPerSeed.get(run.getSeed());
+                    if (incumbent == null || pair[0] < incumbent[0]) {
+                        bestPerSeed.put(run.getSeed(), pair);
+                    }
+                }
+            }
+        }
+        if (bestPerSeed.isEmpty()) {
             return Double.NaN;
         }
-        byPrimary.sort(Comparator.comparingDouble(pair -> pair[0]));
-        int head = Math.max(1, (int) Math.round(ANCHOR_HEAD_FRACTION * byPrimary.size()));
-        List<Double> headPeaks = new ArrayList<>(head);
-        for (int i = 0; i < head; i++) {
-            headPeaks.add(byPrimary.get(i)[1]);
+        List<Double> anchors = new ArrayList<>(bestPerSeed.size());
+        for (double[] pair : bestPerSeed.values()) {
+            anchors.add(pair[1]);
         }
-        Collections.sort(headPeaks);
-        return percentile(headPeaks, 50.0);
+        Collections.sort(anchors);
+        return percentile(anchors, 50.0);
     }
 
     /**
@@ -123,33 +134,28 @@ public final class PowerCapCalibrator {
     }
 
     /**
-     * Flattens every run into {@code [primaryObjective, peakWatts]} pairs. The front
-     * and the aux-peak list are built in lockstep by the runner, so index {@code i} of
-     * one matches index {@code i} of the other; runs without peaks are skipped, and a
-     * length mismatch is truncated to the shorter of the two rather than trusted.
+     * One run's {@code [primaryObjective, peakWatts]} pairs. The front and the aux-peak
+     * list are built in lockstep by the runner, so index {@code i} of one matches index
+     * {@code i} of the other; a run without peaks yields nothing, and a length mismatch
+     * is truncated to the shorter of the two rather than trusted.
      */
-    private static List<double[]> poolPrimaryAndPeak(List<AlgorithmRunResult> runs) {
+    private static List<double[]> primaryAndPeak(AlgorithmRunResult run) {
         List<double[]> pairs = new ArrayList<>();
-        if (runs == null) {
+        List<Double> peaks = run.getAuxPeakPowerWatts();
+        List<double[]> front = run.getFront();
+        if (peaks == null || front == null) {
             return pairs;
         }
-        for (AlgorithmRunResult run : runs) {
-            List<Double> peaks = run.getAuxPeakPowerWatts();
-            List<double[]> front = run.getFront();
-            if (peaks == null || front == null) {
+        int n = Math.min(peaks.size(), front.size());
+        for (int i = 0; i < n; i++) {
+            Double peak = peaks.get(i);
+            double[] objectives = front.get(i);
+            if (peak == null || !Double.isFinite(peak)
+                    || objectives == null || objectives.length == 0
+                    || !Double.isFinite(objectives[0])) {
                 continue;
             }
-            int n = Math.min(peaks.size(), front.size());
-            for (int i = 0; i < n; i++) {
-                Double peak = peaks.get(i);
-                double[] objectives = front.get(i);
-                if (peak == null || !Double.isFinite(peak)
-                        || objectives == null || objectives.length == 0
-                        || !Double.isFinite(objectives[0])) {
-                    continue;
-                }
-                pairs.add(new double[] {objectives[0], peak});
-            }
+            pairs.add(new double[] {objectives[0], peak});
         }
         return pairs;
     }
