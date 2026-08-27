@@ -360,8 +360,22 @@ public final class CampaignRunner {
         for (AlgorithmRunResult run : runs) {
             Double cap = capByLabel.get(run.getLabel());
             List<Double> peaks = run.getAuxPeakPowerWatts();
-            if (cap == null || peaks == null) {
-                out.add(run);
+            if (cap == null) {
+                out.add(run);            // uncapped arm: nothing to restrict
+                continue;
+            }
+            if (peaks == null) {
+                // A constrained run whose peaks were not captured cannot be shown to
+                // satisfy its cap. Failing open here would score it as though every
+                // solution were feasible, so it is emptied instead and surfaces as a
+                // run with no feasible solution rather than as a silently good one.
+                System.err.printf(java.util.Locale.US,
+                    "  WARNING: %s (scenario %d, seed %d) has no peak measurements; "
+                    + "excluded from quality indicators.%n",
+                    run.getLabel(), run.getScenarioNumber(), run.getSeed());
+                out.add(new AlgorithmRunResult(run.getLabel(), run.getScenarioNumber(),
+                    run.getScenarioName(), run.getSeed(), run.getObjectiveNames(),
+                    new ArrayList<>(), new ArrayList<>(), run.getRuntimeMs()));
                 continue;
             }
             List<double[]> front = run.getFront();

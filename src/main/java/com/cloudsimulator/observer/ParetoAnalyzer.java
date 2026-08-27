@@ -761,6 +761,24 @@ public final class ParetoAnalyzer {
 
         for (AlgorithmRunResult run : scenarioRuns) {
             List<double[]> front = run.getFront();
+            if (front.isEmpty()) {
+                // Nothing to score. Without this, computeLegacyIndicators substitutes a
+                // Double.MAX_VALUE dummy point and reports HV 0 with worst-case GD/IGD,
+                // which reads as "found a bad front" rather than "found nothing". For a
+                // constrained arm those are different outcomes: whether a feasible
+                // schedule exists at all is a separate question from how good one is,
+                // and it is answered by the feasibility CSVs, not by these indicators.
+                run.setNonDominatedFront(new ArrayList<>());
+                run.setHv(Double.NaN);
+                run.setGd(Double.NaN);
+                run.setIgd(Double.NaN);
+                run.setSpacing(Double.NaN);
+                run.setHvFixed(Double.NaN);
+                run.setEpsilonPlus(Double.NaN);
+                run.setParetoContributionPct(Double.NaN);
+                run.setParetoContributionCount(0);
+                continue;
+            }
             List<double[]> nonDom = filterToNonDominated(front);
             run.setNonDominatedFront(nonDom);
 

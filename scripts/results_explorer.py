@@ -234,14 +234,34 @@ def tier_sort_key(tier):
     return (0, 0) if tier == UNCAPPED_TIER else (1, -int(tier[2:]))
 
 
-def tier_display(tier, cap_watts=None):
-    """Tier label. The percent is the cap's share of P_ref (the peak drawn by the
-    latency-optimal schedule), not a target feasibility fraction."""
+# Calibration scheme of the loaded campaign, set by ExperimentData._load_powercap
+# from power_cap_calibration.csv. A tier name alone does not say what its number
+# means: under 'anchored-pref-v1' PC90 is a cap at 90% of P_ref, while in the older
+# percentile campaigns PC90 was calibrated to admit ~90% of observed peaks. Only one
+# campaign is open at a time (ExplorerApp.exp), so this is load-scoped state.
+_TIER_LABEL_SCHEME = None
+
+ANCHORED_SCHEME = 'anchored-pref-v1'
+
+
+def set_tier_label_scheme(scheme):
+    global _TIER_LABEL_SCHEME
+    _TIER_LABEL_SCHEME = scheme
+
+
+def tier_display(tier, cap_watts=None, scheme=None):
+    """Tier label for the loaded campaign's calibration scheme.
+
+    Under the anchored scheme the number is the cap's share of P_ref, and the label
+    says so. For any other scheme — including a legacy percentile campaign, which has
+    no manifest — the tier name is shown as-is rather than asserting a meaning it does
+    not have; the wattage carries the concrete information in that case."""
     if tier == UNCAPPED_TIER:
         return 'Uncapped'
-    label = f'Cap {tier[2:]}% of P_ref'
+    active = scheme if scheme is not None else _TIER_LABEL_SCHEME
+    label = f'Cap {tier[2:]}% of P_ref' if active == ANCHORED_SCHEME else tier
     if cap_watts is not None and np.isfinite(cap_watts):
-        label += f' (≈{cap_watts / 1000.0:.1f} kW)'
+        label += f' ({cap_watts / 1000.0:.1f} kW)'
     return label
 
 
@@ -510,6 +530,7 @@ class ExperimentData:
         self.cap_watts_by_scenario = {}        # (scenario, tier) -> derived cap (W)
         self.feasibility = None    # feasibility_summary.csv DataFrame (or None)
         self.by_cap_source = None  # 'native' | 'recomputed' | None
+        self.cap_scheme = None     # from power_cap_calibration.csv; None if absent
 
     # ---- loading --------------------------------------------------------
 
@@ -686,6 +707,23 @@ class ExperimentData:
 
     # ---- powercap (cap-tier) loading -------------------------------------
 
+    def _load_calibration_scheme(self):
+        """Reads the Scheme column of power_cap_calibration.csv, which records how the
+        cap tiers were derived. Absent for campaigns predating the manifest — those are
+        left unset so tier labels stay neutral instead of claiming a scheme."""
+        self.cap_scheme = None
+        path = self._path('power_cap_calibration.csv')
+        if os.path.isfile(path):
+            try:
+                cal = pd.read_csv(path)
+                if 'Scheme' in cal and len(cal):
+                    schemes = pd.unique(cal['Scheme'].dropna())
+                    if len(schemes) == 1:
+                        self.cap_scheme = str(schemes[0])
+            except (OSError, ValueError):
+                self.cap_scheme = None
+        set_tier_label_scheme(self.cap_scheme)
+
     def _load_powercap(self):
         """Detects a PowerCeiling folder (arm labels with _PC<N> suffixes) and
         builds per-tier data for every scenario: native *_by_cap.csv files when
@@ -701,6 +739,7 @@ class ExperimentData:
             return
         self.base_algorithms = list(bases)
         self.tier_names = sorted(tiers, key=tier_sort_key)
+        self._load_calibration_scheme()
         self._load_feasibility()
 
         native = all(
@@ -1383,8 +1422,8 @@ def build_feasibility_figure(exp, styles, opts):
     if opts.get('show_legend', True):
         axes[-1].legend(fontsize=8, framealpha=0.85, loc='upper right')
     fig.suptitle(opts.get('title') or
-                 'Uncapped arms — share of solutions feasible under each derived cap '
-                 '(dashed: calibration targets)', fontsize=12)
+                 'Uncapped arms — share of solutions feasible under each derived cap',
+                 fontsize=12)
     fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28, wspace=0.24)
     return fig
 
