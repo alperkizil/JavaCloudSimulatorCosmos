@@ -348,6 +348,31 @@ public final class ParetoAnalyzer {
         }
     }
 
+
+    /**
+     * Marks a run as having nothing to score: every quality indicator NaN, contribution
+     * count 0.
+     *
+     * <p>NaN rather than a numeric worst case, because "no solution was found" and "a
+     * poor solution was found" are different outcomes that a single quality column
+     * cannot express. Feeding an empty front to {@link #computeLegacyIndicators} would
+     * report the second (its dummy-point fallback yields HV 0 with worst-case GD/IGD),
+     * and leaving the primitive defaults reports something worse still — GD/IGD of 0,
+     * which reads as perfect. Whether a run found anything feasible is answered by the
+     * feasibility CSVs, which keep the unfiltered solutions.</p>
+     */
+    private static void markUnscored(AlgorithmRunResult run) {
+        run.setNonDominatedFront(new ArrayList<>());
+        run.setHv(Double.NaN);
+        run.setGd(Double.NaN);
+        run.setIgd(Double.NaN);
+        run.setSpacing(Double.NaN);
+        run.setHvFixed(Double.NaN);
+        run.setEpsilonPlus(Double.NaN);
+        run.setParetoContributionPct(Double.NaN);
+        run.setParetoContributionCount(0);
+    }
+
     /**
      * Computes the universal-front hypervolume the way the runners do
      * ({@code PerformanceMetrics(universalOnly, 0).HV(0)}). Returns 0 for an
@@ -748,9 +773,18 @@ public final class ParetoAnalyzer {
         }
         allPoints.addAll(universal);
 
+        // Mark every run unscored first; the loop below overwrites those that have a
+        // front. This has to precede the early return: hv/gd/igd/spacing are primitive
+        // fields with no initializer, so leaving the defaults in place reports 0 for
+        // all four — and a GD/IGD of 0 reads as a perfect match to the reference front,
+        // which is the exact opposite of what an all-infeasible scenario or cap tier
+        // means.
+        for (AlgorithmRunResult run : scenarioRuns) {
+            markUnscored(run);
+        }
+
         double universalHV = universalHV(universal);
         if (allPoints.isEmpty()) {
-            // Nothing to analyse; leave indicator defaults in place.
             return new ScenarioAnalysis(universal, universalHV, algorithmFronts,
                 analyzeSeedCollaboration(scenarioRuns, null), Double.NaN);
         }
@@ -762,22 +796,7 @@ public final class ParetoAnalyzer {
         for (AlgorithmRunResult run : scenarioRuns) {
             List<double[]> front = run.getFront();
             if (front.isEmpty()) {
-                // Nothing to score. Without this, computeLegacyIndicators substitutes a
-                // Double.MAX_VALUE dummy point and reports HV 0 with worst-case GD/IGD,
-                // which reads as "found a bad front" rather than "found nothing". For a
-                // constrained arm those are different outcomes: whether a feasible
-                // schedule exists at all is a separate question from how good one is,
-                // and it is answered by the feasibility CSVs, not by these indicators.
-                run.setNonDominatedFront(new ArrayList<>());
-                run.setHv(Double.NaN);
-                run.setGd(Double.NaN);
-                run.setIgd(Double.NaN);
-                run.setSpacing(Double.NaN);
-                run.setHvFixed(Double.NaN);
-                run.setEpsilonPlus(Double.NaN);
-                run.setParetoContributionPct(Double.NaN);
-                run.setParetoContributionCount(0);
-                continue;
+                continue;   // already marked unscored above
             }
             List<double[]> nonDom = filterToNonDominated(front);
             run.setNonDominatedFront(nonDom);
