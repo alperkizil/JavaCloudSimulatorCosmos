@@ -1320,8 +1320,14 @@ def build_compare_figure(exp, scn, base, styles, opts):
 
 def build_feasibility_figure(exp, styles, opts):
     """PowerCap only: per scenario, each UNCAPPED arm's mean feasibility rate
-    under every derived cap (mean ± std over seeds, from
-    feasibility_summary.csv), with the calibration targets as dashed lines."""
+    under that scenario's derived caps (mean ± std over seeds, from
+    feasibility_summary.csv).
+
+    Caps are selected per scenario: they are anchored to each scenario's own P_ref,
+    so pooling CapWatts across scenarios would plot every other scenario's caps as
+    empty bars. No target-rate guides are drawn either — under the anchored scheme
+    a tier is a percentage of P_ref, which implies nothing about what share of an
+    arm's solutions land under it."""
     fe = exp.feasibility
     fig = Figure(figsize=(9.2, 6.0), dpi=100)
     if fe is None or not len(fe):
@@ -1335,18 +1341,19 @@ def build_feasibility_figure(exp, styles, opts):
     hidden = opts.get('hidden', set())
     uncapped_arms = [a for a in uncapped_arms if a not in hidden]
     fe = fe[fe['Algorithm'].map(lambda a: split_tier(a)[1] == UNCAPPED_TIER)]
-    caps = sorted(pd.unique(fe['CapWatts'].dropna()), reverse=True)
     pc_tiers = [t for t in exp.tier_names if t != UNCAPPED_TIER]
     scen_nums = sorted(pd.unique(fe['Scenario']))
 
     fig = Figure(figsize=(4.6 * max(len(scen_nums), 1) + 1.4, 5.6), dpi=100)
     axes = (list(np.atleast_1d(fig.subplots(1, len(scen_nums))))
             if len(scen_nums) > 1 else [fig.add_subplot(111)])
-    width = 0.8 / max(len(caps), 1)
+    width = 0.8 / max(len(pc_tiers), 1)
     for ax, s in zip(axes, scen_nums):
         sub = fe[fe['Scenario'] == s]
+        # This scenario's own ladder, loosest first; tiers descend with the caps.
+        scen_caps = sorted(pd.unique(sub['CapWatts'].dropna()), reverse=True)
         x = np.arange(len(uncapped_arms))
-        for ci, cap in enumerate(caps):
+        for ci, cap in enumerate(scen_caps):
             tier = pc_tiers[ci] if ci < len(pc_tiers) else None
             color = tier_color(exp, tier) if tier else FALLBACK_COLORS[ci]
             means, stds = [], []
@@ -1354,16 +1361,12 @@ def build_feasibility_figure(exp, styles, opts):
                 row = sub[(sub['Algorithm'] == algo) & (sub['CapWatts'] == cap)]
                 means.append(float(row['MeanFeasibilityRate'].iloc[0]) if len(row) else np.nan)
                 stds.append(float(row['StdFeasibilityRate'].iloc[0]) if len(row) else np.nan)
-            label = (tier_display(tier, cap) if tier
-                     else f'{cap / 1000.0:.1f} kW')
+            label = tier_display(tier) if tier else f'{cap / 1000.0:.1f} kW'
             ax.bar(x + ci * width - 0.4 + width / 2,
                    [0 if np.isnan(m) else m for m in means], width * 0.92,
                    yerr=[0 if np.isnan(sd) else sd for sd in stds],
                    capsize=2, error_kw={'linewidth': 0.8},
                    color=color, label=label)
-        for tier in pc_tiers:
-            ax.axhline(int(tier[2:]) / 100.0, color='#888888',
-                       linestyle='--', linewidth=0.9, zorder=1)
         ax.set_xticks(x)
         ax.set_xticklabels([styles.get(a, {'display': a})['display']
                             for a in uncapped_arms],
@@ -1372,7 +1375,9 @@ def build_feasibility_figure(exp, styles, opts):
         named = sub.drop_duplicates('Scenario')
         if len(named) and 'ScenarioName' in named:
             name = str(named['ScenarioName'].iloc[0]).replace('_', ' ')
-        ax.set_title(name or f'Scenario {s}', fontsize=11)
+        cap_note = ' / '.join(f'{c / 1000.0:.1f}' for c in scen_caps)
+        ax.set_title((name or f'Scenario {s}')
+                     + (f'\ncaps {cap_note} kW' if cap_note else ''), fontsize=10)
         ax.set_ylim(0, 1.05)
     axes[0].set_ylabel('Mean feasibility rate')
     if opts.get('show_legend', True):
