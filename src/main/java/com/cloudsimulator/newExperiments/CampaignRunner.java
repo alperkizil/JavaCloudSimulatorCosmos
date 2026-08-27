@@ -33,7 +33,9 @@ import com.cloudsimulator.observer.SolutionDetailsCollector;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -77,6 +79,16 @@ public final class CampaignRunner {
      */
     private static final String CAP_SCHEME_ID = "anchored-pref-v1";
 
+    /**
+     * Sink for each run's verbose algorithm output when
+     * {@link ExperimentConfig#captureAlgorithmLog} is on; null when disabled, in which
+     * case the output is discarded as before. See {@link #runOne}.
+     */
+    private PrintStream algorithmLog;
+
+    /** The caller's verbose setting, i.e. whether run output should also reach the console. */
+    private boolean consoleVerbose;
+
     public CampaignRunner(ExperimentSpec spec, PrimaryObjective primary, ExperimentConfig infra,
                           AlgorithmParameters params, String[] labels) {
         this.spec = spec;
@@ -116,6 +128,27 @@ public final class CampaignRunner {
         double[] targets = PowerCapCalibrator.DEFAULT_ANCHOR_FRACTIONS;
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
+
+        // Verbose algorithm output is otherwise thrown away to keep the progress bar
+        // readable. Open the experiment folder now (writeExperiment creates it too, and
+        // createDirectories is idempotent) so per-run diagnostics can be streamed into
+        // it as the campaign proceeds rather than lost with the console scrollback.
+        Path resultsDir = Paths.get(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId);
+        consoleVerbose = params.verboseLogging;
+        if (infra.captureAlgorithmLog) {
+            try {
+                Files.createDirectories(resultsDir);
+                algorithmLog = new PrintStream(
+                    Files.newOutputStream(resultsDir.resolve("algorithm_log.txt")), true);
+                // The algorithms only emit detail when their config says verbose, so
+                // turn it on for them; consoleVerbose still governs the console.
+                params.verboseLogging = true;
+            } catch (IOException e) {
+                System.err.println("  WARNING: cannot write algorithm_log.txt: " + e.getMessage());
+                algorithmLog = null;
+            }
+        }
+        try {
 
         detailsCollector = infra.exportSolutionDetails
             ? new SolutionDetailsCollector(spec.getObjectiveNames()) : null;
@@ -275,10 +308,20 @@ public final class CampaignRunner {
                 }
             }
             ConsoleReporter.printDone(dir);
+            if (algorithmLog != null) {
+                System.out.println("  Wrote: algorithm_log.txt");
+            }
             PostRunScripts.runAll(dir);
             return dir;
         } catch (IOException e) {
             throw new RuntimeException("Failed to write experiment output: " + e.getMessage(), e);
+        }
+        } finally {
+            params.verboseLogging = consoleVerbose;
+            if (algorithmLog != null) {
+                algorithmLog.close();
+                algorithmLog = null;
+            }
         }
     }
 
@@ -379,6 +422,36 @@ public final class CampaignRunner {
         }
     }
 
+
+    /** Writes every byte to two streams, so verbose output can reach console and file. */
+    private static final class TeeOutputStream extends OutputStream {
+        private final OutputStream a;
+        private final OutputStream b;
+
+        TeeOutputStream(OutputStream a, OutputStream b) {
+            this.a = a;
+            this.b = b;
+        }
+
+        @Override
+        public void write(int byteValue) throws IOException {
+            a.write(byteValue);
+            b.write(byteValue);
+        }
+
+        @Override
+        public void write(byte[] buf, int off, int len) throws IOException {
+            a.write(buf, off, len);
+            b.write(buf, off, len);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            a.flush();
+            b.flush();
+        }
+    }
+
     /** Prints one scenario's P_ref-anchored power-cap tiers. */
     private void logDerivedCaps(int scenarioNum, String scenarioName,
                                 double referencePeakWatts, double[] caps, double[] targets) {
@@ -414,15 +487,25 @@ public final class CampaignRunner {
     AlgorithmRunResult runOne(String label, StrategyFactory factory,
                               ExperimentConfiguration baseConfig,
                               int scenarioNum, String scenarioName, long seed) {
-        boolean quiet = !params.verboseLogging;
         PrintStream saved = System.out;
-        if (quiet) {
-            System.setOut(SINK);
+        PrintStream target = null;
+        if (algorithmLog != null) {
+            algorithmLog.printf(java.util.Locale.US,
+                "%n===== scenario=%d (%s) algorithm=%s seed=%d =====%n",
+                scenarioNum, scenarioName, label, seed);
+            // Also echo to the console when the caller asked for verbose output.
+            target = consoleVerbose ? new PrintStream(new TeeOutputStream(saved, algorithmLog), true)
+                                    : algorithmLog;
+        } else if (!consoleVerbose) {
+            target = SINK;
+        }
+        if (target != null) {
+            System.setOut(target);
         }
         try {
             return doRunOne(label, factory, baseConfig, scenarioNum, scenarioName, seed);
         } finally {
-            if (quiet) {
+            if (target != null) {
                 System.setOut(saved);
             }
         }
