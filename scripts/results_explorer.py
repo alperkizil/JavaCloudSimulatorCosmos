@@ -230,16 +230,38 @@ def split_tier(label):
 
 
 def tier_sort_key(tier):
-    """Uncapped first, then descending target percent (PC90, PC60, PC30)."""
+    """Uncapped first, then descending percent of P_ref (PC90, PC85, PC80, PC75)."""
     return (0, 0) if tier == UNCAPPED_TIER else (1, -int(tier[2:]))
 
 
-def tier_display(tier, cap_watts=None):
+# Calibration scheme of the loaded campaign, set by ExperimentData._load_powercap
+# from power_cap_calibration.csv. A tier name alone does not say what its number
+# means: under 'anchored-pref-v1' PC90 is a cap at 90% of P_ref, while in the older
+# percentile campaigns PC90 was calibrated to admit ~90% of observed peaks. Only one
+# campaign is open at a time (ExplorerApp.exp), so this is load-scoped state.
+_TIER_LABEL_SCHEME = None
+
+ANCHORED_SCHEME = 'anchored-pref-v1'
+
+
+def set_tier_label_scheme(scheme):
+    global _TIER_LABEL_SCHEME
+    _TIER_LABEL_SCHEME = scheme
+
+
+def tier_display(tier, cap_watts=None, scheme=None):
+    """Tier label for the loaded campaign's calibration scheme.
+
+    Under the anchored scheme the number is the cap's share of P_ref, and the label
+    says so. For any other scheme — including a legacy percentile campaign, which has
+    no manifest — the tier name is shown as-is rather than asserting a meaning it does
+    not have; the wattage carries the concrete information in that case."""
     if tier == UNCAPPED_TIER:
         return 'Uncapped'
-    label = f'Cap {tier[2:]}%'
+    active = scheme if scheme is not None else _TIER_LABEL_SCHEME
+    label = f'Cap {tier[2:]}% of P_ref' if active == ANCHORED_SCHEME else tier
     if cap_watts is not None and np.isfinite(cap_watts):
-        label += f' (≈{cap_watts / 1000.0:.1f} kW)'
+        label += f' ({cap_watts / 1000.0:.1f} kW)'
     return label
 
 
@@ -503,10 +525,12 @@ class ExperimentData:
         # PowerCap mode (set by _load_powercap when _PC<N> arms are present):
         self.is_powercap = False
         self.base_algorithms = []  # encounter-ordered base labels (7 arms)
-        self.tier_names = []       # ordered: Uncapped, PC90, PC60, PC30
-        self.cap_watts = {}        # tier -> derived cap (W), when known
+        self.tier_names = []       # ordered: Uncapped, then tightening tiers
+        self.cap_watts = {}                    # tier -> cap (W), only when scenarios agree
+        self.cap_watts_by_scenario = {}        # (scenario, tier) -> derived cap (W)
         self.feasibility = None    # feasibility_summary.csv DataFrame (or None)
         self.by_cap_source = None  # 'native' | 'recomputed' | None
+        self.cap_scheme = None     # from power_cap_calibration.csv; None if absent
 
     # ---- loading --------------------------------------------------------
 
@@ -683,6 +707,23 @@ class ExperimentData:
 
     # ---- powercap (cap-tier) loading -------------------------------------
 
+    def _load_calibration_scheme(self):
+        """Reads the Scheme column of power_cap_calibration.csv, which records how the
+        cap tiers were derived. Absent for campaigns predating the manifest — those are
+        left unset so tier labels stay neutral instead of claiming a scheme."""
+        self.cap_scheme = None
+        path = self._path('power_cap_calibration.csv')
+        if os.path.isfile(path):
+            try:
+                cal = pd.read_csv(path)
+                if 'Scheme' in cal and len(cal):
+                    schemes = pd.unique(cal['Scheme'].dropna())
+                    if len(schemes) == 1:
+                        self.cap_scheme = str(schemes[0])
+            except (OSError, ValueError):
+                self.cap_scheme = None
+        set_tier_label_scheme(self.cap_scheme)
+
     def _load_powercap(self):
         """Detects a PowerCeiling folder (arm labels with _PC<N> suffixes) and
         builds per-tier data for every scenario: native *_by_cap.csv files when
@@ -698,6 +739,7 @@ class ExperimentData:
             return
         self.base_algorithms = list(bases)
         self.tier_names = sorted(tiers, key=tier_sort_key)
+        self._load_calibration_scheme()
         self._load_feasibility()
 
         native = all(
@@ -740,22 +782,46 @@ class ExperimentData:
                 self.feasibility = None
 
     def _resolve_cap_watts(self):
-        """Tier -> derived cap Watts: native CapWatts columns first, else the
-        distinct CapWatts of feasibility_summary.csv matched to the PC tiers in
-        descending order (looser target = higher cap by construction)."""
-        watts = {}
-        for scn in self.scenarios.values():
+        """(scenario, tier) -> derived cap Watts.
+
+        Caps are anchored per scenario, so the same tier is a different wattage in
+        each: they must be keyed by (scenario, tier), never by tier alone. Native
+        CapWatts columns win; otherwise the distinct CapWatts of
+        feasibility_summary.csv are matched per scenario to the PC tiers in
+        descending order (looser tier = higher cap by construction).
+
+        self.cap_watts stays keyed by tier for callers that want one representative
+        value, but it is only populated when a tier really has a single wattage
+        across scenarios -- so a per-scenario campaign leaves it empty rather than
+        advertising scenario 1's cap as everyone's."""
+        pc_tiers = [t for t in self.tier_names if t != UNCAPPED_TIER]
+        by_scenario = {}
+        for num, scn in self.scenarios.items():
             for tier, td in scn.tiers.items():
                 if td.cap_watts is not None and np.isfinite(td.cap_watts):
-                    watts.setdefault(tier, float(td.cap_watts))
-        pc_tiers = [t for t in self.tier_names if t != UNCAPPED_TIER]
-        if not watts and self.feasibility is not None and 'CapWatts' in self.feasibility:
-            caps = sorted(pd.unique(self.feasibility['CapWatts'].dropna()), reverse=True)
-            watts = {t: float(w) for t, w in zip(pc_tiers, caps)}
-        self.cap_watts = watts
-        for scn in self.scenarios.values():
+                    by_scenario[(num, tier)] = float(td.cap_watts)
+
+        if not by_scenario and self.feasibility is not None and 'CapWatts' in self.feasibility:
+            feas = self.feasibility
+            scn_col = 'Scenario' if 'Scenario' in feas else None
+            for num in self.scenarios:
+                sub = feas[feas[scn_col] == num] if scn_col else feas
+                caps = sorted(pd.unique(sub['CapWatts'].dropna()), reverse=True)
+                for tier, w in zip(pc_tiers, caps):
+                    by_scenario[(num, tier)] = float(w)
+
+        self.cap_watts_by_scenario = by_scenario
+        # Tier-level view: only meaningful where every scenario agrees.
+        tier_view = {}
+        for tier in pc_tiers:
+            vals = {w for (_, t), w in by_scenario.items() if t == tier}
+            if len(vals) == 1:
+                tier_view[tier] = vals.pop()
+        self.cap_watts = tier_view
+
+        for num, scn in self.scenarios.items():
             for tier, td in scn.tiers.items():
-                td.cap_watts = watts.get(tier)
+                td.cap_watts = by_scenario.get((num, tier), td.cap_watts)
 
     # ---- native *_by_cap.csv loaders --------------------------------------
 
@@ -1293,8 +1359,14 @@ def build_compare_figure(exp, scn, base, styles, opts):
 
 def build_feasibility_figure(exp, styles, opts):
     """PowerCap only: per scenario, each UNCAPPED arm's mean feasibility rate
-    under every derived cap (mean ± std over seeds, from
-    feasibility_summary.csv), with the calibration targets as dashed lines."""
+    under that scenario's derived caps (mean ± std over seeds, from
+    feasibility_summary.csv).
+
+    Caps are selected per scenario: they are anchored to each scenario's own P_ref,
+    so pooling CapWatts across scenarios would plot every other scenario's caps as
+    empty bars. No target-rate guides are drawn either — under the anchored scheme
+    a tier is a percentage of P_ref, which implies nothing about what share of an
+    arm's solutions land under it."""
     fe = exp.feasibility
     fig = Figure(figsize=(9.2, 6.0), dpi=100)
     if fe is None or not len(fe):
@@ -1308,18 +1380,19 @@ def build_feasibility_figure(exp, styles, opts):
     hidden = opts.get('hidden', set())
     uncapped_arms = [a for a in uncapped_arms if a not in hidden]
     fe = fe[fe['Algorithm'].map(lambda a: split_tier(a)[1] == UNCAPPED_TIER)]
-    caps = sorted(pd.unique(fe['CapWatts'].dropna()), reverse=True)
     pc_tiers = [t for t in exp.tier_names if t != UNCAPPED_TIER]
     scen_nums = sorted(pd.unique(fe['Scenario']))
 
     fig = Figure(figsize=(4.6 * max(len(scen_nums), 1) + 1.4, 5.6), dpi=100)
     axes = (list(np.atleast_1d(fig.subplots(1, len(scen_nums))))
             if len(scen_nums) > 1 else [fig.add_subplot(111)])
-    width = 0.8 / max(len(caps), 1)
+    width = 0.8 / max(len(pc_tiers), 1)
     for ax, s in zip(axes, scen_nums):
         sub = fe[fe['Scenario'] == s]
+        # This scenario's own ladder, loosest first; tiers descend with the caps.
+        scen_caps = sorted(pd.unique(sub['CapWatts'].dropna()), reverse=True)
         x = np.arange(len(uncapped_arms))
-        for ci, cap in enumerate(caps):
+        for ci, cap in enumerate(scen_caps):
             tier = pc_tiers[ci] if ci < len(pc_tiers) else None
             color = tier_color(exp, tier) if tier else FALLBACK_COLORS[ci]
             means, stds = [], []
@@ -1327,16 +1400,12 @@ def build_feasibility_figure(exp, styles, opts):
                 row = sub[(sub['Algorithm'] == algo) & (sub['CapWatts'] == cap)]
                 means.append(float(row['MeanFeasibilityRate'].iloc[0]) if len(row) else np.nan)
                 stds.append(float(row['StdFeasibilityRate'].iloc[0]) if len(row) else np.nan)
-            label = (tier_display(tier, cap) if tier
-                     else f'{cap / 1000.0:.1f} kW')
+            label = tier_display(tier) if tier else f'{cap / 1000.0:.1f} kW'
             ax.bar(x + ci * width - 0.4 + width / 2,
                    [0 if np.isnan(m) else m for m in means], width * 0.92,
                    yerr=[0 if np.isnan(sd) else sd for sd in stds],
                    capsize=2, error_kw={'linewidth': 0.8},
                    color=color, label=label)
-        for tier in pc_tiers:
-            ax.axhline(int(tier[2:]) / 100.0, color='#888888',
-                       linestyle='--', linewidth=0.9, zorder=1)
         ax.set_xticks(x)
         ax.set_xticklabels([styles.get(a, {'display': a})['display']
                             for a in uncapped_arms],
@@ -1345,14 +1414,16 @@ def build_feasibility_figure(exp, styles, opts):
         named = sub.drop_duplicates('Scenario')
         if len(named) and 'ScenarioName' in named:
             name = str(named['ScenarioName'].iloc[0]).replace('_', ' ')
-        ax.set_title(name or f'Scenario {s}', fontsize=11)
+        cap_note = ' / '.join(f'{c / 1000.0:.1f}' for c in scen_caps)
+        ax.set_title((name or f'Scenario {s}')
+                     + (f'\ncaps {cap_note} kW' if cap_note else ''), fontsize=10)
         ax.set_ylim(0, 1.05)
     axes[0].set_ylabel('Mean feasibility rate')
     if opts.get('show_legend', True):
         axes[-1].legend(fontsize=8, framealpha=0.85, loc='upper right')
     fig.suptitle(opts.get('title') or
-                 'Uncapped arms — share of solutions feasible under each derived cap '
-                 '(dashed: calibration targets)', fontsize=12)
+                 'Uncapped arms — share of solutions feasible under each derived cap',
+                 fontsize=12)
     fig.subplots_adjust(left=0.07, right=0.985, top=0.86, bottom=0.28, wspace=0.24)
     return fig
 

@@ -43,6 +43,11 @@ public final class PowerCeilingExperiment {
 
         // 3. Infrastructure — datacenter, hosts, VMs, user, workloads, scenarios, seeds.
         ExperimentConfig infra = ExperimentConfig.defaults();
+        // Keep each run's verbose output (algorithm_log.txt) rather than discarding it:
+        // how the constrained arms accept moves and reach feasibility cannot be
+        // reconstructed from the CSVs afterwards. Opt-in here rather than on by default,
+        // so the other studies' artifacts are unaffected.
+        infra.captureAlgorithmLog = true;
 
         // 4. The study (objective pair + aux coincident peak + cap feasibility) + run.
         ExperimentSpec spec = ExperimentSpec.powerCeiling("PowerCeilingWaitingTimeVsEnergy");

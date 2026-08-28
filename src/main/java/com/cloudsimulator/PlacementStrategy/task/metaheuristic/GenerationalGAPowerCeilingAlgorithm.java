@@ -4,8 +4,7 @@ import com.cloudsimulator.PlacementStrategy.task.metaheuristic.objectives.PowerC
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.CrossoverOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.MutationOperator;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.operators.RepairOperator;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.selection.SelectionOperator;
-import com.cloudsimulator.PlacementStrategy.task.metaheuristic.selection.TournamentSelection;
+import com.cloudsimulator.PlacementStrategy.task.metaheuristic.selection.ConstrainedTournamentSelection;
 import com.cloudsimulator.PlacementStrategy.task.metaheuristic.termination.AlgorithmStatistics;
 import com.cloudsimulator.model.Host;
 import com.cloudsimulator.model.Task;
@@ -18,11 +17,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Constraint-aware duplicate of {@link GenerationalGAAlgorithm}. The search
- * dynamics (fitness, selection, crossover, mutation, elitism) are identical;
- * the only difference is the archive — a {@link ConstrainedNonDominatedArchive}
- * that applies Deb's constrained-domination against a per-solution peak-power
- * violation computed via {@link PowerCeilingEnergyObjective}.
+ * Constraint-aware duplicate of {@link GenerationalGAAlgorithm}. The peak-power
+ * violation (computed per evaluation via {@link PowerCeilingEnergyObjective}) drives
+ * the search itself: <b>selection</b> uses
+ * {@link ConstrainedTournamentSelection} and <b>elitism</b> ranks by the same
+ * rule, both applying Deb's constrained-domination (feasible beats infeasible;
+ * among infeasibles the smaller violation wins; among feasibles fitness decides).
+ * The published archive remains a {@link ConstrainedNonDominatedArchive} under the
+ * same ordering.
+ *
+ * <p>Fitness, crossover and mutation are unchanged from the base algorithm, and the
+ * violation is read from the meter pass that already ran for the archive, so the
+ * constraint costs no extra objective evaluations.</p>
  *
  * Additive: the base GenerationalGAAlgorithm is untouched.
  */
@@ -34,7 +40,7 @@ public class GenerationalGAPowerCeilingAlgorithm {
     private final double powerCapWatts;
     private final List<Host> hosts;
 
-    private final SelectionOperator selectionOperator;
+    private final ConstrainedTournamentSelection selectionOperator;
     private final CrossoverOperator crossoverOperator;
     private final MutationOperator mutationOperator;
     private final RepairOperator repairOperator;
@@ -44,6 +50,8 @@ public class GenerationalGAPowerCeilingAlgorithm {
 
     private List<SchedulingSolution> population;
     private double[] fitnessValues;
+    /** Peak-power violation (W above the cap; 0 = feasible), parallel to {@link #population}. */
+    private double[] violationValues;
 
     private ConstrainedNonDominatedArchive archive;
 
@@ -54,6 +62,8 @@ public class GenerationalGAPowerCeilingAlgorithm {
     // (population slots [0, length)). Objectives are deterministic, so
     // re-evaluating unchanged elite copies would only burn evaluation budget.
     private double[] carriedEliteFitness;
+    /** Violations of the carried elites, parallel to {@link #carriedEliteFitness}. */
+    private double[] carriedEliteViolation;
     private final PowerCeilingEnergyObjective meter;
 
     public GenerationalGAPowerCeilingAlgorithm(GAConfiguration config, List<Task> tasks, List<VM> vms,
@@ -71,7 +81,7 @@ public class GenerationalGAPowerCeilingAlgorithm {
         long baseSeed = random.getSeed();
         this.repairOperator = new RepairOperator(tasks, vms,
             new java.util.Random(RandomGenerator.deriveStreamSeed(baseSeed, 0)));
-        this.selectionOperator = new TournamentSelection(config.getTournamentSize());
+        this.selectionOperator = new ConstrainedTournamentSelection(config.getTournamentSize());
         this.crossoverOperator = new CrossoverOperator(
             config.getCrossoverType(),
             config.getNumObjectives(),
@@ -90,6 +100,7 @@ public class GenerationalGAPowerCeilingAlgorithm {
 
         this.population = new ArrayList<>();
         this.fitnessValues = new double[config.getPopulationSize()];
+        this.violationValues = new double[config.getPopulationSize()];
 
         this.meter = new PowerCeilingEnergyObjective(powerCapWatts);
         if (hosts != null) this.meter.setHosts(hosts);
@@ -198,6 +209,7 @@ public class GenerationalGAPowerCeilingAlgorithm {
         }
 
         fitnessValues = new double[popSize];
+        violationValues = new double[popSize];
     }
 
     private void evolveGeneration() {
@@ -211,9 +223,9 @@ public class GenerationalGAPowerCeilingAlgorithm {
 
         while (offspring.size() < offspringNeeded) {
             SchedulingSolution parent1 = selectionOperator.select(
-                population, fitnessValues, isMinimization());
+                population, fitnessValues, violationValues, isMinimization());
             SchedulingSolution parent2 = selectionOperator.select(
-                population, fitnessValues, isMinimization());
+                population, fitnessValues, violationValues, isMinimization());
 
             SchedulingSolution[] children;
             if (random.nextDouble() < config.getCrossoverRate()) {
@@ -249,17 +261,21 @@ public class GenerationalGAPowerCeilingAlgorithm {
         for (int i = 0; i < indices.length; i++) indices[i] = i;
 
         final boolean minimize = isMinimization();
-        Arrays.sort(indices, (a, b) -> minimize
-            ? Double.compare(fitnessValues[a], fitnessValues[b])
-            : Double.compare(fitnessValues[b], fitnessValues[a]));
+        // Deb's rules, so elitism cannot preserve an infeasible individual over a
+        // feasible one (which would undo the pressure applied during selection).
+        Arrays.sort(indices, (a, b) -> ConstrainedTournamentSelection.constrainedCompare(
+            fitnessValues[a], violationValues[a],
+            fitnessValues[b], violationValues[b], minimize));
 
-        // Select top individuals, carrying their known fitness so
+        // Select top individuals, carrying their known fitness and violation so
         // evaluatePopulation can skip re-evaluating the unchanged copies.
         int selected = Math.min(count, indices.length);
         List<SchedulingSolution> elite = new ArrayList<>(selected);
         carriedEliteFitness = new double[selected];
+        carriedEliteViolation = new double[selected];
         for (int i = 0; i < selected; i++) {
             carriedEliteFitness[i] = fitnessValues[indices[i]];
+            carriedEliteViolation[i] = violationValues[indices[i]];
             elite.add(population.get(indices[i]).copy());
         }
         return elite;
@@ -278,17 +294,20 @@ public class GenerationalGAPowerCeilingAlgorithm {
         for (int i = 0; i < population.size(); i++) {
             if (i < carried) {
                 fitnessValues[i] = carriedEliteFitness[i];
+                violationValues[i] = carriedEliteViolation[i];
                 continue;
             }
             SchedulingSolution solution = population.get(i);
             fitnessValues[i] = evaluateFitness(solution);
             statistics.incrementEvaluations();
+            // evaluateFitness above already ran any EnergyObjective in the objective
+            // list; skip the meter's parent energy integral. The violation drives
+            // selection and elitism, so it is computed for every individual, not only
+            // when an archive is attached.
+            meter.computePowerProfileOnly(solution, tasks, vms);
+            violationValues[i] = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
             if (archive != null) {
-                // evaluateFitness above already ran any EnergyObjective in the
-                // objective list; skip the meter's parent energy integral.
-                meter.computePowerProfileOnly(solution, tasks, vms);
-                double violation = Math.max(0.0, meter.getLastPeakPower() - powerCapWatts);
-                archive.offer(solution, violation);
+                archive.offer(solution, violationValues[i]);
             }
         }
     }

@@ -210,7 +210,7 @@ public final class ExperimentReporter {
             // appended as a trailing column so the legacy schema prefix stays
             // byte-identical. It is the only HV formula comparable across
             // arms/seeds — the legacy HV column's per-pair normalization is not.
-            w.println("Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,TimeMs,HV_fixed");
+            w.println("Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,TotalSolutions,ParetoContribution,TimeMs,HV_fixed,ScoredSeeds");
             writeMetricsBody(w, "", s.runsByLabel, s.universalFront, s.universalHV, s.universalHvFixed);
         }
     }
@@ -230,7 +230,7 @@ public final class ExperimentReporter {
             List<AlgorithmRunResult> seeds = entry.getValue();
 
             for (AlgorithmRunResult ar : seeds) {
-                w.printf("%s%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f%n",
+                w.printf("%s%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f,%n",
                     rowPrefix, ar.getLabel(), ar.getSeed(), ar.getHv(), ar.getGd(), ar.getIgd(), ar.getSpacing(),
                     nonDomCount(ar), ar.getTotalCount(), ar.getParetoContributionCount(), ar.getRuntimeMs(),
                     ar.getHvFixed());
@@ -246,16 +246,16 @@ public final class ExperimentReporter {
             int unionPCont = ParetoAnalyzer.unionContributionCount(seeds, universalFront);
             long avgTime = avgSuccessfulTime(seeds);
 
-            w.printf("%s%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d,%.6f%n",
+            w.printf("%s%s,MEAN,%.6f,%.6f,%.6f,%.6f,%.0f,%.0f,%d,%d,%.6f,%d%n",
                 rowPrefix, label, mean(hvs), mean(gds), mean(igds), mean(spacings),
-                avgND, avgTotal, unionPCont, avgTime, mean(hvFixeds));
+                avgND, avgTotal, unionPCont, avgTime, mean(hvFixeds), scoredCount(hvs));
 
-            w.printf("%s%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,,%.6f%n",
+            w.printf("%s%s,STDDEV,%.6f,%.6f,%.6f,%.6f,,,,,%.6f,%n",
                 rowPrefix, label, stddev(hvs), stddev(gds), stddev(igds), stddev(spacings), stddev(hvFixeds));
         }
 
         int univSize = universalFront.size();
-        w.printf("%sUniversal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0,%.6f%n",
+        w.printf("%sUniversal_Pareto,ALL,%.6f,0.000000,0.000000,0.000000,%d,%d,%d,0,%.6f,%n",
             rowPrefix, universalHV, univSize, univSize, univSize, universalHvFixed);
     }
 
@@ -407,7 +407,7 @@ public final class ExperimentReporter {
         String file = "scenario_" + scenarioNumber + "_performance_metrics_by_cap.csv";
         try (PrintWriter w = new PrintWriter(new FileWriter(dir.resolve(file).toFile()))) {
             w.println("CapTier,CapWatts,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,"
-                + "TotalSolutions,ParetoContribution,TimeMs,HV_fixed");
+                + "TotalSolutions,ParetoContribution,TimeMs,HV_fixed,ScoredSeeds");
             for (ParetoAnalyzer.TierAnalysis t : tiers) {
                 String prefix = t.tier + "," + capWattsField(capWattsByTier, t.tier) + ",";
                 writeMetricsBody(w, prefix, groupByLabel(t.runs), t.analysis.universalFront,
@@ -450,7 +450,8 @@ public final class ExperimentReporter {
             List<String> objNames = scenarios.isEmpty()
                 ? List.of("Objective1", "Objective2") : scenarios.get(0).objectiveNames;
             w.println("Scenario,ScenarioName,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,"
-                + "ParetoContribution,TimeMs," + objNames.get(0) + "_Best," + objNames.get(1) + "_Best");
+                + "ParetoContribution,TimeMs," + objNames.get(0) + "_Best," + objNames.get(1)
+                + "_Best,ScoredSeeds");
 
             for (ScenarioReport s : scenarios) {
                 for (Map.Entry<String, List<AlgorithmRunResult>> entry : s.runsByLabel.entrySet()) {
@@ -460,7 +461,7 @@ public final class ExperimentReporter {
                     for (AlgorithmRunResult ar : seeds) {
                         double bestObj1 = bestObjective(ar.getFront(), 0);
                         double bestObj2 = bestObjective(ar.getFront(), 1);
-                        w.printf("%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f%n",
+                        w.printf("%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f,%n",
                             s.scenarioNumber, s.scenarioName, ar.getLabel(), ar.getSeed(),
                             ar.getHv(), ar.getGd(), ar.getIgd(), ar.getSpacing(),
                             nonDomCount(ar), ar.getParetoContributionCount(), ar.getRuntimeMs(),
@@ -476,10 +477,10 @@ public final class ExperimentReporter {
                     double bestObj1All = bestObjectiveAcross(seeds, 0);
                     double bestObj2All = bestObjectiveAcross(seeds, 1);
 
-                    w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f%n",
+                    w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f,%d%n",
                         s.scenarioNumber, s.scenarioName, label,
                         mean(hvs), mean(gds), mean(igds), mean(spacings),
-                        unionPCont, avgTime, bestObj1All, bestObj2All);
+                        unionPCont, avgTime, bestObj1All, bestObj2All, scoredCount(hvs));
                 }
             }
         }
@@ -526,47 +527,89 @@ public final class ExperimentReporter {
         return sum / successfulRuns;
     }
 
+    /**
+     * Best (minimum) value of one objective over a front, or NaN when the front holds
+     * no valid solution.
+     *
+     * <p>NaN rather than the {@code Double.MAX_VALUE} sentinel this used to return.
+     * That sentinel is a <em>finite</em> double, so it survives every "is this a real
+     * number" guard — including {@link #mean}'s — and would be averaged in as 1.8e308,
+     * or exported to {@code experiment_summary.csv} as a best objective that reads as a
+     * catastrophically bad but genuine measurement rather than a missing one.</p>
+     */
     private static double bestObjective(List<double[]> front, int index) {
-        double best = Double.MAX_VALUE;
+        double best = Double.NaN;
         for (double[] sol : front) {
-            if (!ParetoAnalyzer.isFailureSentinel(sol) && sol[index] < best) {
+            if (ParetoAnalyzer.isFailureSentinel(sol)) {
+                continue;
+            }
+            if (Double.isNaN(best) || sol[index] < best) {
                 best = sol[index];
             }
         }
         return best;
     }
 
+    /** As {@link #bestObjective} but over every seed; NaN when no seed has a valid one. */
     private static double bestObjectiveAcross(List<AlgorithmRunResult> seeds, int index) {
-        double best = Double.MAX_VALUE;
+        double best = Double.NaN;
         for (AlgorithmRunResult ar : seeds) {
             double b = bestObjective(ar.getFront(), index);
-            if (b < best) {
+            if (!Double.isNaN(b) && (Double.isNaN(best) || b < best)) {
                 best = b;
             }
         }
         return best;
     }
 
+    /**
+     * Mean over the finite values only, or NaN when none are finite.
+     *
+     * <p>A run that found no feasible solution carries NaN indicators (see
+     * {@code ParetoAnalyzer.markUnscored}). Summing those directly would turn one such
+     * seed into a NaN mean for the whole algorithm, discarding the seeds that did find
+     * something. Quality here is therefore <em>conditional on having found a feasible
+     * solution</em>, and how many seeds that was is reported alongside as
+     * {@code ScoredSeeds}; whether a solution was found at all is a separate question,
+     * answered by the feasibility CSVs.</p>
+     */
     private static double mean(double[] values) {
-        if (values.length == 0) {
-            return 0;
-        }
         double sum = 0;
+        int n = 0;
         for (double v : values) {
-            sum += v;
+            if (Double.isFinite(v)) {
+                sum += v;
+                n++;
+            }
         }
-        return sum / values.length;
+        return n == 0 ? Double.NaN : sum / n;
     }
 
+    /** Population standard deviation over the finite values only; NaN when none are. */
     private static double stddev(double[] values) {
-        if (values.length == 0) {
-            return 0;
-        }
         double m = mean(values);
-        double sumSq = 0;
-        for (double v : values) {
-            sumSq += (v - m) * (v - m);
+        if (Double.isNaN(m)) {
+            return Double.NaN;
         }
-        return Math.sqrt(sumSq / values.length);
+        double sumSq = 0;
+        int n = 0;
+        for (double v : values) {
+            if (Double.isFinite(v)) {
+                sumSq += (v - m) * (v - m);
+                n++;
+            }
+        }
+        return Math.sqrt(sumSq / n);
+    }
+
+    /** Number of seeds carrying a finite value, i.e. those the mean is conditioned on. */
+    private static int scoredCount(double[] values) {
+        int n = 0;
+        for (double v : values) {
+            if (Double.isFinite(v)) {
+                n++;
+            }
+        }
+        return n;
     }
 }

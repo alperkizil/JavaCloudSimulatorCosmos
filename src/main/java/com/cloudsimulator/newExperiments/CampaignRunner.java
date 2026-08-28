@@ -33,7 +33,9 @@ import com.cloudsimulator.observer.SolutionDetailsCollector;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,6 +73,22 @@ public final class CampaignRunner {
      */
     private SolutionDetailsCollector detailsCollector;
 
+    /**
+     * Identifies how cap tiers are derived, persisted in the calibration manifest so a
+     * tier name cannot be read as the same treatment across schemes.
+     */
+    private static final String CAP_SCHEME_ID = "anchored-pref-v1";
+
+    /**
+     * Sink for each run's verbose algorithm output when
+     * {@link ExperimentConfig#captureAlgorithmLog} is on; null when disabled, in which
+     * case the output is discarded as before. See {@link #runOne}.
+     */
+    private PrintStream algorithmLog;
+
+    /** The caller's verbose setting, i.e. whether run output should also reach the console. */
+    private boolean consoleVerbose;
+
     public CampaignRunner(ExperimentSpec spec, PrimaryObjective primary, ExperimentConfig infra,
                           AlgorithmParameters params, String[] labels) {
         this.spec = spec;
@@ -97,8 +115,8 @@ public final class CampaignRunner {
      * Runs the campaign, writing into {@code results/<experimentId>/} (fixed id).
      *
      * <p>For studies with an auxiliary peak (PowerCeiling) this is a two-phase run:
-     * <b>Phase 1</b> runs the base arms uncapped and derives the cap tiers globally
-     * from the observed coincident-peak distribution; <b>Phase 2</b> re-runs each base
+     * <b>Phase 1</b> runs the base arms uncapped and derives each scenario's cap tiers
+     * from that scenario's own coincident peaks; <b>Phase 2</b> re-runs each base
      * arm as a constrained {@code _PC<tier>} variant under each derived cap. The final
      * report combines the uncapped baselines with all constrained arms. Studies
      * without an aux peak run Phase 1 only.</p>
@@ -107,9 +125,30 @@ public final class CampaignRunner {
         AlgorithmRegistry registry = new AlgorithmRegistry(params, primary);
         boolean twoPhase = spec.hasAuxPeak();
         int scenarioCount = infra.scenarioCount();
-        double[] targets = PowerCapCalibrator.DEFAULT_FEASIBILITY_TARGETS;
+        double[] targets = PowerCapCalibrator.DEFAULT_ANCHOR_FRACTIONS;
 
         ConsoleReporter.printBanner(spec, primary, infra, labels, experimentId);
+
+        // Verbose algorithm output is otherwise thrown away to keep the progress bar
+        // readable. Open the experiment folder now (writeExperiment creates it too, and
+        // createDirectories is idempotent) so per-run diagnostics can be streamed into
+        // it as the campaign proceeds rather than lost with the console scrollback.
+        Path resultsDir = Paths.get(ExperimentReporter.DEFAULT_RESULTS_ROOT, experimentId);
+        consoleVerbose = params.verboseLogging;
+        if (infra.captureAlgorithmLog) {
+            try {
+                Files.createDirectories(resultsDir);
+                algorithmLog = new PrintStream(
+                    Files.newOutputStream(resultsDir.resolve("algorithm_log.txt")), true);
+                // The algorithms only emit detail when their config says verbose, so
+                // turn it on for them; consoleVerbose still governs the console.
+                params.verboseLogging = true;
+            } catch (IOException e) {
+                System.err.println("  WARNING: cannot write algorithm_log.txt: " + e.getMessage());
+                algorithmLog = null;
+            }
+        }
+        try {
 
         detailsCollector = infra.exportSolutionDetails
             ? new SolutionDetailsCollector(spec.getObjectiveNames()) : null;
@@ -122,9 +161,8 @@ public final class CampaignRunner {
         CampaignProgress progress = new CampaignProgress(
             System.out, experimentId, plannedTotal, !params.verboseLogging);
 
-        // ---- Phase 1: uncapped pass (all scenarios); pool peaks for cap derivation ----
+        // ---- Phase 1: uncapped pass (all scenarios); each scenario's peaks feed its own caps ----
         List<List<AlgorithmRunResult>> perScenarioRuns = new ArrayList<>();
-        List<AlgorithmRunResult> allUncapped = new ArrayList<>();
         for (int s = 0; s < scenarioCount; s++) {
             int scenarioNum = s + 1;
             String scenarioName = infra.scenarioNames[s];
@@ -145,25 +183,40 @@ public final class CampaignRunner {
                 }
             }
             perScenarioRuns.add(scenarioRuns);
-            allUncapped.addAll(scenarioRuns);
         }
 
         // ---- Phase 2 (PowerCeiling): derive caps, re-run constrained under each ----
-        double[] caps = null;
+        // Caps are anchored to P_ref (the peak drawn by the latency-optimal schedule),
+        // which is a per-scenario quantity — so they are derived inside the scenario
+        // loop rather than once from the pooled distribution. A tier then states the
+        // same physical demand ("run at 80% of what the fastest schedule wants") in
+        // every scenario.
+        double[][] capsByScenario = null;
+        double[] referencePeaks = new double[scenarioCount];
         if (twoPhase) {
-            caps = PowerCapCalibrator.deriveCaps(allUncapped, targets);
+            capsByScenario = new double[scenarioCount][];
+            java.util.Arrays.fill(referencePeaks, Double.NaN);
             progress.clearLine();
-            logDerivedCaps(caps, targets);
             System.out.printf(java.util.Locale.US,
-                "Phase 2: constrained re-run of %d arms under %d derived caps.%n",
-                labels.size(), caps.length);
-            if (caps.length != targets.length) {
-                progress.setTotal(phase1Runs + phase1Runs * caps.length);
-            }
+                "Phase 2: constrained re-run of %d arms under %d derived caps per scenario.%n",
+                labels.size(), targets.length);
             for (int s = 0; s < scenarioCount; s++) {
                 int scenarioNum = s + 1;
                 String scenarioName = infra.scenarioNames[s];
                 List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
+
+                double referencePeak = PowerCapCalibrator.referencePeakWatts(scenarioRuns);
+                double[] caps = PowerCapCalibrator.capsFromAnchor(referencePeak, targets);
+                capsByScenario[s] = caps;
+                referencePeaks[s] = referencePeak;
+                progress.clearLine();
+                logDerivedCaps(scenarioNum, scenarioName, referencePeak, caps, targets);
+                if (caps.length == 0) {
+                    // No peaks captured for this scenario: nothing to constrain against.
+                    plannedTotal -= labels.size() * infra.numRuns * targets.length;
+                    progress.setTotal(plannedTotal);
+                    continue;
+                }
                 for (int c = 0; c < caps.length; c++) {
                     final double capWatts = caps[c];
                     String tier = String.format(java.util.Locale.US, "%.0f", targets[c]);
@@ -186,10 +239,27 @@ public final class CampaignRunner {
         }
 
         // ---- Analyze + report (per scenario: uncapped baselines + constrained arms) ----
+        // Quality indicators are computed on FEASIBLE solutions only. The constrained
+        // archive deliberately publishes least-violating solutions when a run found
+        // nothing feasible, so scoring the raw front would award hypervolume to a run
+        // that produced no admissible schedule at all. Such a run becomes an empty
+        // front here, which the analyzer reports as NaN rather than as a good score.
+        // The feasibility CSVs below keep the UNFILTERED runs, since feasibility rates
+        // are only meaningful against everything an arm actually published.
         progress.clearLine();
+        List<ExperimentReporter.ScenarioReport> feasibilityReports = new ArrayList<>();
+        for (int s = 0; s < scenarioCount; s++) {
+            feasibilityReports.add(new ExperimentReporter.ScenarioReport(
+                s + 1, infra.scenarioNames[s], spec.getObjectiveNames(),
+                groupByLabel(perScenarioRuns.get(s)),
+                new ArrayList<>(), Double.NaN, new LinkedHashMap<>()));
+        }
+
         List<ExperimentReporter.ScenarioReport> reports = new ArrayList<>();
         for (int s = 0; s < scenarioCount; s++) {
-            List<AlgorithmRunResult> scenarioRuns = perScenarioRuns.get(s);
+            List<AlgorithmRunResult> scenarioRuns = restrictToFeasible(
+                perScenarioRuns.get(s), capByLabel(capsByScenario, s, targets));
+            perScenarioRuns.set(s, scenarioRuns);
             ParetoAnalyzer.ScenarioAnalysis analysis = ParetoAnalyzer.analyzeScenario(scenarioRuns);
             ExperimentReporter.ScenarioReport report = new ExperimentReporter.ScenarioReport(
                 s + 1, infra.scenarioNames[s], spec.getObjectiveNames(), groupByLabel(scenarioRuns),
@@ -206,19 +276,31 @@ public final class CampaignRunner {
                 detailsCollector.writeAll(dir, experimentId);
             }
             if (twoPhase) {
-                // Feasibility of every arm (uncapped + constrained) against the derived caps.
-                PowerCeilingFeasibilityReporter.writeReports(dir.toString(), reports, caps);
-            }
-            if (twoPhase && caps != null && caps.length > 0) {
+                // Feasibility of every arm (uncapped + constrained) against the caps
+                // derived for that arm's own scenario.
+                Map<Integer, double[]> capsByScenarioNumber = new LinkedHashMap<>();
+                for (int s = 0; s < scenarioCount; s++) {
+                    if (capsByScenario[s] != null && capsByScenario[s].length > 0) {
+                        capsByScenarioNumber.put(s + 1, capsByScenario[s]);
+                    }
+                }
+                PowerCeilingFeasibilityReporter.writeReports(
+                    dir.toString(), feasibilityReports, capsByScenarioNumber);
+                writeCalibrationManifest(dir, capsByScenario, referencePeaks, targets);
+
                 // Per-cap-tier analysis (additive *_by_cap.csv files): every indicator,
                 // universal front and collaboration table recomputed strictly within each
                 // tier via analyzed copies — the global CSVs above are untouched.
-                Map<String, Double> capWattsByTier = new LinkedHashMap<>();
-                for (int c = 0; c < caps.length; c++) {
-                    capWattsByTier.put(
-                        "PC" + String.format(java.util.Locale.US, "%.0f", targets[c]), caps[c]);
-                }
                 for (int s = 0; s < scenarioCount; s++) {
+                    double[] caps = capsByScenario[s];
+                    if (caps == null || caps.length == 0) {
+                        continue;
+                    }
+                    Map<String, Double> capWattsByTier = new LinkedHashMap<>();
+                    for (int c = 0; c < caps.length; c++) {
+                        capWattsByTier.put(
+                            "PC" + String.format(java.util.Locale.US, "%.0f", targets[c]), caps[c]);
+                    }
                     List<ParetoAnalyzer.TierAnalysis> tiers =
                         ParetoAnalyzer.analyzeScenarioByTier(perScenarioRuns.get(s));
                     reporter.writeByCapReports(dir, s + 1, spec.getObjectiveNames(), tiers,
@@ -226,20 +308,179 @@ public final class CampaignRunner {
                 }
             }
             ConsoleReporter.printDone(dir);
+            if (algorithmLog != null) {
+                System.out.println("  Wrote: algorithm_log.txt");
+            }
             PostRunScripts.runAll(dir);
             return dir;
         } catch (IOException e) {
             throw new RuntimeException("Failed to write experiment output: " + e.getMessage(), e);
         }
+        } finally {
+            params.verboseLogging = consoleVerbose;
+            if (algorithmLog != null) {
+                algorithmLog.close();
+                algorithmLog = null;
+            }
+        }
     }
 
-    /** Prints the dynamically derived power-cap tiers (global, pooled across scenarios). */
-    private void logDerivedCaps(double[] caps, double[] targets) {
-        StringBuilder sb = new StringBuilder(
-            "Derived power-cap tiers (global, from uncapped coincident peaks):");
+
+    /**
+     * Label &rarr; cap (Watts) for one scenario's constrained arms. Uncapped arms are
+     * absent, so {@link #restrictToFeasible} leaves them untouched.
+     */
+    private Map<String, Double> capByLabel(double[][] capsByScenario, int scenarioIndex, double[] targets) {
+        Map<String, Double> byLabel = new LinkedHashMap<>();
+        if (capsByScenario == null || capsByScenario[scenarioIndex] == null) {
+            return byLabel;
+        }
+        double[] caps = capsByScenario[scenarioIndex];
+        for (int c = 0; c < caps.length && c < targets.length; c++) {
+            String tier = "_PC" + String.format(java.util.Locale.US, "%.0f", targets[c]);
+            for (String label : labels) {
+                byLabel.put(label + tier, caps[c]);
+            }
+        }
+        return byLabel;
+    }
+
+    /**
+     * Copies of the given runs keeping only cap-feasible solutions. A run whose label
+     * carries no cap is returned unchanged; a constrained run that found nothing
+     * feasible becomes an empty front, which is how a zero-feasible run is recorded
+     * (the analyzer yields NaN indicators for it rather than scoring infeasible points).
+     */
+    private List<AlgorithmRunResult> restrictToFeasible(List<AlgorithmRunResult> runs,
+                                                        Map<String, Double> capByLabel) {
+        if (capByLabel.isEmpty()) {
+            return runs;
+        }
+        List<AlgorithmRunResult> out = new ArrayList<>(runs.size());
+        for (AlgorithmRunResult run : runs) {
+            Double cap = capByLabel.get(run.getLabel());
+            List<Double> peaks = run.getAuxPeakPowerWatts();
+            if (cap == null) {
+                out.add(run);            // uncapped arm: nothing to restrict
+                continue;
+            }
+            if (peaks == null) {
+                // A constrained run whose peaks were not captured cannot be shown to
+                // satisfy its cap. Failing open here would score it as though every
+                // solution were feasible, so it is emptied instead and surfaces as a
+                // run with no feasible solution rather than as a silently good one.
+                System.err.printf(java.util.Locale.US,
+                    "  WARNING: %s (scenario %d, seed %d) has no peak measurements; "
+                    + "excluded from quality indicators.%n",
+                    run.getLabel(), run.getScenarioNumber(), run.getSeed());
+                out.add(new AlgorithmRunResult(run.getLabel(), run.getScenarioNumber(),
+                    run.getScenarioName(), run.getSeed(), run.getObjectiveNames(),
+                    new ArrayList<>(), new ArrayList<>(), run.getRuntimeMs()));
+                continue;
+            }
+            List<double[]> front = run.getFront();
+            List<double[]> keptFront = new ArrayList<>();
+            List<Double> keptPeaks = new ArrayList<>();
+            int n = Math.min(front.size(), peaks.size());
+            for (int i = 0; i < n; i++) {
+                Double peak = peaks.get(i);
+                if (peak != null && peak <= cap) {
+                    keptFront.add(front.get(i));
+                    keptPeaks.add(peak);
+                }
+            }
+            if (keptFront.size() == front.size()) {
+                out.add(run);
+                continue;
+            }
+            out.add(new AlgorithmRunResult(run.getLabel(), run.getScenarioNumber(),
+                run.getScenarioName(), run.getSeed(), run.getObjectiveNames(),
+                keptFront, keptPeaks, run.getRuntimeMs()));
+        }
+        return out;
+    }
+
+
+    /**
+     * Records how this campaign's cap tiers were derived, as
+     * {@code power_cap_calibration.csv}.
+     *
+     * <p>A tier name alone is ambiguous across campaigns: {@code PC90} meant "a cap
+     * admitting ~90% of observed peaks" under the percentile scheme and means "90% of
+     * P_ref" under the anchored one. Without this file two result folders can be
+     * compared under identical tier names that denote different treatments, so the
+     * scheme, the reference peak and the resulting Watts are persisted next to the
+     * results rather than left to the console log.</p>
+     */
+    private void writeCalibrationManifest(Path dir, double[][] capsByScenario,
+                                          double[] referencePeaks, double[] targets) {
+        Path file = dir.resolve("power_cap_calibration.csv");
+        try (java.io.PrintWriter w = new java.io.PrintWriter(
+                java.nio.file.Files.newBufferedWriter(file))) {
+            w.println("Scheme,Scenario,ScenarioName,Tier,AnchorPercentOfPref,"
+                + "ReferencePeakWatts,CapWatts");
+            for (int s = 0; s < capsByScenario.length; s++) {
+                double[] caps = capsByScenario[s];
+                if (caps == null || caps.length == 0) {
+                    continue;
+                }
+                for (int c = 0; c < caps.length && c < targets.length; c++) {
+                    w.printf(java.util.Locale.US, "%s,%d,%s,PC%.0f,%.1f,%.3f,%.3f%n",
+                        CAP_SCHEME_ID, s + 1, infra.scenarioNames[s], targets[c],
+                        targets[c], referencePeaks[s], caps[c]);
+                }
+            }
+            System.out.println("  Wrote: power_cap_calibration.csv");
+        } catch (IOException e) {
+            System.err.println("  ERROR writing power_cap_calibration.csv: " + e.getMessage());
+        }
+    }
+
+
+    /** Writes every byte to two streams, so verbose output can reach console and file. */
+    private static final class TeeOutputStream extends OutputStream {
+        private final OutputStream a;
+        private final OutputStream b;
+
+        TeeOutputStream(OutputStream a, OutputStream b) {
+            this.a = a;
+            this.b = b;
+        }
+
+        @Override
+        public void write(int byteValue) throws IOException {
+            a.write(byteValue);
+            b.write(byteValue);
+        }
+
+        @Override
+        public void write(byte[] buf, int off, int len) throws IOException {
+            a.write(buf, off, len);
+            b.write(buf, off, len);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            a.flush();
+            b.flush();
+        }
+    }
+
+    /** Prints one scenario's P_ref-anchored power-cap tiers. */
+    private void logDerivedCaps(int scenarioNum, String scenarioName,
+                                double referencePeakWatts, double[] caps, double[] targets) {
+        if (caps.length == 0) {
+            System.out.printf(java.util.Locale.US,
+                "Scenario %d (%s): no coincident peaks captured - skipping constrained arms.%n",
+                scenarioNum, scenarioName);
+            return;
+        }
+        StringBuilder sb = new StringBuilder(String.format(java.util.Locale.US,
+            "Scenario %d (%s): P_ref = %.3f kW (latency-optimal schedule); derived tiers:",
+            scenarioNum, scenarioName, referencePeakWatts / 1000.0));
         for (int i = 0; i < caps.length; i++) {
-            sb.append(String.format(java.util.Locale.US, "%n    ~%.0f%% feasible -> %.3f kW",
-                targets[i], caps[i] / 1000.0));
+            sb.append(String.format(java.util.Locale.US, "%n    PC%.0f = %.0f%% of P_ref -> %.3f kW",
+                targets[i], targets[i], caps[i] / 1000.0));
         }
         System.out.println(sb);
     }
@@ -260,15 +501,25 @@ public final class CampaignRunner {
     AlgorithmRunResult runOne(String label, StrategyFactory factory,
                               ExperimentConfiguration baseConfig,
                               int scenarioNum, String scenarioName, long seed) {
-        boolean quiet = !params.verboseLogging;
         PrintStream saved = System.out;
-        if (quiet) {
-            System.setOut(SINK);
+        PrintStream target = null;
+        if (algorithmLog != null) {
+            algorithmLog.printf(java.util.Locale.US,
+                "%n===== scenario=%d (%s) algorithm=%s seed=%d =====%n",
+                scenarioNum, scenarioName, label, seed);
+            // Also echo to the console when the caller asked for verbose output.
+            target = consoleVerbose ? new PrintStream(new TeeOutputStream(saved, algorithmLog), true)
+                                    : algorithmLog;
+        } else if (!consoleVerbose) {
+            target = SINK;
+        }
+        if (target != null) {
+            System.setOut(target);
         }
         try {
             return doRunOne(label, factory, baseConfig, scenarioNum, scenarioName, seed);
         } finally {
-            if (quiet) {
+            if (target != null) {
                 System.setOut(saved);
             }
         }
