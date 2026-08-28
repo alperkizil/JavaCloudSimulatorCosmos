@@ -182,10 +182,14 @@ public final class ExperimentConfig {
      * can be found without reading the whole file.
      *
      * <p>Independent of {@link AlgorithmParameters#verboseLogging}: that still controls
-     * what reaches the console, and when both are on the output is written to both.
-     * Expect roughly 20-40 MB for a full campaign; set false to disable.</p>
+     * what reaches the console, and when both are on the output is written to both.</p>
+     *
+     * <p>Off by default, and opted into by {@code PowerCeilingExperiment}, which is the
+     * study that needs it — its constrained arms' acceptance and feasibility behaviour
+     * is otherwise unobservable after the run. Defaulting it on would add a 20-40 MB
+     * artifact to every other campaign to serve a question only that study asks.</p>
      */
-    public boolean captureAlgorithmLog = true;
+    public boolean captureAlgorithmLog = false;
 
     /** Number of scenarios this config defines. */
     public int scenarioCount() {
