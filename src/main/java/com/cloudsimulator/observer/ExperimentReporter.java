@@ -450,7 +450,8 @@ public final class ExperimentReporter {
             List<String> objNames = scenarios.isEmpty()
                 ? List.of("Objective1", "Objective2") : scenarios.get(0).objectiveNames;
             w.println("Scenario,ScenarioName,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,"
-                + "ParetoContribution,TimeMs," + objNames.get(0) + "_Best," + objNames.get(1) + "_Best");
+                + "ParetoContribution,TimeMs," + objNames.get(0) + "_Best," + objNames.get(1)
+                + "_Best,ScoredSeeds");
 
             for (ScenarioReport s : scenarios) {
                 for (Map.Entry<String, List<AlgorithmRunResult>> entry : s.runsByLabel.entrySet()) {
@@ -460,7 +461,7 @@ public final class ExperimentReporter {
                     for (AlgorithmRunResult ar : seeds) {
                         double bestObj1 = bestObjective(ar.getFront(), 0);
                         double bestObj2 = bestObjective(ar.getFront(), 1);
-                        w.printf("%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f%n",
+                        w.printf("%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.6f,%.9f,%n",
                             s.scenarioNumber, s.scenarioName, ar.getLabel(), ar.getSeed(),
                             ar.getHv(), ar.getGd(), ar.getIgd(), ar.getSpacing(),
                             nonDomCount(ar), ar.getParetoContributionCount(), ar.getRuntimeMs(),
@@ -476,10 +477,10 @@ public final class ExperimentReporter {
                     double bestObj1All = bestObjectiveAcross(seeds, 0);
                     double bestObj2All = bestObjectiveAcross(seeds, 1);
 
-                    w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f%n",
+                    w.printf("%d,%s,%s,MEAN,%.6f,%.6f,%.6f,%.6f,,%d,%d,%.6f,%.9f,%d%n",
                         s.scenarioNumber, s.scenarioName, label,
                         mean(hvs), mean(gds), mean(igds), mean(spacings),
-                        unionPCont, avgTime, bestObj1All, bestObj2All);
+                        unionPCont, avgTime, bestObj1All, bestObj2All, scoredCount(hvs));
                 }
             }
         }
@@ -526,21 +527,35 @@ public final class ExperimentReporter {
         return sum / successfulRuns;
     }
 
+    /**
+     * Best (minimum) value of one objective over a front, or NaN when the front holds
+     * no valid solution.
+     *
+     * <p>NaN rather than the {@code Double.MAX_VALUE} sentinel this used to return.
+     * That sentinel is a <em>finite</em> double, so it survives every "is this a real
+     * number" guard — including {@link #mean}'s — and would be averaged in as 1.8e308,
+     * or exported to {@code experiment_summary.csv} as a best objective that reads as a
+     * catastrophically bad but genuine measurement rather than a missing one.</p>
+     */
     private static double bestObjective(List<double[]> front, int index) {
-        double best = Double.MAX_VALUE;
+        double best = Double.NaN;
         for (double[] sol : front) {
-            if (!ParetoAnalyzer.isFailureSentinel(sol) && sol[index] < best) {
+            if (ParetoAnalyzer.isFailureSentinel(sol)) {
+                continue;
+            }
+            if (Double.isNaN(best) || sol[index] < best) {
                 best = sol[index];
             }
         }
         return best;
     }
 
+    /** As {@link #bestObjective} but over every seed; NaN when no seed has a valid one. */
     private static double bestObjectiveAcross(List<AlgorithmRunResult> seeds, int index) {
-        double best = Double.MAX_VALUE;
+        double best = Double.NaN;
         for (AlgorithmRunResult ar : seeds) {
             double b = bestObjective(ar.getFront(), index);
-            if (b < best) {
+            if (!Double.isNaN(b) && (Double.isNaN(best) || b < best)) {
                 best = b;
             }
         }
