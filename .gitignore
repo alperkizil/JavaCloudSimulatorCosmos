@@ -34,6 +34,13 @@ __pycache__/
 *.tar.gz
 *.rar
 
+# ...but committed experiment artifacts are not build output. A campaign's
+# algorithm log is ~116 MB of plain text, past GitHub's 100 MB per-file limit, so it
+# ships compressed; without this exception `git add` skips it silently and the run
+# lands without its diagnostics.
+!docs/ExperimentResults/**/*.zip
+!docs/ExperimentResults/**/*.tar.gz
+
 # Generated simulation reports
 reports/
 
