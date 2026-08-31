@@ -1,0 +1,12 @@
+# Experiment artifacts are committed verbatim. Marking them binary keeps Git from
+# applying any line-ending conversion (Windows checkouts default to core.autocrlf=true),
+# which would corrupt the compressed and image payloads.
+*.gz  binary
+*.png binary
+*.pdf binary
+
+# Result CSVs are written with the platform line separator; normalise them on commit so
+# a run uploaded from Windows does not show up as a whole-file diff against a Linux one.
+docs/ExperimentResults/**/*.csv text eol=lf
+docs/ExperimentResults/**/*.json text eol=lf
+docs/ExperimentResults/**/*.txt text eol=lf

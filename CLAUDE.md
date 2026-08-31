@@ -2,10 +2,19 @@
 
 ## Session Handoff — READ FIRST
 
-**`HANDOFF.md` (repo root) is the up-to-date session handoff**: the research goal,
-the completed review-and-fix work (PRs #208/#209), the pending campaign re-runs, and
-the remaining paper/method items. Read it at the start of every session, after the
-README.
+**Current focus: the article-1 power-cap problem only.** Read
+**`article1problem.md` (repo root)** — the problem, the findings, what was changed,
+and what is still open. Its three entry points in
+`src/main/java/com/cloudsimulator/newExperiments/` (`MakespanEnergyExperiment`,
+`WaitingTimeEnergyExperiment`, `PowerCeilingExperiment`) are the **only** runners
+the article uses.
+
+**The second study is dropped for now.** `HANDOFF.md` §0 and
+`docs/proposals/MultiDC-Carbon-PeakPower-Migration-Proposal.md` describe an
+independent multi-DC / carbon / peak-power / migration study. Do **not** work on it,
+extend it, or run its campaigns unless the owner explicitly reopens it. The rest of
+`HANDOFF.md` (research goal, PRs #208/#209, pending re-runs, paper/method items)
+remains valid background.
 
 ## Build Environment Notes
 
