@@ -2,6 +2,7 @@
 # applying any line-ending conversion (Windows checkouts default to core.autocrlf=true),
 # which would corrupt the compressed and image payloads.
 *.gz  binary
+*.zip binary
 *.png binary
 *.pdf binary
 

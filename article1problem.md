@@ -260,9 +260,15 @@ Replayed against July's uncapped cloud, the new tiers should give (best-WT penal
 5. **SA acceptance at production budget is unverified.** The smoke run showed acceptance
    *rising* with cap tightness (uncapped 72.9% → PC75 94.2%), i.e. the relative-violation
    scaling errs permissive, not harsh. But that was 400 evaluations over 6 temperature
-   steps where the schedule barely cools. Check `algorithm_log.txt` from the real run. If
-   it is still ~90%+ in the infeasible region, scale violation deltas by an observed
-   violation range rather than by the cap (mirroring `ObjectiveScaleNormalizer`).
+   steps where the schedule barely cools. Check the run's algorithm log. If it is still
+   ~90%+ in the infeasible region, scale violation deltas by an observed violation range
+   rather than by the cap (mirroring `ObjectiveScaleNormalizer`).
+
+   **The log is committed compressed.** A full campaign writes ~116 MB of plain text,
+   past GitHub's 100 MB per-file limit, so `algorithm_log.txt` is stored as
+   `algorithm_log.zip` in the result folder. Unzip it before reading; each run is
+   delimited by a `===== scenario=.. algorithm=.. seed=.. =====` header, so acceptance
+   rates can be aggregated per arm and tier by splitting on that line.
 
 6. **P_ref is still empirical and algorithm-dependent** — it comes from the study
    algorithms' own output. A dedicated fixed latency-reference optimiser would remove the
