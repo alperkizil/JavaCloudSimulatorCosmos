@@ -37,7 +37,7 @@ public final class PowerCapCalibrator {
     public static final double[] DEFAULT_FEASIBILITY_TARGETS = {90.0, 60.0, 30.0};
 
     /** Default anchor fractions (% of P_ref) for the cap tiers, loose→tight. */
-    public static final double[] DEFAULT_ANCHOR_FRACTIONS = {90.0, 80.0, 70.0, 60.0};
+    public static final double[] DEFAULT_ANCHOR_FRACTIONS = {90.0, 80.0, 70.0, 60.0, 50.0};
 
 
     /**
