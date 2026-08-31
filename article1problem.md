@@ -1,7 +1,8 @@
 # Article 1 — The Power-Cap Problem
 
-Handoff for the next Claude instance. State as of 2026-08-31, branch
-`claude/powercap-solution-quality-d3w0lm`, PR #244 (draft, 8 commits, not merged).
+Handoff for the next Claude instance. State as of 2026-08-31. The code work is
+**merged** (PR #245, from `claude/powercap-solution-quality-d3w0lm`), and the campaign it
+enables has **been run** — see §5 for the results.
 
 Read `README.md` and `CLAUDE.md` first, then this file. `HANDOFF.md` describes an
 independent second study (multi-DC / carbon) that is **out of scope** — see
@@ -27,6 +28,17 @@ The article uses **exactly three** entry points, all in
   `PowerCeilingExperiment` and must not be used or cited.
 - `oldExperiments/` holds archived mains. Not for the article.
 
+Two result folders are committed under `docs/ExperimentResults/`:
+
+| Folder | Role |
+|---|---|
+| `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | **The campaign to report** — anchored P_ref tiers, constrained search |
+| `PowerCeilingWaitingTimeVsEnergy_13_07_2026_14_03_03` | Superseded percentile-calibrated run. Keep: the §3 diagnosis derives from it, and it is the "before" evidence |
+
+The explorer labels the July folder neutrally (`PC90 (18.0 kW)`) because it has no
+calibration manifest, and the new one as `Cap 90% of P_ref (17.7 kW)`. Do not compare the
+two folders' tier names as though they mean the same thing — they do not.
+
 All three share one back-end: `CampaignRunner` → `ParetoAnalyzer` → `ExperimentReporter`,
 with post-run Python in `scripts/`. Everything you would normally tweak (algorithm list,
 hyperparameters, infrastructure) lives in the three entry-point files themselves.
@@ -48,6 +60,10 @@ cap?*
 ---
 
 ## 3. The problem we were troubleshooting
+
+*History. This section diagnoses the **July** campaign; every defect below is fixed, and
+§5 has the results after fixing. Kept because the diagnosis is the argument for why the
+new design is what it is — and because §3.2 and §3.5 are findings in their own right.*
 
 The July campaign — `docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_13_07_2026_14_03_03/`
 — ran caps labelled PC90 / PC60 / PC30 and showed **almost no difference in solution
@@ -127,7 +143,8 @@ The cap truncates the low-waiting-time tip of the front, which is a thin sliver 
 | S3 PC60 | 0.5% | +33% |
 | S3 PC30 | 1.6% | +75% |
 
-An order-of-magnitude understatement. **This is still unfixed** (see §6).
+An order-of-magnitude understatement, and the 28 Aug campaign confirms it persists
+(§5.5). **Still unfixed** — open item 1.
 
 ### 3.5 Structural facts worth knowing
 
@@ -206,76 +223,131 @@ campaign built from `origin/main` and from HEAD; only `TimeMs` (wall clock) diff
 
 ---
 
-## 5. What we are trying to achieve
+## 5. Results — the 28 Aug 2026 campaign
 
-Produce a defensible study 3 for the article showing:
+`docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10/`
+(1,050 runs: 7 base arms + 7×4 constrained, 3 scenarios, 10 seeds; 44,994 solutions).
+Every figure below is from that folder, not replayed.
 
-1. **The cost of a power cap** — a monotone waiting-time penalty curve as the cap tightens.
-2. **Whether constrained search beats post-hoc filtering.** In July the gap was a median
-   0.0–0.8% HV. With genuine constrained search and tight caps it should open up. If it
-   does not, that is itself the more interesting finding.
-3. **The free-slack result** — peak shaving is nearly free up to ~7% and cheap to ~13%,
-   after which it costs waiting time steeply. This is arguably a better headline than
-   "caps degrade quality".
+### 5.1 The fixes hold
 
-Replayed against July's uncapped cloud, the new tiers should give (best-WT penalty; a
-**lower bound**, since this is filtering rather than constrained search):
+**84 of 84 constrained (scenario × arm × tier) cells are 100% feasible against their own
+cap; none are empty.** In July `SA_WaitingTime_Dominance_PC30` published 11 solutions,
+0% of them feasible. That failure mode is gone.
 
-| Scenario | PC90 | PC85 | PC80 | PC75 |
+P_ref reproduced the value derived from July's data *exactly* — 19,650.360 / 16,793.838 /
+17,582.581 W (S1/S2/S3). Same seeds, deterministic uncapped arms, same anchor.
+
+Reporting machinery: 14-column summary, `ScoredSeeds` = 10 throughout, no `MAX_VALUE`
+leak, zero NaN indicator rows (nothing failed to find a feasible solution).
+
+### 5.2 The cost of a power cap
+
+Best achievable waiting time, union front over all arms:
+
+| Scenario | uncapped | PC90 | PC85 | PC80 | PC75 |
+|---|---|---|---|---|---|
+| Balanced | 1.824s | 1.984s (+8.8%) | 2.054s (+12.6%) | 2.226s (+22.0%) | 2.446s (**+34.1%**) |
+| GPU_Stress | 4.496s | 4.564s (+1.5%) | 4.528s (+0.7%) | 4.662s (+3.7%) | 4.760s (**+5.9%**) |
+| CPU_Stress | 1.282s | 1.392s (+8.6%) | 1.514s (+18.1%) | 1.596s (+24.5%) | 1.708s (**+33.2%**) |
+
+Monotone in all three scenarios. Energy cost is small: +0.28% to +9.31%.
+
+**These are ~10× cheaper than the filtering-based lower bound predicted** (+360% / +147% /
++371% at PC75). Running a 25% peak reduction costs about a third more waiting time in the
+worst scenario and 6% in GPU_Stress.
+
+**The cliff does not exist.** The +274 pp jump between 0.80 and 0.75 that the filtering
+estimate showed was an artifact of filtering. The ladder does not need re-tiering.
+
+### 5.3 Constrained search vs post-hoc filtering — the nuanced part
+
+Do not report §5.2 as "constrained search is 10× better". Per arm, **where filtering
+produces anything at all**, constrained search gains only a median **+3.0%** HV and
+*loses* in 25 of 57 cells. The benefit is concentrated elsewhere:
+
+```
+arm/tier cells where filtering keeps NOTHING: 27 / 84
+cells under 5% feasible:                      35 / 84
+```
+
+Fraction of each arm's *uncapped* output that filtering could have kept:
+
+| Arm | PC90 | PC85 | PC80 | PC75 |
 |---|---|---|---|---|
-| Balanced | +52% | +75% | +86% | +360% |
-| GPU_Stress | +30% | +41% | +65% | +147% |
-| CPU_Stress | +39% | +68% | +118% | +371% |
+| GA_Energy_Dominance | .966 | .862 | .631 | .463 |
+| SA_Energy_Dominance | .681 | .392 | .149 | .095 |
+| NSGA-II | .676 | .376 | .073 | **.000** |
+| SPEA-II | .577 | .237 | .038 | **.000** |
+| AMOSA | .293 | .120 | .053 | **.000** |
+| SA_WaitingTime_Dominance | .072 | .061 | .032 | **.000** |
+| GA_WaitingTime_Dominance | .039 | .009 | **.000** | **.000** |
+
+The defensible claim:
+
+> Where the unconstrained run happens to visit the feasible region, filtering is
+> competitive with constrained search. In a third of cases it visits nothing at all, and
+> there constrained search is the only option.
+
+The negative gains are a finding too, not noise: for an arm already 96.6% feasible
+(`GA_Energy` at PC90) the constraint is not binding, so constrained search spends budget
+enforcing it and comes out slightly behind.
+
+### 5.4 SA acceptance — resolved
+
+At production budget (~170 temperature steps, against 6 in the smoke run):
+
+```
+SA_Energy_Dominance      uncapped 43.5%   PC90 44.0%  PC85 43.8%  PC80 43.6%  PC75 44.1%
+SA_WaitingTime_Dominance uncapped 40.5%   PC90 41.5%  PC85 40.2%  PC80 39.7%  PC75 38.5%
+```
+
+Flat. Neither the collapse that harsh scaling would cause, nor the runaway the smoke run
+suggested (94.2% at PC75). The relative-violation currency is correctly scaled; the smoke
+figure was an artifact of a schedule that never cooled. **No fix needed.**
+
+### 5.5 HV is still the wrong instrument
+
+Mean ΔHV_fixed vs uncapped: **−0.8% / −5.4% / −7.0% / −9.9%** (PC90→PC75). Directionally
+right, but it reports −9.9% for a tier where the best achievable waiting time moved 34%
+and a third of the arms lost their entire unconstrained output. AMOSA in CPU_Stress
+reports **+30.7%** at PC80 — the constraint *helped* it. See open item 1.
 
 ---
 
 ## 6. Open items — read before claiming the study is done
 
-1. **No full campaign has been run.** Every number in this document is either replayed
-   July data or a reduced-scale smoke run. A full campaign is ~3.2 h serial (~9 s/run).
-   **This is the single most important next step.**
+Closed by the 28 Aug campaign: the campaign itself, the cap-ladder cliff, and SA
+acceptance at production budget. What remains:
 
-2. **Cap-aware indicators do not exist.** Global HV understates the effect by an order of
-   magnitude (§3.4). Needed: best waiting time subject to cap; feasible-region HV
-   normalised to the *feasible* ideal; attainment at fixed energy. Without these the
-   analysis will not tell the story even though the algorithms are now correct.
+1. **Cap-aware indicators do not exist.** This is now the top item. Global HV understates
+   the effect by an order of magnitude (§3.4, §5.5) and in one cell reports the wrong
+   *sign*. Needed: best waiting time subject to cap; feasible-region HV normalised to the
+   *feasible* ideal; attainment at fixed energy. The campaign is sound; the headline
+   metric is not, and §5.2 currently has to be computed by hand from `pareto_3d_all.csv`.
 
-3. **Holm correction is too wide.** `scripts/statistical_tests.py` corrects across all 378
+2. **Holm correction is too wide.** `scripts/statistical_tests.py` corrects across all 378
    pairwise comparisons per metric, though only the base-vs-cap contrasts are planned.
-   42 of 63 had raw p<0.05; only 30 survived.
+   In July, 42 of 63 had raw p<0.05 and only 30 survived. The 28 Aug significance figures
+   have not been re-checked against this.
 
-4. **The cap ladder is unsampled at the cliff.** Steps between tiers are wildly uneven:
+3. **§5.3 needs a proper statistical treatment.** The constrained-vs-filtering comparison
+   is currently descriptive (median gain, count of empty-filter cells). It is the most
+   interesting claim in the study and deserves a test with the right family.
 
-   ```
-   0.90 → 0.85:  +23 / +11 / +28 pp     (S1/S2/S3)
-   0.85 → 0.80:  +12 / +24 / +49 pp
-   0.80 → 0.75: +274 / +78 / +255 pp    <- ~10x the others
-   ```
-
-   The transition actually sits between 0.775 (+145%) and 0.750 (+360%) in S1, and
-   nothing samples it. Consider adding a tier at 77–78%. **But** these are filtering
-   estimates — genuine constrained search may soften or move the cliff, so the defensible
-   order is: run the campaign, see where the real cliff lands, then re-tier.
-
-5. **SA acceptance at production budget is unverified.** The smoke run showed acceptance
-   *rising* with cap tightness (uncapped 72.9% → PC75 94.2%), i.e. the relative-violation
-   scaling errs permissive, not harsh. But that was 400 evaluations over 6 temperature
-   steps where the schedule barely cools. Check the run's algorithm log. If it is still
-   ~90%+ in the infeasible region, scale violation deltas by an observed violation range
-   rather than by the cap (mirroring `ObjectiveScaleNormalizer`).
-
-   **The log is committed compressed.** A full campaign writes ~116 MB of plain text,
-   past GitHub's 100 MB per-file limit, so `algorithm_log.txt` is stored as
-   `algorithm_log.zip` in the result folder. Unzip it before reading; each run is
-   delimited by a `===== scenario=.. algorithm=.. seed=.. =====` header, so acceptance
-   rates can be aggregated per arm and tier by splitting on that line.
-
-6. **P_ref is still empirical and algorithm-dependent** — it comes from the study
-   algorithms' own output. A dedicated fixed latency-reference optimiser would remove the
+4. **P_ref is empirical and algorithm-dependent** — it comes from the study algorithms'
+   own output. A dedicated fixed latency-reference optimiser would remove the
    circularity, at the cost of a comparability question. Documented, not fixed.
 
-7. **No CI statuses on this branch.** Absence of a red mark is not a passing signal. All
-   verification so far is local: compiles, targeted unit-style checks, reduced campaigns.
+5. **No CI statuses on this branch.** Absence of a red mark is not a passing signal.
+   Verification is local: compiles, targeted unit-style checks, and this campaign.
+
+**The algorithm log is committed compressed.** A full campaign writes ~123 MB of plain
+text, past GitHub's 100 MB per-file limit, so it ships as `algorithm_log.zip` (~6 MB).
+Unzip before reading; runs are delimited by
+`===== scenario=.. algorithm=.. seed=.. =====`, so rates aggregate per arm and tier by
+splitting on that line. Note `.gitignore` excludes `*.zip` globally with an exception for
+`docs/ExperimentResults/**` — without that exception `git add` skips the log silently.
 
 ---
 
