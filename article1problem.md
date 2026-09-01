@@ -32,7 +32,8 @@ Two result folders are committed under `docs/ExperimentResults/`:
 
 | Folder | Role |
 |---|---|
-| `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | **The campaign to report** — anchored P_ref tiers, constrained search |
+| `PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57` | **The campaign to report** — 90/80/70/60/50 ladder. See §9 |
+| `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | Same design, 90/85/80/75 ladder. Superseded by the above but not wrong: it is the shallow half of the same dose-response curve (§9.1) |
 | `PowerCeilingWaitingTimeVsEnergy_13_07_2026_14_03_03` | Superseded percentile-calibrated run. Keep: the §3 diagnosis derives from it, and it is the "before" evidence |
 
 The explorer labels the July folder neutrally (`PC90 (18.0 kW)`) because it has no
@@ -225,6 +226,10 @@ campaign built from `origin/main` and from HEAD; only `TimeMs` (wall clock) diff
 
 ## 5. Results — the 28 Aug 2026 campaign
 
+> **Extended by §9.** The 28 Aug ladder stopped at 75% of P_ref and so measured only the
+> shoulder of the effect. Everything below still holds on its own data; §9 re-runs the
+> same design down to 50% and is what the article should report.
+
 `docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10/`
 (1,050 runs: 7 base arms + 7×4 constrained, 3 scenarios, 10 seeds; 44,994 solutions).
 Every figure below is from that folder, not replayed.
@@ -318,22 +323,33 @@ reports **+30.7%** at PC80 — the constraint *helped* it. See open item 1.
 ## 6. Open items — read before claiming the study is done
 
 Closed by the 28 Aug campaign: the campaign itself, the cap-ladder cliff, and SA
-acceptance at production budget. What remains:
+acceptance at production budget. Closed or advanced by the 31 Aug campaign (§9): the
+depth of the ladder, the location of the feasibility floor, and the constrained-vs-filtering
+comparison. What remains:
 
-1. **Cap-aware indicators do not exist.** This is now the top item. Global HV understates
-   the effect by an order of magnitude (§3.4, §5.5) and in one cell reports the wrong
-   *sign*. Needed: best waiting time subject to cap; feasible-region HV normalised to the
-   *feasible* ideal; attainment at fixed energy. The campaign is sound; the headline
-   metric is not, and §5.2 currently has to be computed by hand from `pareto_3d_all.csv`.
+1. **Cap-aware indicators do not exist — partially discharged.** Global HV still
+   understates the effect by an order of magnitude and carries the wrong sign in 26 of 104
+   cells (§3.4, §5.5, §9.6). *Best waiting time subject to the cap* now exists as a
+   reportable cap-aware metric and is what §9.1/§9.2 lead with; it is emitted directly in
+   `scenario_N_universal_fronts_by_cap.csv` (verified feasible-only, §9.5) rather than
+   computed by hand. Still missing: feasible-region HV normalised to the *feasible* ideal,
+   and attainment at fixed energy.
 
-2. **Holm correction is too wide.** `scripts/statistical_tests.py` corrects across all 378
-   pairwise comparisons per metric, though only the base-vs-cap contrasts are planned.
-   In July, 42 of 63 had raw p<0.05 and only 30 survived. The 28 Aug significance figures
-   have not been re-checked against this.
+2. **Holm correction is too wide — now quantified, and now harmful.**
+   `scripts/statistical_tests.py` corrects across every pairwise comparison per metric
+   (C(42,2) = 861 on the 31 Aug ladder), though only the 35 base-vs-cap contrasts are
+   planned. On the 31 Aug campaign this drives **every** planned contrast to
+   non-significant in all three metrics, versus 10–24 of 35 under the planned family
+   (§9.6). The shipped `significant_0.05` column must not be reported as-is. Fix the
+   family in `statistical_tests.py`, or emit a planned-contrast column alongside it.
 
-3. **§5.3 needs a proper statistical treatment.** The constrained-vs-filtering comparison
-   is currently descriptive (median gain, count of empty-filter cells). It is the most
-   interesting claim in the study and deserves a test with the right family.
+3. **§9.2 needs a proper statistical treatment.** The constrained-vs-filtering comparison
+   is still descriptive (mean best-WT per side, count of empty-filter cells), though the
+   effect is now large enough that a test is a formality rather than a rescue: 25–85%
+   lower waiting time where filtering returns anything, and nothing to compare against
+   where it does not. It is the most interesting claim in the study and deserves a test
+   with the right family — note that the empty-filter cells are censored, not missing, so
+   a paired test over seeds needs to handle them explicitly.
 
 4. **P_ref is empirical and algorithm-dependent** — it comes from the study algorithms'
    own output. A dedicated fixed latency-reference optimiser would remove the
@@ -382,3 +398,155 @@ caught it by reading the downstream code path rather than the changed lines.
 
 If you make a claim about behaviour in a commit message or the PR, trace it one level
 further out than the lines you changed, and verify it.
+
+---
+
+## 9. Results — the 31 Aug 2026 campaign (the ladder that answers the question)
+
+`docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57/`
+Same design as §5, ladder widened to **90 / 80 / 70 / 60 / 50 % of P_ref**.
+1,050 constrained runs (7 arms × 5 tiers × 3 scenarios × 10 seeds) + 210 base runs;
+48,279 solutions. P_ref unchanged: 19,650 / 16,794 / 17,583 W.
+
+Reproduce every figure below with:
+
+```bash
+python3 scripts/analyze_power_cap_campaign.py \
+  docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57
+```
+
+### 9.1 The cap has a large, monotone, separable cost
+
+Best cap-feasible waiting time, union front over arms, **mean over the 10 seeds**
+(min-over-seeds is in the script output and agrees; it is an extreme-value statistic and
+inverted two tiers in the 28 Aug data, so the mean is the one to report):
+
+| Scenario | uncapped | PC90 | PC80 | PC70 | PC60 | PC50 |
+|---|---|---|---|---|---|---|
+| Balanced | 1.865s | 2.052s (+10.1%) | 2.300s (+23.4%) | 2.772s (+48.7%) | 3.384s (+81.5%) | 4.345s (**+133.0%**) |
+| GPU_Stress | 4.568s | 4.655s (+1.9%) | 4.782s (+4.7%) | 5.295s (+15.9%) | 6.492s (+42.1%) | 7.989s (**+74.9%**) |
+| CPU_Stress | 1.300s | 1.428s (+9.8%) | 1.634s (+25.7%) | 1.881s (+44.7%) | 2.293s (+76.4%) | 2.979s (**+129.2%**) |
+
+Monotone in all three scenarios under **both** min and mean. Every adjacent tier is
+separable (paired Wilcoxon on seeds, p ≤ 0.014; 11 of 12 at p = 0.002, the floor at n=10),
+as is every uncapped-vs-tier contrast.
+
+This is why §5 read as a modest effect: at 75% of P_ref the curve is still in its shoulder.
+The 28 Aug maximum was +34%; carrying the same design to 50% reaches +133%. The two
+campaigns are consistent — where the tiers overlap the numbers agree — so §5 is the
+shallow half of one dose-response curve, not a contradicted result.
+
+### 9.2 Constrained search vs post-hoc filtering — now decisive
+
+§5.3 was the weak part of the study: a median +3.0% HV gain, with constrained search
+*losing* in 25 of 57 cells. That was a consequence of the shallow ladder — at 90–75% of
+P_ref the constraint is barely binding, so there is nothing for constrained search to win.
+
+Deeper in, the picture inverts. Best cap-feasible waiting time, union over arms, mean over
+seeds — filtering the uncapped runs versus searching under the constraint:
+
+| Scenario | | PC90 | PC80 | PC70 | PC60 | PC50 |
+|---|---|---|---|---|---|---|
+| Balanced | filter-only | 2.991s | 3.409s | 12.834s | 22.769s [7/10 seeds] | **nothing** |
+| | constrained | 2.052s | 2.300s | 2.772s | 3.384s | 4.345s |
+| | gain | 31.4% | 32.5% | 78.4% | 85.1% | — |
+| GPU_Stress | filter-only | 6.522s | 12.057s | 17.836s | 23.035s [4/10] | **nothing** |
+| | constrained | 4.655s | 4.782s | 5.295s | 6.492s | 7.989s |
+| | gain | 28.6% | 60.3% | 70.3% | 71.8% | — |
+| CPU_Stress | filter-only | 1.900s | 3.259s | 8.585s | 9.717s | 17.072s |
+| | constrained | 1.428s | 1.634s | 1.881s | 2.293s | 2.979s |
+| | gain | 24.8% | 49.9% | 78.1% | 76.4% | 82.6% |
+
+Fraction of each **uncapped** arm's output that clears the cap — the material a filter-only
+baseline has to select from:
+
+| Arm | PC90 | PC80 | PC70 | PC60 | PC50 |
+|---|---|---|---|---|---|
+| GA_Energy_Dominance | .965 | .646 | .348 | .128 | .045 |
+| SA_Energy_Dominance | .687 | .161 | .060 | .019 | .008 |
+| NSGA-II | .671 | .072 | **.000** | **.000** | **.000** |
+| SPEA-II | .580 | .038 | **.000** | **.000** | **.000** |
+| AMOSA | .323 | .064 | **.000** | **.000** | **.000** |
+| SA_WaitingTime_Dominance | .085 | .040 | **.000** | **.000** | **.000** |
+| GA_WaitingTime_Dominance | .034 | **.000** | **.000** | **.000** | **.000** |
+
+57 of 105 (scenario × arm × tier) filtering cells are empty. Per seed-run: 22% empty at
+PC90, rising to **93% at PC50**. At PC50 in Balanced and GPU_Stress, filtering yields zero
+feasible schedules across all 70 uncapped runs of that scenario, while constrained search
+returns 1,758 and 799.
+
+The claim the article can now make without hedging:
+
+> Post-hoc filtering is competitive with constrained search only where the constraint is
+> barely binding. As the cap tightens the unconstrained runs stop visiting the feasible
+> region at all — by 50% of P_ref, 93% of them contain no admissible schedule — and
+> constrained search is not merely better but the only method that returns an answer.
+
+### 9.3 The cap is paid for in waiting time, not energy
+
+Best cap-feasible energy is within **+0.28% to +11.25%** of the uncapped optimum at every
+tier. More tellingly, in **13 of 15** (scenario × tier) cells the uncapped energy optimum is
+*itself* cap-feasible, so the cap does not forbid it and the residual gap there is
+under-convergence rather than a cost of the constraint. Consistent with §3.5: peak
+correlates positively with energy, so the energy end of the front is the end the cap leaves
+alone.
+
+### 9.4 PC50 is the edge of reachability — report it as such
+
+The 50% tier was added as a feasibility probe (`e7ac931`), and it answers the question:
+a feasible schedule exists at 50% of P_ref in all three scenarios, but arms start to fail.
+
+- **48 of 1,050** constrained runs found nothing feasible — 47 at PC50, 1 at GPU_Stress PC60.
+- **GPU_Stress / AMOSA / PC50 is dead across all 10 seeds** — 6 of 7 arms deliver there.
+  Every other (scenario × arm × tier) cell has feasible output.
+
+So PC50 belongs in the paper with its per-arm survival stated, not averaged in silently.
+The 28 Aug expectation that the floor lay near 50% was roughly right and is now measured
+rather than extrapolated.
+
+### 9.5 The 58 cap violations in `pareto_3d_all.csv` — audited, not a defect
+
+`pareto_3d_all.csv` contains **58 solutions above their own cap** (0.15% of 38,749
+constrained solutions): 57 at PC50, 1 at GPU_Stress PC60, max excess 1,861 W (22% of cap).
+These are the least-violating solutions Deb's rules retain when a run finds nothing
+feasible — the §3.3 mechanism, but this time the reporting path quarantines them:
+
+- `pareto_3d_feasible.csv` and `scenario_N_universal_fronts_by_cap.csv` contain **zero**
+  violations; the shipped union fronts match a feasible-only recomputation exactly.
+- The 48 affected runs are **NaN** in `scenario_N_performance_metrics_by_cap.csv` and
+  **dropped** from `quality_indicators_all_scenarios.csv` — 48 = 48, cross-checked. Neither
+  scores them as HV 0. GPU_Stress/AMOSA/PC50 reports a NaN mean over all 10 seeds.
+- They are high-waiting-time points, and win **0 of 150** union best-WT slots, so §9.1 is
+  identical whether or not they are filtered.
+
+The PR #244 failure semantics are what make the 50% tier safe to run. Two consequences:
+**never describe `pareto_3d_all.csv` as feasible output** (it is the raw archive dump), and
+say in the paper that infeasible retention is expected where no feasible solution exists.
+
+### 9.6 Two reporting hazards that must be fixed before submission
+
+**Do not report `statistical_tests_summary.csv`'s `significant_0.05` column.** It corrects
+across all C(42,2) = 861 pairwise comparisons per metric, so **0 of the 35 planned
+base-vs-cap contrasts survive, in all three metrics** — which would read as "the cap has no
+significant effect". Restricted to the planned family the answer is the opposite:
+
+| metric | raw p<.05 | shipped Holm | planned-family Holm |
+|---|---|---|---|
+| GD | 28/35 | 0/35 | **24/35** |
+| HV | 24/35 | 0/35 | **10/35** |
+| IGD | 22/35 | 0/35 | **14/35** |
+
+This is open item 2, now quantified on this campaign. The §9.1 waiting-time result is not
+affected — it is tested directly on the union front, not through this file.
+
+**Do not headline HV.** Mean ΔHV_fixed vs uncapped is −0.8 / −6.5 / −11.3 / −20.0 / −31.2%
+(PC90→PC50) while best waiting time moved +10 / +23 / +49 / +81 / +133%, and HV still rises
+under the cap in **26 of 104** cells (9 of 21 at PC90). Open item 1 stands.
+
+### 9.7 Verdict
+
+The power cap makes a defensible difference and the study is reportable. The headline is
+§9.1 (cost of the cap, monotone and separable) and §9.2 (filtering collapses where
+constrained search does not). Best-waiting-time-under-cap is the metric to lead with — it is
+cap-aware, it is what §9.1 and §9.2 are computed on, and it partially discharges open item 1
+without needing a new indicator. HV belongs in an appendix with §9.6's caveat attached.
