@@ -1,0 +1,16 @@
+Scheme,Scenario,ScenarioName,Tier,AnchorPercentOfPref,ReferencePeakWatts,CapWatts
+anchored-pref-v1,1,Balanced,PC90,90.0,19650.360,17685.324
+anchored-pref-v1,1,Balanced,PC80,80.0,19650.360,15720.288
+anchored-pref-v1,1,Balanced,PC70,70.0,19650.360,13755.252
+anchored-pref-v1,1,Balanced,PC60,60.0,19650.360,11790.216
+anchored-pref-v1,1,Balanced,PC50,50.0,19650.360,9825.180
+anchored-pref-v1,2,GPU_Stress,PC90,90.0,16793.838,15114.454
+anchored-pref-v1,2,GPU_Stress,PC80,80.0,16793.838,13435.070
+anchored-pref-v1,2,GPU_Stress,PC70,70.0,16793.838,11755.686
+anchored-pref-v1,2,GPU_Stress,PC60,60.0,16793.838,10076.303
+anchored-pref-v1,2,GPU_Stress,PC50,50.0,16793.838,8396.919
+anchored-pref-v1,3,CPU_Stress,PC90,90.0,17582.581,15824.323
+anchored-pref-v1,3,CPU_Stress,PC80,80.0,17582.581,14066.065
+anchored-pref-v1,3,CPU_Stress,PC70,70.0,17582.581,12307.807
+anchored-pref-v1,3,CPU_Stress,PC60,60.0,17582.581,10549.549
+anchored-pref-v1,3,CPU_Stress,PC50,50.0,17582.581,8791.291
