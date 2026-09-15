@@ -88,9 +88,10 @@ public final class AlgorithmParameters {
     public double amosaMutationRate = 0.05;
     /**
      * Constrained (_PC) AMOSA only: scale the per-task mutation rate by T/T0 each
-     * temperature step, so the expected number of mutated tasks shrinks from
-     * {@code amosaMutationRate * numTasks} (~25) while hot to one task once cold,
-     * as the SA arms' scaled perturbation does. Default on. The PowerCeiling
+     * temperature step, so the expected number of mutated tasks shrinks linearly
+     * from {@code amosaMutationRate * numTasks} (~25) while hot, and each move is
+     * exactly one single-task step once cold, as the SA arms' scaled perturbation
+     * does. Default on. The PowerCeiling
      * campaigns up to and including 31 Aug 2026 ran with this off; set it false to
      * reproduce them. See {@code FixedAMOSAConstrained} for the evidence.
      */

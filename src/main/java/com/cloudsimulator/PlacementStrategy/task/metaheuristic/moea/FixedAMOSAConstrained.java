@@ -32,8 +32,9 @@ public class FixedAMOSAConstrained extends AMOSA {
 
     /**
      * Scale the mutation's per-task rate by {@code T / T0} at each temperature
-     * step, so the expected number of mutated tasks falls from the configured value
-     * while hot to a single task once cold — the SA arms' temperature-scaled
+     * step, so the expected number of mutated tasks falls linearly from the
+     * configured value while hot, and the move becomes exactly one single-task step
+     * once that expectation drops to one — the SA arms' temperature-scaled
      * perturbation. Only effective when the mutation operator is a
      * {@link TaskSchedulingMutation}.
      *
