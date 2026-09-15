@@ -1,8 +1,10 @@
 # Article 1 — The Power-Cap Problem
 
-Handoff for the next Claude instance. State as of 2026-08-31. The code work is
-**merged** (PR #245, from `claude/powercap-solution-quality-d3w0lm`), and the campaign it
-enables has **been run** — see §5 for the results.
+Handoff for the next Claude instance. State as of 2026-08-31, with a **2026-09-15
+update in §9** (the 31 Aug ladder campaign, and a step-size fix to the constrained AMOSA
+arm — read §9 before §5). The code work is **merged** (PR #245, from
+`claude/powercap-solution-quality-d3w0lm`), and the campaign it enables has **been run** —
+see §5 for the results.
 
 Read `README.md` and `CLAUDE.md` first, then this file. `HANDOFF.md` describes an
 independent second study (multi-DC / carbon) that is **out of scope** — see
@@ -28,11 +30,12 @@ The article uses **exactly three** entry points, all in
   `PowerCeilingExperiment` and must not be used or cited.
 - `oldExperiments/` holds archived mains. Not for the article.
 
-Two result folders are committed under `docs/ExperimentResults/`:
+Three result folders are committed under `docs/ExperimentResults/`:
 
 | Folder | Role |
 |---|---|
-| `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | **The campaign to report** — anchored P_ref tiers, constrained search |
+| `PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57` | **The campaign to report** — 90/80/70/60/50 % ladder (§9.1). Its AMOSA `_PC` cells predate the PR #249 step-size fix (§9.4) |
+| `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | Previous ladder (90/85/80/75 %); §5 describes it |
 | `PowerCeilingWaitingTimeVsEnergy_13_07_2026_14_03_03` | Superseded percentile-calibrated run. Keep: the §3 diagnosis derives from it, and it is the "before" evidence |
 
 The explorer labels the July folder neutrally (`PC90 (18.0 kW)`) because it has no
@@ -382,3 +385,104 @@ caught it by reading the downstream code path rather than the changed lines.
 
 If you make a claim about behaviour in a commit message or the PR, trace it one level
 further out than the lines you changed, and verify it.
+
+---
+
+## 9. Update 2026-09-15 — the 31 Aug ladder, and AMOSA's step size (PR #249)
+
+*Sections 1–8 are left as written on 2026-08-31. This section supersedes them where
+they conflict.*
+
+### 9.1 The campaign to report is now the 31 Aug folder
+
+`docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57/` (PR #248)
+is the first run of the **90 / 80 / 70 / 60 / 50 % of P_ref** ladder, with 50 % as a
+feasibility probe. Same seeds, same P_ref (19,650.360 / 16,793.838 / 17,582.581 W), 105
+constrained cells, 48,279 solutions. `scripts/analyze_power_cap_campaign.py <folder>`
+prints the §5.2-style tables for it. Headline, mean over seeds of the best cap-feasible
+waiting time, union over arms:
+
+| Scenario | uncapped | 90 % | 80 % | 70 % | 60 % | 50 % |
+|---|---|---|---|---|---|---|
+| Balanced | 1.865 s | +10.1 % | +23.4 % | +48.7 % | +81.5 % | +133 % |
+| GPU_Stress | 4.568 s | +1.9 % | +4.7 % | +15.9 % | +42.1 % | +75 % |
+| CPU_Stress | 1.300 s | +9.8 % | +25.7 % | +44.7 % | +76.4 % | +129 % |
+
+Monotone under both min and mean; every one of the 15 (scenario × tier) contrasts
+survives a Holm correction *within that family* (paired Wilcoxon over seeds, adjusted
+p = 0.029, the floor for n = 10; A12 = 1.00 in 13 of 15 cells). Three cautions:
+
+- **50 % is a boundary, not a clean tier.** 47 of 210 runs at 50 % (and one at 60 %)
+  found no feasible schedule; the NaN path from §4.3 handled them. Report 90–60 as the
+  ladder and 50 % as where feasibility breaks down.
+- **The energy penalty is not a cap cost.** In 12 of 15 cells the uncapped energy
+  optimum already fits under the cap, so the +1–11 % is under-convergence of the
+  constrained search. Do not present it as what the cap costs.
+- **`statistical_tests_summary.csv` contradicts the claim** — it tests HV/GD/IGD pooled
+  across scenarios with Holm over 2,583 comparisons and finds 0 of 35 base-vs-cap
+  contrasts significant. Open item 2 stands; do not cite that file.
+
+### 9.2 AMOSA failed the tight tiers, and why
+
+At 50 % in GPU_Stress, `AMOSA_PC50` published **no cap-feasible schedule on any seed**
+(8 of 10 seeds failed in Balanced; one GPU_Stress seed at 60 %). The log confirms no
+feasible point was ever *evaluated*, not merely never published. Every other arm found
+some: SA arms 10/10, GA_Energy 5, NSGA-II 4, SPEA-II 3, GA_WT 2.
+
+The cap sits at the edge of what any arm can reach — the SA waiting-time arm's feasible
+schedules are 4–30 W under an 8,397 W cap — and AMOSA cannot make the last step
+because of its **step size**: it mutates every task with probability 0.05, about 25
+reassignments or swaps per move, at every temperature. Peak power is a coincidence
+effect; a schedule a few tens of Watts over the cap is one or two tasks from
+feasibility, and a 25-task jump scrambles the coincidence pattern wholesale. The SA arm
+shrinks its perturbation with temperature and descends on peak power one task at a
+time once cold. Two other candidates were examined and ruled out by ablation (PR #249):
+AMOSA's acceptance rule (objective-space delta-dominance, blind to the size of a
+violation) and its archive collapsing to one member under Deb's rules. An SA-style
+violation-Metropolis rule was trialled and **added nothing** — 0/10 feasible seeds in
+GPU_Stress on its own — so it was not adopted.
+
+### 9.3 What changed (PR #249, 2 commits)
+
+`FixedAMOSAConstrained` now scales `TaskSchedulingMutation`'s per-task rate by
+**T / T0** at each temperature step, so the expected number of mutated tasks falls
+linearly from ~25 while hot, and once that expectation reaches one the wrapper takes
+**exactly one single-task step** (a review finding: the first version's fallback made
+the cold end ~1.37 operations, not one). Acceptance, archive, temperature schedule,
+budget, initialisation and the **uncapped AMOSA are untouched**. Default **on** via
+`AlgorithmParameters.amosaTemperatureScaledMutation`; set it `false` to reproduce the
+committed campaigns, which all predate it.
+
+Evidence — AMOSA-only re-run, 10 seeds, caps pinned to the 31 Aug calibration (the
+unchanged code reproduced the committed AMOSA cells to six decimals first):
+
+| Cell | feasible seeds, before → after | best feasible waiting time, before → after |
+|---|---|---|
+| Balanced 50 % | 2 → **10** | 10.72 s (2 seeds) → **6.12 s** |
+| GPU_Stress 60 % | 9 → **10** | 16.41 s → **9.59 s** |
+| GPU_Stress 50 % | 0 → **10** | none → **11.86 s** |
+| CPU_Stress 50 % | 10 → 10 | 6.00 s → **3.81 s** |
+
+All 13 cells testable by a paired Wilcoxon over seeds improve, by 8 % at the 90 % tier
+up to 42 % at GPU_Stress 60 %, each at p = 0.002 (the floor for n = 10); the energy end
+of AMOSA's feasible front improves 2–7 %. At the 50 % tier AMOSA moves from last, or no
+result, to second or third: Balanced 6.12 s against SA_WT 4.35 / GA_WT 6.56 / NSGA-II
+9.37; GPU_Stress 11.86 s against 7.99 / 15.64 / 17.46; CPU_Stress 3.81 s against 3.00 /
+3.20 / 4.08. Lowest peak reached in GPU_Stress at 50 %: 8,626 W before (cap 8,397 W),
+8,333 W after.
+
+### 9.4 Consequences and open items added
+
+6. **The 31 Aug folder's AMOSA `_PC` cells are stale.** They were produced with the
+   fixed 25-task step. For the article either re-run `PowerCeilingExperiment` (the
+   uncapped arms and the six non-AMOSA constrained arms are unaffected, so only the 150
+   AMOSA constrained runs actually change) or state that AMOSA ran with the old step.
+   The trial result folders were not committed.
+7. **Constrained AMOSA now differs from its uncapped twin in step schedule as well as
+   constraint handling.** Left that way deliberately (owner's call, "mutation change only").
+   The paper should say so in one sentence, or the uncapped AMOSA gets the same scaling
+   and its 30 runs are redone.
+8. **Re-running a subset of arms needs pinned caps.** P_ref is the latency-optimal peak
+   across *all* arms, so deriving it from AMOSA alone moves every cap. The trial used a
+   temporary per-scenario P_ref override in `CampaignRunner`; it was not merged. If
+   subset re-runs become routine, add it back as `ExperimentConfig.referencePeakOverrideWatts`.
