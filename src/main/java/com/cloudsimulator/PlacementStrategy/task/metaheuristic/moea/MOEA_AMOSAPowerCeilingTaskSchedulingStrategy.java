@@ -55,6 +55,10 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
     private int iterationsPerTemperature = 500;
     private int hillClimbingIterations = 20;
 
+    // Temperature-scaled mutation (see FixedAMOSAConstrained): default on. Turn off
+    // to reproduce campaigns run before it existed (up to and including 31 Aug 2026).
+    private boolean temperatureScaledMutation = true;
+
     private ParetoFront lastParetoFront;
     private NondominatedPopulation lastMoeaResult;
     private SchedulingSolution selectedSolution;
@@ -139,6 +143,10 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
             iterationsPerTemperature,
             hillClimbingIterations);
         amosa.setMaxEvaluations(totalEvaluations);
+        amosa.setTemperatureScaledMutation(temperatureScaledMutation);
+        if (config.isVerboseLogging()) {
+            System.out.println("[MOEA-AMOSA-PC] temperatureScaledMutation=" + temperatureScaledMutation);
+        }
 
         while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
             amosa.step();
@@ -319,4 +327,6 @@ public class MOEA_AMOSAPowerCeilingTaskSchedulingStrategy implements MultiObject
     public void setAlpha(double alpha) { this.alpha = alpha; }
     public void setIterationsPerTemperature(int n) { this.iterationsPerTemperature = n; }
     public void setHillClimbingIterations(int n) { this.hillClimbingIterations = n; }
+    /** See {@link FixedAMOSAConstrained#setTemperatureScaledMutation}. Default on. */
+    public void setTemperatureScaledMutation(boolean b) { this.temperatureScaledMutation = b; }
 }

@@ -28,6 +28,29 @@ public class FixedAMOSAConstrained extends AMOSA {
     private final DominanceComparator comparator;
     private int maxEvaluations = Integer.MAX_VALUE;
 
+    private final double initialTemperature;
+
+    /**
+     * Scale the mutation's per-task rate by {@code T / T0} at each temperature
+     * step, so the expected number of mutated tasks falls from the configured value
+     * while hot to a single task once cold — the SA arms' temperature-scaled
+     * perturbation. Only effective when the mutation operator is a
+     * {@link TaskSchedulingMutation}.
+     *
+     * <p>Why it matters under a cap: peak power is a coincidence effect, and a
+     * schedule a few tens of Watts over the cap is usually one or two tasks away
+     * from feasibility. A fixed ~25-task jump scrambles the coincidence pattern
+     * wholesale, so from a near-feasible point it lands somewhere random; a
+     * single-task move once cold lets the annealer descend on peak power. In an
+     * AMOSA-only re-run against the 31 Aug 2026 caps this alone took the
+     * GPU_Stress 50% tier from 0 to 10 feasible seeds and cut the best feasible
+     * waiting time by 7–40% in every other cell (PR #249).</p>
+     *
+     * <p>Default on; {@link #setTemperatureScaledMutation} turns it off to
+     * reproduce campaigns run before it existed.</p>
+     */
+    private boolean temperatureScaledMutation = true;
+
     public FixedAMOSAConstrained(Problem problem, Initialization initialization, Mutation mutation,
                                  double gamma, int softLimit, int hardLimit,
                                  double stoppingTemperature, double initialTemperature, double alpha,
@@ -36,6 +59,7 @@ public class FixedAMOSAConstrained extends AMOSA {
         super(problem, initialization, mutation, gamma, softLimit, hardLimit,
               stoppingTemperature, initialTemperature, alpha,
               numberOfIterationsPerTemperature, numberOfHillClimbingIterationsForRefinement);
+        this.initialTemperature = initialTemperature;
         this.comparator = new ChainedComparator(
             new AggregateConstraintComparator(),
             new ParetoDominanceComparator()
@@ -76,11 +100,21 @@ public class FixedAMOSAConstrained extends AMOSA {
         this.maxEvaluations = maxEvaluations;
     }
 
+    /** See {@link #temperatureScaledMutation}. */
+    public void setTemperatureScaledMutation(boolean enabled) {
+        this.temperatureScaledMutation = enabled;
+    }
+
     @Override
     protected void iterate(double temperature) {
         int iterationsPerTemp = getNumberOfIterationsPerTemperature();
         int sl = getSoftLimit();
         int hl = getHardLimit();
+
+        if (temperatureScaledMutation && mutation instanceof TaskSchedulingMutation
+                && initialTemperature > 0.0) {
+            ((TaskSchedulingMutation) mutation).setRateScale(temperature / initialTemperature);
+        }
 
         for (int i = 0; i < iterationsPerTemp; i++) {
             if (getNumberOfEvaluations() >= maxEvaluations) break;

@@ -24,6 +24,17 @@ public class TaskSchedulingMutation implements Mutation {
     private final int numTasks;
     private final int numVMs;
 
+    /**
+     * Fraction of the configured per-task rate currently in force, in [0, 1].
+     * 1.0 (default) leaves {@link #mutationRate} untouched. Lower values shrink
+     * the <em>expected number</em> of mutated tasks linearly from
+     * {@code mutationRate * numTasks} down to one, mirroring the SA arms'
+     * temperature-scaled perturbation so an annealer can take coarse steps while
+     * hot and single-task steps once cold. Set per temperature step by
+     * {@link FixedAMOSAConstrained} when its temperature-scaled mutation is on.
+     */
+    private double rateScale = 1.0;
+
     public TaskSchedulingMutation(MutationOperator mutationOperator,
                                    RepairOperator repairOperator,
                                    double mutationRate,
@@ -41,6 +52,26 @@ public class TaskSchedulingMutation implements Mutation {
         return "TaskSchedulingMutation";
     }
 
+    /** See {@link #rateScale}; clamped to [0, 1]. */
+    public void setRateScale(double scale) {
+        this.rateScale = Math.max(0.0, Math.min(1.0, scale));
+    }
+
+    public double getRateScale() {
+        return rateScale;
+    }
+
+    /**
+     * Per-task rate after scaling: expected mutated tasks =
+     * {@code 1 + rateScale * (mutationRate * numTasks - 1)}, floored at one task.
+     */
+    double effectiveMutationRate() {
+        if (rateScale >= 1.0 || numTasks <= 0) return mutationRate;
+        double expected = mutationRate * numTasks;
+        if (expected <= 1.0) return mutationRate;
+        return (1.0 + rateScale * (expected - 1.0)) / numTasks;
+    }
+
     @Override
     public Solution mutate(Solution parent) {
         Solution child = parent.copy();
@@ -49,7 +80,7 @@ public class TaskSchedulingMutation implements Mutation {
         SchedulingSolution schedulingSolution = decode(child);
 
         // Apply domain-specific mutation (reassign to valid VMs, swap ordering)
-        boolean mutated = mutationOperator.mutate(schedulingSolution, mutationRate);
+        boolean mutated = mutationOperator.mutate(schedulingSolution, effectiveMutationRate());
 
         // Guarantee at least one mutation. With rate=0.01 and 100 tasks,
         // P(0 mutations) = e^(-1) ≈ 37%. For SA-based search (AMOSA),
