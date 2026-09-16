@@ -30,11 +30,13 @@ The article uses **exactly three** entry points, all in
   `PowerCeilingExperiment` and must not be used or cited.
 - `oldExperiments/` holds archived mains. Not for the article.
 
-Three result folders are committed under `docs/ExperimentResults/`:
+Result folders committed under `docs/ExperimentResults/` (July folders for Makespan / WaitingTime are superseded by the 16 Sep ones):
 
 | Folder | Role |
 |---|---|
-| `PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57` | **The campaign to report** — 90/80/70/60/50 % ladder (§9.1). Its AMOSA `_PC` cells predate the PR #249 step-size fix (§9.4) |
+| `PowerCeilingWaitingTimeVsEnergy_16_09_2026_11_00_12` | **The campaign to report** — 90/80/70/60/50 % ladder, all arms on the final code incl. the AMOSA step-size fix (§9.5) |
+| `MakespanVsEnergy_16_09_2026_11_00_12`, `WaitingTimeVsEnergy_16_09_2026_11_00_12` | **The other two studies to report** — same code; only the AMOSA cells differ from the July folders (§9.5) |
+| `PowerCeilingWaitingTimeVsEnergy_31_08_2026_16_26_57` | Same ladder before the AMOSA fix; identical for every non-AMOSA arm. Keep as the "before" evidence for §9.2 |
 | `PowerCeilingWaitingTimeVsEnergy_28_08_2026_15_01_10` | Previous ladder (90/85/80/75 %); §5 describes it |
 | `PowerCeilingWaitingTimeVsEnergy_13_07_2026_14_03_03` | Superseded percentile-calibrated run. Keep: the §3 diagnosis derives from it, and it is the "before" evidence |
 
@@ -449,7 +451,8 @@ GPU_Stress on its own — so it was not adopted.
 linearly from ~25 while hot, and once that expectation reaches one the wrapper takes
 **exactly one single-task step** (a review finding: the first version's fallback made
 the cold end ~1.37 operations, not one). Acceptance, archive, temperature schedule,
-budget, initialisation and the **uncapped AMOSA are untouched**. Default **on** via
+budget and initialisation are untouched. The uncapped AMOSA was left alone in the first
+two commits and then given the same rule in the third — see §9.5. Default **on** via
 `AlgorithmParameters.amosaTemperatureScaledMutation`; set it `false` to reproduce the
 committed campaigns, which all predate it.
 
@@ -473,12 +476,12 @@ result, to second or third: Balanced 6.12 s against SA_WT 4.35 / GA_WT 6.56 / NS
 
 ### 9.4 Consequences and open items added
 
-6. **The 31 Aug folder's AMOSA `_PC` cells are stale.** They were produced with the
+6. *(closed by §9.5 — all three campaigns re-run)* **The 31 Aug folder's AMOSA `_PC` cells are stale.** They were produced with the
    fixed 25-task step. For the article either re-run `PowerCeilingExperiment` (the
    uncapped arms and the six non-AMOSA constrained arms are unaffected, so only the 150
    AMOSA constrained runs actually change) or state that AMOSA ran with the old step.
    The trial result folders were not committed.
-7. **Constrained AMOSA now differs from its uncapped twin in step schedule as well as
+7. *(closed by §9.5 — the uncapped AMOSA got the same rule)* **Constrained AMOSA now differs from its uncapped twin in step schedule as well as
    constraint handling.** Left that way deliberately (owner's call, "mutation change only").
    The paper should say so in one sentence, or the uncapped AMOSA gets the same scaling
    and its 30 runs are redone.
@@ -486,3 +489,48 @@ result, to second or third: Balanced 6.12 s against SA_WT 4.35 / GA_WT 6.56 / NS
    across *all* arms, so deriving it from AMOSA alone moves every cap. The trial used a
    temporary per-scenario P_ref override in `CampaignRunner`; it was not merged. If
    subset re-runs become routine, add it back as `ExperimentConfig.referencePeakOverrideWatts`.
+
+### 9.5 Same day, later — one AMOSA everywhere, and all three campaigns re-run
+
+The owner's call: even if the other studies got worse, a constrained AMOSA with a
+different step rule from its uncapped twin cannot be explained cleanly, so the
+temperature-scaled mutation was applied to the **uncapped** AMOSA too (PR #249, third
+commit; same `amosaTemperatureScaledMutation` flag drives both) and **all three studies
+were re-run** on the final code. The folders, all `_16_09_2026_11_00_12`:
+`MakespanVsEnergy`, `WaitingTimeVsEnergy`, `PowerCeilingWaitingTimeVsEnergy`. These are
+now the ones to report.
+
+**Everything that was not AMOSA reproduced the previous folders exactly.** In all three
+studies every GA, SA, NSGA-II and SPEA-II run has identical per-seed best objectives,
+raw HV and front sizes (max |diff| = 0). P_ref is 19,650.360 / 16,793.838 / 17,582.581 W
+as before and every cap matches to the Watt, so the ladder is the same physical demand.
+The headline ladder table in §9.1 is unchanged to the decimal, because the SA
+waiting-time arm sets the union front at every tier. (Other arms' `HV_fixed` shift by a
+few thousandths in some scenarios because the fixed reference point is derived from the
+pooled data and AMOSA's front moved; their raw results are identical.)
+
+**The uncapped AMOSA got better, not worse, everywhere.** Mean per-seed `HV_fixed`,
+July folder → 16 Sep folder, every cell p = 0.002 (paired Wilcoxon over seeds):
+
+| Study | Balanced | GPU_Stress | CPU_Stress |
+|---|---|---|---|
+| Makespan vs Energy | 0.264 → 0.409 | 0.311 → 0.395 | 0.254 → 0.406 |
+| Waiting time vs Energy | 0.334 → 0.446 | 0.416 → 0.516 | 0.301 → 0.401 |
+| Power ceiling, uncapped arm | 0.398 → 0.499 | 0.424 → 0.523 | 0.302 → 0.402 |
+
+Best energy improves 2–6 % in every scenario of every study, best waiting time 5–13 %,
+best makespan 2–3 % in two scenarios and flat in the third. AMOSA moves from the weakest
+arm by HV to the middle of the field, level with the single-objective SA arms and still
+behind NSGA-II and the energy-dominance arms. The mechanism is the same as under the cap:
+a fixed 25-task step leaves end-of-run convergence on the table.
+
+**Under the cap the trial result reproduced in the full campaign.** AMOSA feasible seeds
+at 50 %: Balanced 2 → 10, GPU_Stress 0 → 10 (60 %: 9 → 10). Best feasible waiting time
+for AMOSA improves in every tier of every scenario, −8 % to −43 %, p ≤ 0.004. Runs with
+no feasible solution fall from 48 to 29, and all 29 that remain are non-AMOSA arms at the
+50 % probe (GA_WT 8, SPEA-II 9, NSGA-II 7, GA_Energy 5), which is the §9.1 caution again:
+50 % is where feasibility breaks down, now for reasons that are not AMOSA's.
+
+Open items 6 and 7 above are closed by this. Item 8 (pinned caps for subset re-runs)
+stands. The `statistical_tests_summary.csv` caution in §9.1 still applies to the new
+folder — it is the same script.
