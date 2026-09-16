@@ -103,6 +103,10 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
     private int iterationsPerTemperature;
     private int hillClimbingIterations;
 
+    // Temperature-scaled mutation (see FixedAMOSA): default on. Turn off to
+    // reproduce campaigns run before it existed (up to and including 31 Aug 2026).
+    private boolean temperatureScaledMutation = true;
+
     // Cached results
     private ParetoFront lastParetoFront;
     private NondominatedPopulation lastMoeaResult;
@@ -406,6 +410,7 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
             iterationsPerTemperature,
             hillClimbingIterations);
         amosa.setMaxEvaluations(totalEvaluations);
+        amosa.setTemperatureScaledMutation(temperatureScaledMutation);
 
         // Run the optimization (step until max evaluations or termination)
         while (!amosa.isTerminated() && amosa.getNumberOfEvaluations() < totalEvaluations) {
@@ -1022,4 +1027,6 @@ public class MOEA_AMOSATaskSchedulingStrategy implements MultiObjectiveTaskSched
     public boolean[] getObjectiveMinimization() {
         return config.getMinimizationArray();
     }
+    /** See {@link FixedAMOSA#setTemperatureScaledMutation}. Default on. */
+    public void setTemperatureScaledMutation(boolean b) { this.temperatureScaledMutation = b; }
 }

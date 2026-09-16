@@ -24,6 +24,20 @@ public class TaskSchedulingMutation implements Mutation {
     private final int numTasks;
     private final int numVMs;
 
+    /**
+     * Fraction of the configured per-task rate currently in force, in [0, 1].
+     * 1.0 (default) leaves {@link #mutationRate} untouched. Lower values scale
+     * the per-task rate linearly, so the expected number of mutated tasks falls
+     * from {@code mutationRate * numTasks} toward zero; once that expectation is
+     * at or below one task, {@link #mutate} takes exactly one
+     * {@link MutationOperator#mutateSingle} step instead of a probabilistic pass,
+     * so a cold annealer makes a genuine single-task move rather than
+     * {@code max(Binomial(N, 1/N), 1)} of them (about 1.37 on average, and two or
+     * more a quarter of the time). Mirrors the SA arms' temperature-scaled
+     * perturbation; set per temperature step by {@link FixedAMOSAConstrained}.
+     */
+    private double rateScale = 1.0;
+
     public TaskSchedulingMutation(MutationOperator mutationOperator,
                                    RepairOperator repairOperator,
                                    double mutationRate,
@@ -41,6 +55,29 @@ public class TaskSchedulingMutation implements Mutation {
         return "TaskSchedulingMutation";
     }
 
+    /** See {@link #rateScale}; clamped to [0, 1]. */
+    public void setRateScale(double scale) {
+        this.rateScale = Math.max(0.0, Math.min(1.0, scale));
+    }
+
+    public double getRateScale() {
+        return rateScale;
+    }
+
+    /** Per-task rate after scaling: {@code rateScale * mutationRate}. */
+    double effectiveMutationRate() {
+        return rateScale >= 1.0 ? mutationRate : rateScale * mutationRate;
+    }
+
+    /**
+     * True when the scaled rate would mutate at most one task in expectation, in
+     * which case {@link #mutate} performs exactly one single-task step. Never true
+     * at scale 1.0 unless the configured rate itself is that low.
+     */
+    boolean singleStepRegime() {
+        return rateScale < 1.0 && effectiveMutationRate() * numTasks <= 1.0;
+    }
+
     @Override
     public Solution mutate(Solution parent) {
         Solution child = parent.copy();
@@ -48,14 +85,20 @@ public class TaskSchedulingMutation implements Mutation {
         // Decode MOEA Solution to SchedulingSolution
         SchedulingSolution schedulingSolution = decode(child);
 
-        // Apply domain-specific mutation (reassign to valid VMs, swap ordering)
-        boolean mutated = mutationOperator.mutate(schedulingSolution, mutationRate);
-
-        // Guarantee at least one mutation. With rate=0.01 and 100 tasks,
-        // P(0 mutations) = e^(-1) ≈ 37%. For SA-based search (AMOSA),
-        // every neighbor must be distinct to avoid wasting evaluations.
-        if (!mutated) {
+        if (singleStepRegime()) {
+            // Cold endpoint of the temperature-scaled schedule: exactly one
+            // single-task step, not a probabilistic pass plus a fallback.
             mutationOperator.mutateSingle(schedulingSolution);
+        } else {
+            // Apply domain-specific mutation (reassign to valid VMs, swap ordering)
+            boolean mutated = mutationOperator.mutate(schedulingSolution, effectiveMutationRate());
+
+            // Guarantee at least one mutation. With rate=0.01 and 100 tasks,
+            // P(0 mutations) = e^(-1) ≈ 37%. For SA-based search (AMOSA),
+            // every neighbor must be distinct to avoid wasting evaluations.
+            if (!mutated) {
+                mutationOperator.mutateSingle(schedulingSolution);
+            }
         }
 
         // Repair any constraint violations

@@ -32,6 +32,19 @@ public class FixedAMOSA extends AMOSA {
     private final DominanceComparator comparator;
     private int maxEvaluations = Integer.MAX_VALUE;
 
+    private final double initialTemperature;
+
+    /**
+     * Scale the mutation's per-task rate by {@code T / T0} at each temperature
+     * step (see {@link FixedAMOSAConstrained} for the rationale and evidence):
+     * the expected number of mutated tasks falls linearly from the configured
+     * value while hot, and each move is exactly one single-task step once cold.
+     * Applied to the uncapped arm too so it differs from its constrained twin
+     * only in constraint handling. Default on; set false to reproduce campaigns
+     * that predate it (all folders up to and including 31 Aug 2026).
+     */
+    private boolean temperatureScaledMutation = true;
+
     public FixedAMOSA(Problem problem, Initialization initialization, Mutation mutation,
                       double gamma, int softLimit, int hardLimit,
                       double stoppingTemperature, double initialTemperature, double alpha,
@@ -40,6 +53,7 @@ public class FixedAMOSA extends AMOSA {
         super(problem, initialization, mutation, gamma, softLimit, hardLimit,
               stoppingTemperature, initialTemperature, alpha,
               numberOfIterationsPerTemperature, numberOfHillClimbingIterationsForRefinement);
+        this.initialTemperature = initialTemperature;
         this.comparator = new ParetoDominanceComparator();
     }
 
@@ -52,11 +66,21 @@ public class FixedAMOSA extends AMOSA {
         this.maxEvaluations = maxEvaluations;
     }
 
+    /** See {@link #temperatureScaledMutation}. */
+    public void setTemperatureScaledMutation(boolean enabled) {
+        this.temperatureScaledMutation = enabled;
+    }
+
     @Override
     protected void iterate(double temperature) {
         int iterationsPerTemp = getNumberOfIterationsPerTemperature();
         int sl = getSoftLimit();
         int hl = getHardLimit();
+
+        if (temperatureScaledMutation && mutation instanceof TaskSchedulingMutation
+                && initialTemperature > 0.0) {
+            ((TaskSchedulingMutation) mutation).setRateScale(temperature / initialTemperature);
+        }
 
         for (int i = 0; i < iterationsPerTemp; i++) {
             if (getNumberOfEvaluations() >= maxEvaluations) break;

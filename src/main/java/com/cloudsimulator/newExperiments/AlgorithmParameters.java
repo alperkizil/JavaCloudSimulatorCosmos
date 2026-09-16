@@ -86,6 +86,16 @@ public final class AlgorithmParameters {
     public int amosaHillClimbingIters = 50;
     public double amosaGamma = 2.0;
     public double amosaMutationRate = 0.05;
+    /**
+     * AMOSA (uncapped and constrained): scale the per-task mutation rate by T/T0 each
+     * temperature step, so the expected number of mutated tasks shrinks linearly
+     * from {@code amosaMutationRate * numTasks} (~25) while hot, and each move is
+     * exactly one single-task step once cold, as the SA arms' scaled perturbation
+     * does. Default on. The PowerCeiling
+     * campaigns up to and including 31 Aug 2026 ran with this off; set it false to
+     * reproduce them. See {@code FixedAMOSAConstrained} for the evidence.
+     */
+    public boolean amosaTemperatureScaledMutation = true;
 
     /** Returns parameters identical to the legacy runner constants. */
     public static AlgorithmParameters defaults() {
