@@ -87,7 +87,7 @@ public final class AlgorithmParameters {
     public double amosaGamma = 2.0;
     public double amosaMutationRate = 0.05;
     /**
-     * Constrained (_PC) AMOSA only: scale the per-task mutation rate by T/T0 each
+     * AMOSA (uncapped and constrained): scale the per-task mutation rate by T/T0 each
      * temperature step, so the expected number of mutated tasks shrinks linearly
      * from {@code amosaMutationRate * numTasks} (~25) while hot, and each move is
      * exactly one single-task step once cold, as the SA arms' scaled perturbation

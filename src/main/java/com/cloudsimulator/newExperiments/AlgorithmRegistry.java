@@ -468,6 +468,7 @@ public final class AlgorithmRegistry {
         strategy.setGamma(p.amosaGamma);
         strategy.setIterationsPerTemperature(p.amosaIterationsPerTemp);
         strategy.setHillClimbingIterations(p.amosaHillClimbingIters);
+        strategy.setTemperatureScaledMutation(p.amosaTemperatureScaledMutation);
         return strategy;
     }
 
