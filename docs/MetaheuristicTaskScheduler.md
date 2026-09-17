@@ -605,7 +605,9 @@ the memory and the output. Whether a mutated neighbor is accepted depends on
 its domination relationship to the current point *and* the archive, weighted
 by an "amount of domination" (how *much* better/worse, not just yes/no). The
 archive is kept small by clustering: above 100 members it is truncated to the
-50 cluster centers.
+50 cluster centers. The neighbourhood shrinks as the annealer cools: a move
+changes about 25 tasks while hot and exactly one task once cold, the same idea
+as SA's scaled perturbation in §5.2.
 
 The *amount of domination* between $a$ and $b$ is the geometric mean of the
 normalized objective gaps (`FixedAMOSA.calculateDeltaDominance`; $r_i$ =
@@ -629,15 +631,18 @@ Acceptance of a mutated neighbor $s'$ against current point $s$
 
 $T$ falls geometrically from 15.0 (× 0.95 per step, ≈ 200 temperature levels
 within budget), so dominated moves are almost never accepted early and
-approach 50/50 as $T \to 0$.
+approach 50/50 as $T \to 0$. Since PR #250 the same $T$ also sets the size of
+the move: the per-task mutation rate is scaled by $T/T_0$ at the start of every
+temperature level.
 
 ```
 build 200 initial candidates (2 heuristic seeds + 198 random)     # gamma × softLimit
 evaluate each, hill-climb each for 50 iterations                  # = 10,200 evaluations
 archive <- non-dominated survivors; s <- an archive member; T <- 15.0
 while evaluations < 40,000 + 10,200:
+    scale <- T / T0                                               # mutation step size
     repeat 200 times:                                             # iterations per temperature
-        s' <- s with each task gene mutated at prob 0.05 (at least 1 move); repair; evaluate
+        s' <- s with each task gene mutated at prob 0.05 × scale; if that expects ≤ 1 move, exactly 1 move; repair; evaluate
         accept / archive per the case table above
         if archive > 100 members: cluster and truncate to 50      # soft/hard limit
     T <- 0.95 × T
@@ -654,14 +659,27 @@ Parameters used by the runners (`AlgorithmParameters` →
 | Soft / hard archive limit | 100 / 50 | single-linkage cluster truncation |
 | $\gamma$ (init scaling) | 2.0 | initial candidates = $\gamma \times$ soft limit = 200 |
 | Hill-climbing iterations | 50 per initial candidate | archive construction |
-| Mutation rate | **0.05** per task gene (≈ 25 moves per neighbor; min 1) | AMOSA's own rate — deliberately not retuned in PR #222 |
+| Mutation rate | **0.05 × T/T₀** per task gene (≈ 25 moves per neighbor at T₀, falling linearly to exactly 1 once cold) | base rate is AMOSA's own, not retuned in PR #222; temperature scaling added in PR #250 for both the uncapped and the `_PC` arm |
 | Seeds | LPT/WA + EnergyAware | injected among the 200 initial candidates |
 | Termination | 40,000 evaluations **+ 10,200 archive-init grant** | the grant is intrinsic to `AMOSA.initialize()`; granted on top so the annealing search gets the full 40 k (disclose in the paper — HANDOFF §3.2) |
+
+Why the step is scaled: peak power is a coincidence effect, and a schedule a
+few tens of Watts over a cap is one or two task placements away from fitting
+under it. A fixed ~25-task jump cannot make that adjustment, which is why the
+constrained AMOSA found no feasible schedule at the 50 % tier in GPU_Stress
+before the change and finds one on every seed after it. Without a cap the same
+mechanism costs end-of-run convergence: the uncapped arm's hypervolume rises
+24–60 % across the three studies once the cold-end moves are single-task.
+Both AMOSA arms use the rule, so the constrained arm differs from its
+uncapped twin only in constraint handling.
 
 `FixedAMOSA` exists because MOEA Framework's `AMOSA.calculateDeltaDominance`
 initializes its product with 0.0 (always returning 0, flattening every
 acceptance probability to 0.5) and divides by zero on zero-range objectives;
-the subclass fixes both and uses the geometric mean above.
+the subclass fixes both and uses the geometric mean above. It is also where
+the mutation scale is set each temperature level
+(`TaskSchedulingMutation.setRateScale`); `FixedAMOSAConstrained` does the same
+for the power-ceiling arm.
 
 ---
 
