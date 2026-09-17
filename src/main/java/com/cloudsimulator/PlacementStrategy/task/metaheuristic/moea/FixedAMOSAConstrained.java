@@ -28,6 +28,8 @@ public class FixedAMOSAConstrained extends AMOSA {
     private final DominanceComparator comparator;
     private int maxEvaluations = Integer.MAX_VALUE;
 
+    private final double initialTemperature;
+
     public FixedAMOSAConstrained(Problem problem, Initialization initialization, Mutation mutation,
                                  double gamma, int softLimit, int hardLimit,
                                  double stoppingTemperature, double initialTemperature, double alpha,
@@ -36,6 +38,7 @@ public class FixedAMOSAConstrained extends AMOSA {
         super(problem, initialization, mutation, gamma, softLimit, hardLimit,
               stoppingTemperature, initialTemperature, alpha,
               numberOfIterationsPerTemperature, numberOfHillClimbingIterationsForRefinement);
+        this.initialTemperature = initialTemperature;
         this.comparator = new ChainedComparator(
             new AggregateConstraintComparator(),
             new ParetoDominanceComparator()
@@ -81,6 +84,15 @@ public class FixedAMOSAConstrained extends AMOSA {
         int iterationsPerTemp = getNumberOfIterationsPerTemperature();
         int sl = getSoftLimit();
         int hl = getHardLimit();
+
+        // Temperature-scaled mutation: shrink the per-task rate with T/T0 so the move
+        // goes from ~mutationRate*numTasks tasks while hot to exactly one task once
+        // cold (see TaskSchedulingMutation.setRateScale). A fixed ~25-task step cannot
+        // make the one-task adjustment that a near-feasible schedule needs under a
+        // power cap, and leaves end-of-run convergence on the table without one.
+        if (mutation instanceof TaskSchedulingMutation && initialTemperature > 0.0) {
+            ((TaskSchedulingMutation) mutation).setRateScale(temperature / initialTemperature);
+        }
 
         for (int i = 0; i < iterationsPerTemp; i++) {
             if (getNumberOfEvaluations() >= maxEvaluations) break;
