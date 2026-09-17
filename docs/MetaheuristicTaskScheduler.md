@@ -608,9 +608,11 @@ archive is kept small by clustering: above 100 members it is truncated to the
 50 cluster centers.
 
 > [!CAUTION]
-> **Changed in PR #250.** The neighbourhood shrinks as the annealer cools: a
-> move changes about 25 tasks while hot and exactly one task once cold, the
-> same idea as SA's scaled perturbation in §5.2.
+> **Changed in PR #250.** Each step, AMOSA takes the current schedule and
+> changes it a little to get a new one to try. How much it changes now depends
+> on the temperature. Early in the run (hot) a step changes about 25 tasks.
+> As the run cools, a step changes fewer tasks, until at the end (cold) a
+> step changes exactly one task. SA already works this way (§5.2).
 
 The *amount of domination* between $a$ and $b$ is the geometric mean of the
 normalized objective gaps (`FixedAMOSA.calculateDeltaDominance`; $r_i$ =
@@ -637,9 +639,12 @@ within budget), so dominated moves are almost never accepted early and
 approach 50/50 as $T \to 0$.
 
 > [!CAUTION]
-> **Changed in PR #250.** The same $T$ now also sets the size of the move: the
-> per-task mutation rate is scaled by $T/T_0$ at the start of every temperature
-> level.
+> **Changed in PR #250.** Before, the temperature only decided how willing
+> AMOSA was to accept a worse schedule. Now it also decides how big a step is.
+> At each temperature level the chance that any one task gets changed is
+> 0.05 multiplied by $T/T_0$, the current temperature as a fraction of the
+> starting temperature. So the chance starts at 0.05 and shrinks toward zero
+> as the run cools.
 
 ```
 build 200 initial candidates (2 heuristic seeds + 198 random)     # gamma × softLimit
@@ -665,20 +670,23 @@ Parameters used by the runners (`AlgorithmParameters` →
 | Soft / hard archive limit | 100 / 50 | single-linkage cluster truncation |
 | $\gamma$ (init scaling) | 2.0 | initial candidates = $\gamma \times$ soft limit = 200 |
 | Hill-climbing iterations | 50 per initial candidate | archive construction |
-| Mutation rate | **0.05 × T/T₀** per task gene (≈ 25 moves per neighbor at T₀, falling linearly to exactly 1 once cold) | 🔴 **changed in PR #250**: temperature scaling, for both the uncapped and the `_PC` arm; the base rate is AMOSA's own, not retuned in PR #222 |
+| Mutation rate | **0.05 × T/T₀** per task (about 25 tasks changed per step while hot, going down to exactly 1 task once cold) | 🔴 **changed in PR #250**: the step now shrinks with temperature, for both the plain and the power-capped AMOSA; the 0.05 itself is AMOSA's own value, not retuned in PR #222 |
 | Seeds | LPT/WA + EnergyAware | injected among the 200 initial candidates |
 | Termination | 40,000 evaluations **+ 10,200 archive-init grant** | the grant is intrinsic to `AMOSA.initialize()`; granted on top so the annealing search gets the full 40 k (disclose in the paper — HANDOFF §3.2) |
 
 > [!CAUTION]
-> **Changed in PR #250 — why the step is scaled.** Peak power is a coincidence
-> effect, and a schedule a few tens of Watts over a cap is one or two task
-> placements away from fitting under it. A fixed ~25-task jump cannot make that
-> adjustment, which is why the constrained AMOSA found no feasible schedule at
-> the 50 % tier in GPU_Stress before the change and finds one on every seed
-> after it. Without a cap the same mechanism costs end-of-run convergence: the
-> uncapped arm's hypervolume rises 24–60 % across the three studies once the
-> cold-end moves are single-task. Both AMOSA arms use the rule, so the
-> constrained arm differs from its uncapped twin only in constraint handling.
+> **Changed in PR #250 — why the step shrinks.** Peak power depends on which
+> power-hungry tasks happen to run at the same moment. A schedule that is just
+> a little over the power cap is usually only one or two task placements away
+> from fitting under it. A step that changes 25 tasks at once throws that
+> near-fit away and lands somewhere random, so AMOSA could get close to the cap
+> but never take the last small step. That is why, before this change, the
+> power-capped AMOSA found no schedule under the 50 % cap in GPU_Stress on any
+> seed, and after it finds one on every seed. The change helps without a cap
+> too: small steps at the end of the run let AMOSA polish its schedules, and
+> its hypervolume rose by 24–60 % in all three studies. Both the plain and the
+> power-capped AMOSA use the same rule, so the only difference between them is
+> that one respects the cap.
 
 `FixedAMOSA` exists because MOEA Framework's `AMOSA.calculateDeltaDominance`
 initializes its product with 0.0 (always returning 0, flattening every
@@ -686,9 +694,10 @@ acceptance probability to 0.5) and divides by zero on zero-range objectives;
 the subclass fixes both and uses the geometric mean above.
 
 > [!CAUTION]
-> **Changed in PR #250.** `FixedAMOSA` is also where the mutation scale is set
-> each temperature level (`TaskSchedulingMutation.setRateScale`);
-> `FixedAMOSAConstrained` does the same for the power-ceiling arm.
+> **Changed in PR #250.** `FixedAMOSA` is also the place where the step size is
+> set at each temperature level, by calling
+> `TaskSchedulingMutation.setRateScale`. `FixedAMOSAConstrained` does the same
+> for the power-capped version.
 
 ---
 
