@@ -606,7 +606,11 @@ its domination relationship to the current point *and* the archive, weighted
 by an "amount of domination" (how *much* better/worse, not just yes/no). The
 archive is kept small by clustering: above 100 members it is truncated to the
 50 cluster centers.
-$\color{red}{\text{The neighbourhood shrinks as the annealer cools: a move changes about 25 tasks while hot and exactly one task once cold, the same idea as SA's scaled perturbation in §5.2.}}$
+
+> [!CAUTION]
+> **Changed in PR #250.** The neighbourhood shrinks as the annealer cools: a
+> move changes about 25 tasks while hot and exactly one task once cold, the
+> same idea as SA's scaled perturbation in §5.2.
 
 The *amount of domination* between $a$ and $b$ is the geometric mean of the
 normalized objective gaps (`FixedAMOSA.calculateDeltaDominance`; $r_i$ =
@@ -631,7 +635,11 @@ Acceptance of a mutated neighbor $s'$ against current point $s$
 $T$ falls geometrically from 15.0 (× 0.95 per step, ≈ 200 temperature levels
 within budget), so dominated moves are almost never accepted early and
 approach 50/50 as $T \to 0$.
-$\color{red}{\text{Since PR \#250 the same } T \text{ also sets the size of the move: the per-task mutation rate is scaled by } T/T_0 \text{ at the start of every temperature level.}}$
+
+> [!CAUTION]
+> **Changed in PR #250.** The same $T$ now also sets the size of the move: the
+> per-task mutation rate is scaled by $T/T_0$ at the start of every temperature
+> level.
 
 ```
 build 200 initial candidates (2 heuristic seeds + 198 random)     # gamma × softLimit
@@ -657,17 +665,30 @@ Parameters used by the runners (`AlgorithmParameters` →
 | Soft / hard archive limit | 100 / 50 | single-linkage cluster truncation |
 | $\gamma$ (init scaling) | 2.0 | initial candidates = $\gamma \times$ soft limit = 200 |
 | Hill-climbing iterations | 50 per initial candidate | archive construction |
-| Mutation rate | $\color{red}{\mathbf{0.05 \times T/T_0} \text{ per task gene (about 25 moves per neighbor at } T_0 \text{, falling linearly to exactly 1 once cold)}}$ | base rate is AMOSA's own, not retuned in PR #222; $\color{red}{\text{temperature scaling added in PR \#250 for both the uncapped and the constrained (PC) arm}}$ |
+| Mutation rate | **0.05 × T/T₀** per task gene (≈ 25 moves per neighbor at T₀, falling linearly to exactly 1 once cold) | 🔴 **changed in PR #250**: temperature scaling, for both the uncapped and the `_PC` arm; the base rate is AMOSA's own, not retuned in PR #222 |
 | Seeds | LPT/WA + EnergyAware | injected among the 200 initial candidates |
 | Termination | 40,000 evaluations **+ 10,200 archive-init grant** | the grant is intrinsic to `AMOSA.initialize()`; granted on top so the annealing search gets the full 40 k (disclose in the paper — HANDOFF §3.2) |
 
-$\color{red}{\text{Why the step is scaled: peak power is a coincidence effect, and a schedule a few tens of Watts over a cap is one or two task placements away from fitting under it. A fixed 25-task jump cannot make that adjustment, which is why the constrained AMOSA found no feasible schedule at the 50\% tier in GPU\_Stress before the change and finds one on every seed after it. Without a cap the same mechanism costs end-of-run convergence: the uncapped arm's hypervolume rises 24–60\% across the three studies once the cold-end moves are single-task. Both AMOSA arms use the rule, so the constrained arm differs from its uncapped twin only in constraint handling.}}$
+> [!CAUTION]
+> **Changed in PR #250 — why the step is scaled.** Peak power is a coincidence
+> effect, and a schedule a few tens of Watts over a cap is one or two task
+> placements away from fitting under it. A fixed ~25-task jump cannot make that
+> adjustment, which is why the constrained AMOSA found no feasible schedule at
+> the 50 % tier in GPU_Stress before the change and finds one on every seed
+> after it. Without a cap the same mechanism costs end-of-run convergence: the
+> uncapped arm's hypervolume rises 24–60 % across the three studies once the
+> cold-end moves are single-task. Both AMOSA arms use the rule, so the
+> constrained arm differs from its uncapped twin only in constraint handling.
 
 `FixedAMOSA` exists because MOEA Framework's `AMOSA.calculateDeltaDominance`
 initializes its product with 0.0 (always returning 0, flattening every
 acceptance probability to 0.5) and divides by zero on zero-range objectives;
 the subclass fixes both and uses the geometric mean above.
-$\color{red}{\text{It is also where the mutation scale is set each temperature level (}\texttt{TaskSchedulingMutation.setRateScale}\text{); }\texttt{FixedAMOSAConstrained}\text{ does the same for the power-ceiling arm.}}$
+
+> [!CAUTION]
+> **Changed in PR #250.** `FixedAMOSA` is also where the mutation scale is set
+> each temperature level (`TaskSchedulingMutation.setRateScale`);
+> `FixedAMOSAConstrained` does the same for the power-ceiling arm.
 
 ---
 
