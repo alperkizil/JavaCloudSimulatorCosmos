@@ -2,7 +2,10 @@
 
 ## Session Handoff — READ FIRST
 
-**Article 1 is submitted and frozen.** The submitted state is the protected tag
+**The article is submitted and frozen:** *Energy Aware Hybrid CPU and GPU Virtual Machine
+Scheduling*, submitted to *IEEE Transactions on Parallel and Distributed Systems*
+(Submission ID `fb3a7e80-40c4-4b06-a7b8-86fe6d0de244`). Older notes, the tag and
+`article1problem.md` call it "Article 1". The submitted state is the protected tag
 `article1-submitted` (commit `322a0ff`), archived on Zenodo as
 [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629), with a protected copy
 on branch `Article1-article1-submitted`. Its three studies are the entry points in
@@ -14,10 +17,10 @@ the power-cap study (its §5 figures are from the 28 Aug run, superseded by 17 S
 
 **Current focus: the multi-DC carbon study (reopened by the owner on 2026-10-05).** Read
 `docs/proposals/MultiDC-Carbon-PeakPower-Migration-Proposal.md` and `HANDOFF.md` §0.
-Two of the proposal's "resolved" decisions predate Article 1's final results and must be
-revisited with the owner before they are implemented:
+Two of the proposal's "resolved" decisions predate the article's final results and must
+be revisited with the owner before they are implemented:
 
-- **D15 (cap tiers at 90/60/30 % feasibility percentiles, "as in paper 1").** Article 1
+- **D15 (cap tiers at 90/60/30 % feasibility percentiles, "as in paper 1").** The article
   dropped percentile calibration because it barely constrained anything
   (`article1problem.md` §3.1) and anchors tiers to a reference peak instead (P_ref;
   90/80/70/60/50 %, `PowerCapCalibrator.DEFAULT_ANCHOR_FRACTIONS`).
