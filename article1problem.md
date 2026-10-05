@@ -1,5 +1,11 @@
 # Article 1 — The Power-Cap Problem
 
+> **History, not the current state.** Written on 2026-08-31. The power-cap campaign
+> reported in Article 1 is the 17 Sep 2026 run
+> (`docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_17_09_2026_10_56_32`), with cap
+> tiers at 90/80/70/60/50 % of P_ref, not the 28 Aug run and 90/85/80/75 % tiers described
+> below. For the current state and the owner's rules, read `CLAUDE.md`.
+
 Handoff for the next Claude instance. State as of 2026-08-31. The code work is
 **merged** (PR #245, from `claude/powercap-solution-quality-d3w0lm`), and the campaign it
 enables has **been run** — see §5 for the results.

@@ -11,3 +11,9 @@
 docs/ExperimentResults/**/*.csv text eol=lf
 docs/ExperimentResults/**/*.json text eol=lf
 docs/ExperimentResults/**/*.txt text eol=lf
+
+# These two folders were committed with CRLF line endings before the rules above
+# existed. They are kept exactly as committed, so exempt them from normalisation;
+# otherwise every fresh checkout shows their 38 files as modified.
+docs/ExperimentResults/MakespanVsEnergy_13_07_2026_14_02_48/** -text
+docs/ExperimentResults/WaitingTimeVsEnergy_13_07_2026_14_02_51/** -text
