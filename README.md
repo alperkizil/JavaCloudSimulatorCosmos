@@ -1,1119 +1,310 @@
 # JavaCloudSimulatorCosmos
 
-**Version 1.0**
+A discrete-time cloud datacenter simulator in Java for **offline task scheduling**. It
+models datacenters, hosts, virtual machines and tasks at a one-second resolution, with
+energy taken from a **power model built on wall-plug measurements of real hardware**. On
+top of the simulator it compares single- and multi-objective metaheuristics on time–energy
+trade-offs, optionally under a datacenter **power cap**.
 
-A comprehensive cloud VM task scheduling simulation framework in Java for modeling datacenter operations, energy consumption, and workload scheduling. Built following object-oriented design principles and Gang of Four design patterns.
-
-## Overview
-
-JavaCloudSimulatorCosmos enables researchers and practitioners to simulate cloud computing environments with:
-
-- **Multi-datacenter infrastructure** modeling with power constraints
-- **Virtual machine placement** across physical hosts
-- **Task scheduling** with multiple optimization strategies
-- **Energy and carbon footprint** tracking with regional carbon intensity
-- **SLA compliance** monitoring with percentile metrics
-- **Multi-objective optimization** using NSGA-II algorithm
-- **Single/weighted-sum optimization** using Generational GA with Elitism
-- **Comprehensive reporting** with CSV export
+Article 1 (submitted) is archived as tag `article1-submitted` —
+DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
 
 ---
 
-## Table of Contents
+## Contents
 
-1. [Architecture](#architecture)
-2. [Core Model Classes](#core-model-classes)
-3. [Simulation Engine](#simulation-engine)
-4. [Simulation Steps](#simulation-steps)
-5. [Placement and Scheduling Strategies](#placement-and-scheduling-strategies)
-6. [Configuration System](#configuration-system)
-7. [GUI Configuration Generator](#gui-configuration-generator)
-8. [Workload Types](#workload-types)
-9. [Quick Start](#quick-start)
-10. [Development](#development)
-
----
-
-## Architecture
-
-### Design Patterns
-
-| Pattern | Implementation | Purpose |
-|---------|----------------|---------|
-| **Strategy** | Placement and scheduling algorithms | Interchangeable algorithms without modifying client code |
-| **Template Method** | `SimulationEngine` | Defines simulation flow with customizable steps |
-| **Factory** | `PowerModelFactory` | Creates power models based on configuration |
-| **Singleton** | `RandomGenerator` | Ensures experiment repeatability with seeded randomness |
-| **Observer** | `SimulationContext` | Centralized state management and event notification |
-
-### Package Structure
-
-```
-com.cloudsimulator
-├── model/              # Domain models (CloudDatacenter, Host, VM, Task, User)
-├── enums/              # Enumerations (ComputeType, VmState, WorkloadType, etc.)
-├── engine/             # Core simulation engine (SimulationEngine, SimulationContext)
-├── utils/              # Utilities (RandomGenerator, SimulationLogger, SimulationClock)
-├── factory/            # Factories (PowerModelFactory)
-├── config/             # Configuration system (.cosc file parsing)
-├── steps/              # 10 simulation step implementations
-├── PlacementStrategy/  # Placement and assignment strategies
-│   ├── hostPlacement/  # 5 host placement strategies
-│   ├── VMPlacement/    # 4 VM placement strategies
-│   └── task/           # 3 task assignment strategies + metaheuristics
-│       └── metaheuristic/  # Metaheuristic optimization framework
-│           ├── objectives/    # Scheduling objectives (Makespan, Energy)
-│           ├── operators/     # Genetic operators (Crossover, Mutation, Repair)
-│           ├── selection/     # Selection operators (Tournament)
-│           ├── termination/   # Termination conditions
-│           └── cooling/       # SA cooling schedules (Geometric, Adaptive, etc.)
-├── calculator/         # Energy calculators
-├── reporter/           # CSV report generators (6 report types)
-└── gui/                # JavaFX Configuration Generator
-```
+1. [What it models](#what-it-models)
+2. [Repository layout](#repository-layout)
+3. [Requirements and build](#requirements-and-build)
+4. [Running the studies](#running-the-studies)
+5. [Using the simulator directly](#using-the-simulator-directly)
+6. [Scheduling strategies](#scheduling-strategies)
+7. [Configuration files and the GUI](#configuration-files-and-the-gui)
+8. [Tests](#tests)
+9. [Further documentation](#further-documentation)
+10. [Reproducing Article 1](#reproducing-article-1)
+11. [License and citation](#license-and-citation)
 
 ---
 
-## Core Model Classes
+## What it models
 
-### CloudDatacenter
+- **Infrastructure.** Datacenters (host capacity, power budget), hosts of three compute
+  types (`CPU_ONLY`, `GPU_ONLY`, `CPU_GPU_MIXED`), VMs owned by users, and tasks of eleven
+  workload types (`SEVEN_ZIP`, `DATABASE`, `FURMARK`, `IMAGE_GEN_CPU`, `IMAGE_GEN_GPU`,
+  `LLM_CPU`, `LLM_GPU`, `CINEBENCH`, `PRIME95SmallFFT`, `VERACRYPT`, `IDLE`).
+- **Execution.** Time advances in 1-second ticks. Each vCPU is bound 1:1 to a physical
+  core (no oversubscription) and runs its own FIFO lane of tasks; a VM's effective
+  per-vCPU speed is the lower of its requested speed and its host's per-core speed. A task
+  of length *L* instructions occupies a lane for ⌈*L* / speed⌉ ticks.
+- **Power and energy.** `MeasurementBasedPowerModel` uses wall-plug measurements of a Dell
+  Precision 7920 workstation with an Nvidia 5080 GPU (October–November 2025; measurement
+  log in `power_log_template_v2.txt`):
+  - idle power 75.79 W per active host; a host with no running task draws 0 W;
+  - a fixed incremental power per workload (e.g. `VERACRYPT` 19.25 W, `SEVEN_ZIP`
+    130.29 W, `FURMARK` 352.18 W) for every busy lane;
+  - speed scaling: incremental power × (lane speed / reference speed)^1.5. The reference
+    speed defaults to 3 GIPS (`MeasurementBasedPowerModel.DEFAULT_REFERENCE_IPS`); the
+    studies replace it with the median host per-core speed (2.8 GIPS for the study fleet)
+    through `EnergyObjective.setHosts`, which also pushes it into every host's power model.
 
-Represents a physical datacenter facility with power constraints and host management.
+  The power-model name in a `.cosc` host line is parsed but does not change the energy
+  figures: every host uses the measurement-based model.
+- **Metrics.** Makespan, waiting / turnaround / execution times, IT and facility energy
+  (PUE, default 1.5), coincident peak power of the whole fleet, carbon footprint (regional
+  constants) and cost.
 
-**Attributes:**
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `name` | `String` | Unique datacenter identifier |
-| `maxHostCapacity` | `int` | Maximum number of physical hosts |
-| `totalMaxPowerDrawWatts` | `double` | Power budget in watts |
-| `hosts` | `List<Host>` | Physical servers in this datacenter |
-| `totalEnergyConsumedJoules` | `double` | Cumulative energy consumption |
+## Repository layout
 
-**Key Methods:**
+| Path | Contents |
+|---|---|
+| `src/main/java/com/cloudsimulator/model/` | Datacenter, host, VM, task, user, CPU core / GPU binding, power models |
+| `…/engine/` | `SimulationEngine`, `SimulationContext`, step and listener interfaces |
+| `…/steps/` | The ten simulation steps (initialisation → reporting) |
+| `…/PlacementStrategy/` | Host placement, VM placement, task assignment and the metaheuristics |
+| `…/observer/` | Campaign analysis: `ParetoAnalyzer` (HV, HV_fixed, GD, IGD, Spacing, Eps+, contribution) and `ExperimentReporter` (CSV output) |
+| `…/newExperiments/` | The three study entry points and the shared campaign driver |
+| `…/config/` | `.cosc` parser and configuration classes |
+| `…/multiobjectivePerformance/PerfMet/` | Quality-indicator implementations used by `ParetoAnalyzer` |
+| `…/enums/`, `…/utils/`, `…/factory/` | Enumerations, seeded `RandomGenerator`, clock, logger, power-model factory |
+| `…/FinalExperiment/`, `…/reporter/`, `…/gui/` | Legacy runners, legacy CSV reporters, JavaFX config generator |
+| `src/test/java/` | Test programs (see [Tests](#tests)) |
+| `oldExperiments/` | Archived experiment mains (not compiled by Maven) |
+| `scripts/` | Python post-processing and analysis tools |
+| `configs/` | Example `.cosc` configuration files |
+| `docs/` | Detailed documentation, committed campaign results and proposals |
+| `lib/` | MOEA Framework 4.5 and its dependencies |
 
-```java
-// Host management
-boolean addHost(Host host)           // Add host if capacity and power allow
-boolean canAcceptHost(Host host)     // Check capacity and power constraints
-List<Host> getAvailableHosts()       // Get hosts that can accept VMs
+## Requirements and build
 
-// Power and energy
-boolean isPowerLimitReached()        // Check if power budget exhausted
-double getTotalCurrentPowerDrawWatts()  // Sum of all host power consumption
-double getTotalEnergyConsumedKWh()   // Get energy in kilowatt-hours
+- **Java 17** or later.
+- **Python 3** with `numpy`, `pandas` and `matplotlib` for the post-run scripts.
+  `scripts/analyze_power_cap_campaign.py` also needs `scipy`; `scripts/results_explorer.py`
+  needs `tkinter` (and optionally `openpyxl`).
+- **Maven** is optional; it is needed only for the JavaFX GUI.
 
-// Utilization
-double getAverageCpuUtilization()    // Average CPU utilization across hosts
-double getAverageGpuUtilization()    // Average GPU utilization across hosts
+Compile with `javac` and the jars in `lib/`:
+
+```bash
+# Framework and studies (the GUI needs JavaFX, which is not in lib/)
+find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
+
+# Optionally also the archived experiments
+find src/main/java oldExperiments -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
 ```
 
-### Host
+With Maven: `mvn compile`, and `mvn javafx:run` for the GUI.
 
-Physical server with compute resources, power modeling, and VM hosting capability.
+## Running the studies
 
-**Attributes:**
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `ipsPerSecond` | `long` | Instructions per second capacity |
-| `cpuCores` | `int` | Total CPU cores |
-| `gpus` | `int` | Total GPU units |
-| `ramMB` | `int` | Total RAM in megabytes |
-| `networkMbps` | `int` | Network bandwidth |
-| `storageMB` | `int` | Storage capacity |
-| `computeType` | `ComputeType` | CPU_ONLY, GPU_ONLY, or CPU_GPU_MIXED |
-| `powerModel` | `PowerModel` | Energy calculation model |
-| `assignedVMs` | `List<VM>` | VMs running on this host |
+The three studies of Article 1 live in `src/main/java/com/cloudsimulator/newExperiments/`.
+Run them from the repository root:
 
-**Key Methods:**
-
-```java
-// VM management
-boolean hasCapacityForVM(VM vm)      // Check if VM resources fit
-void allocateResources(VM vm)        // Reserve resources for VM
-void deallocateResources(VM vm)      // Release VM resources
-
-// Resource tracking
-int getAvailableCpuCores()           // Remaining CPU cores
-int getAvailableGpus()               // Remaining GPUs
-int getAvailableRamMB()              // Remaining RAM
-
-// Utilization metrics
-double getCpuUtilization()           // Current CPU utilization (0.0-1.0)
-double getGpuUtilization()           // Current GPU utilization (0.0-1.0)
-
-// Power and energy
-double getCurrentPowerConsumptionWatts()  // Real-time power draw
-void updateEnergyConsumption(double cpuUtil, double gpuUtil)  // Track energy
+```bash
+java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.MakespanEnergyExperiment
+java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.WaitingTimeEnergyExperiment
+java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.PowerCeilingExperiment
 ```
 
-### VM
+| Study | Objectives | Extra |
+|---|---|---|
+| `MakespanEnergyExperiment` | makespan, IT energy | — |
+| `WaitingTimeEnergyExperiment` | average waiting time, IT energy | — |
+| `PowerCeilingExperiment` | average waiting time, IT energy | datacenter power cap |
 
-Virtual machine that executes tasks with state management and utilization tracking.
+All settings are in code; the entry points take no arguments. Each JVM runs single-threaded.
+The three studies can run as separate JVMs at the same time, but runs must never be
+parallelised inside one JVM (the random generators are process-wide).
 
-**Attributes:**
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `ipsPerVCPU` | `long` | Instructions per second per vCPU |
-| `numberOfVCPUs` | `int` | Virtual CPU count |
-| `numberOfGPUs` | `int` | Virtual GPU count |
-| `ramMB` | `int` | Allocated RAM |
-| `storageMB` | `int` | Allocated storage |
-| `bandwidthMbps` | `int` | Allocated bandwidth |
-| `vmState` | `VmState` | CREATED, RUNNING, SUSPENDED, TERMINATED |
-| `assignedTasks` | `Queue<Task>` | Task execution queue |
-| `currentExecutingTask` | `Task` | Currently running task |
+### Study setup
 
-**Key Methods:**
+| | |
+|---|---|
+| Infrastructure | 1 datacenter; 40 hosts: 16 CPU-only (16 cores, 2.5 GIPS per core), 12 GPU-only (8 cores, 4 GPUs, 2.8 GIPS), 12 mixed (32 cores, 4 GPUs, 3.0 GIPS) |
+| VMs | 60: per compute type 8 fast, 8 medium and 4 slow (5 / 2 / 0.5 GIPS per vCPU requested, capped at the host's core speed); 4 vCPUs each; GPU and mixed VMs carry 2 / 1 / 1 GPUs |
+| Workload | 500 tasks per scenario; lengths from 16 log-spaced values between 0.5 and 25.16 billion instructions |
+| Scenarios | Balanced (250 CPU / 250 GPU tasks), GPU_Stress (100 / 400), CPU_Stress (400 / 100) |
+| Algorithms (7 arms) | `GA_<Time>_Dominance`, `GA_Energy_Dominance`, `SA_<Time>_Dominance`, `SA_Energy_Dominance`, `NSGA-II`, `SPEA-II`, `AMOSA` |
+| Seeds | 10 per scenario (200–209) |
+| Budget | 40,000 objective evaluations per run: GA, SA and AMOSA stop at 40,000 evaluations (AMOSA additionally spends 10,200 on building its initial archive); NSGA-II and SPEA-II run 200 generations of 200 |
 
-```java
-// Task management
-boolean canAcceptTask(Task task)     // Check compute type compatibility
-void addTask(Task task)              // Add task to execution queue
-void executeOneSecond(long timestamp) // Execute one simulation tick
+`<Time>` is `Makespan` or `WaitingTime`. Every arm publishes the non-dominated set of all
+solutions it evaluated. Algorithm parameters are in `AlgorithmParameters.java`; their
+rationale is in `docs/MetaheuristicTaskScheduler.md`.
 
-// State management
-void start()                         // Transition to RUNNING state
-void suspend()                       // Transition to SUSPENDED state
-void terminate()                     // Transition to TERMINATED state
+**Power-cap study.** `PowerCeilingExperiment` runs in two phases. Phase 1 runs the seven
+arms without a cap and derives, per scenario, a reference peak *P_ref*: for each seed,
+the peak power of the lowest-waiting-time schedule found by any arm; *P_ref* is the median
+over seeds. Phase 2 re-runs every arm with the cap built into its search (Deb's
+constrained-domination rules) at 90, 80, 70, 60 and 50 % of *P_ref*. Quality indicators
+are computed on cap-feasible solutions only.
 
-// Utilization
-double calculateUtilization(WorkloadType type)  // CPU/GPU utilization for workload
-List<UtilizationRecord> getUtilizationHistory() // Historical utilization data
+### Output
+
+Each campaign writes `results/MakespanVsEnergy_<dd_MM_yyyy_HH_mm_ss>/` (likewise
+`WaitingTimeVsEnergy_…` and `PowerCeilingWaitingTimeVsEnergy_…`; `results/` is ignored by
+Git), including:
+
+- `experiment_summary.csv`, `plot_options.json` and, per scenario, `scenario_N_pareto_graph_data.csv`,
+  `scenario_N_performance_metrics.csv`, `scenario_N_algorithm_pareto_fronts.csv`,
+  `scenario_N_seed_collaboration.csv` and `scenario_N_solution_details.json.gz`;
+- for the power-cap study also `power_cap_calibration.csv`, `feasibility_summary.csv`,
+  `pareto_3d_all.csv`, `pareto_3d_feasible.csv`, the per-tier `*_by_cap.csv` files and
+  `algorithm_log.txt`.
+
+The run then calls the Python post-processing in this order (`PostRunScripts`):
+`recompute_hv.py`, `plot_scenario_pareto.py`, `statistical_tests.py`,
+`plot_power_ceiling.py` (power-cap study only) and `generate_interactive_report.py`. They add
+quality-indicator CSVs, plots, statistical tests and a self-contained
+`interactive_report.html`. A missing Python installation only produces a warning; to
+re-run the post-processing later:
+
+```bash
+java -cp "target/classes:lib/*" com.cloudsimulator.newExperiments.PostRunScripts results/<folder>
 ```
 
-### Task
+`scripts/results_explorer.py` is an interactive viewer for result folders. Committed
+example campaigns are in `docs/ExperimentResults/`.
 
-Executable workload with instruction-level progress tracking and timing metrics.
+## Using the simulator directly
 
-**Attributes:**
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `name` | `String` | Task identifier |
-| `instructionLength` | `long` | Total instructions to execute |
-| `instructionsExecuted` | `long` | Progress counter |
-| `workloadType` | `WorkloadType` | Type of workload (see Workload Types) |
-| `executionStatus` | `TaskExecutionStatus` | PENDING, ASSIGNED, EXECUTING, COMPLETED, FAILED |
-| `creationTimestamp` | `long` | When task was created |
-| `executionStartTimestamp` | `long` | When execution began |
-| `executionEndTimestamp` | `long` | When execution completed |
-
-**Key Methods:**
-
-```java
-// Execution
-void executeInstructions(long instructions)  // Execute specified instructions
-boolean isComplete()                         // Check if all instructions done
-long getRemainingInstructions()              // Get remaining work
-
-// Progress tracking
-double getProgressPercentage()               // Completion percentage (0-100)
-
-// Timing calculations
-long getWaitingTime()                        // Time from creation to execution start
-long getTurnaroundTime()                     // Time from creation to completion
-long getExecutionTime()                      // Actual execution duration
-```
-
-### User
-
-Cloud tenant with datacenter preferences, VM ownership, and session tracking.
-
-**Attributes:**
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `name` | `String` | User identifier |
-| `selectedDatacenterNames` | `Set<String>` | Preferred datacenter names |
-| `selectedDatacenterIds` | `Set<Integer>` | Resolved datacenter IDs |
-| `virtualMachines` | `List<VM>` | User's VMs |
-| `tasks` | `List<Task>` | User's tasks |
-| `startTimestamp` | `long` | Session start time |
-| `finishTimestamp` | `long` | Session end time |
-
-**Key Methods:**
-
-```java
-// Resource management
-void addVirtualMachine(VM vm)        // Register VM to user
-void addTask(Task task)              // Register task to user
-void finishTask(Task task)           // Mark task as complete
-
-// Session tracking
-void startSession(long timestamp)    // Begin user session
-void finishSession(long timestamp)   // End user session
-boolean isSessionComplete()          // Check if all tasks finished
-
-// Datacenter preferences
-void selectDatacenter(String name)   // Add datacenter preference
-boolean hasSelectedDatacenter(String name)  // Check preference
-```
-
----
-
-## Simulation Engine
-
-### SimulationEngine
-
-Main orchestrator that executes simulation steps in sequence using the Template Method pattern.
+A simulation is a sequence of steps executed against a shared `SimulationContext`. This
+example loads a `.cosc` file and runs one schedule:
 
 ```java
 SimulationEngine engine = new SimulationEngine();
-engine.setDebugEnabled(true);
-engine.configure("configs/sample-experiment.cosc");
-engine.runSimulation(3600);  // Run for 3600 seconds
+engine.configure("configs/sample-experiment.cosc");   // also sets the random seed
 
-// Access results
-SimulationContext context = engine.getContext();
-SimulationSummary summary = context.getSummary();
+TaskExecutionStep tasks = new TaskExecutionStep();
+EnergyCalculationStep energy = new EnergyCalculationStep();
+
+engine.addStep(new InitializationStep(engine.getConfiguration()));
+engine.addStep(new HostPlacementStep(new PowerAwareLoadBalancingHostPlacementStrategy()));
+engine.addStep(new UserDatacenterMappingStep());
+engine.addStep(new VMPlacementStep(new BestFitVMPlacementStrategy()));
+engine.addStep(new TaskAssignmentStep(new WorkloadAwareTaskAssignmentStrategy()));
+engine.addStep(new VMExecutionStep());
+engine.addStep(tasks);
+engine.addStep(energy);
+engine.run();
+
+System.out.printf("Makespan: %d s, average waiting time: %.2f s%n",
+    tasks.getMakespan(), tasks.getAverageWaitingTime());
+System.out.printf("IT energy: %.6f kWh, peak power: %.1f W%n",
+    energy.getTotalITEnergyKWh(), energy.getPeakTotalPowerWatts());
 ```
 
-### SimulationContext
-
-Central state container providing access to all simulation entities and metrics.
-
-```java
-SimulationContext context = engine.getContext();
-
-// Access entities
-List<CloudDatacenter> datacenters = context.getDatacenters();
-List<Host> hosts = context.getHosts();
-List<VM> vms = context.getVMs();
-List<Task> tasks = context.getTasks();
-List<User> users = context.getUsers();
-
-// Access metrics
-Map<String, Object> metrics = context.getMetrics();
-SimulationClock clock = context.getClock();
-```
-
-### SimulationStep Interface
-
-All simulation steps implement this interface for pluggable execution:
-
-```java
-public interface SimulationStep {
-    void execute(SimulationContext context);
-    String getStepName();
-}
-```
-
----
-
-## Simulation Steps
-
-The simulation executes 10 steps in sequence:
-
-### 1. InitializationStep
-
-Creates all simulation entities from an `ExperimentConfiguration`.
-
-```java
-FileConfigParser parser = new FileConfigParser();
-ExperimentConfiguration config = parser.parse("configs/experiment.cosc");
-InitializationStep step = new InitializationStep(config);
-step.execute(context);
-```
-
-**Creates:** CloudDatacenters, Hosts, Users, VMs, Tasks
-
-**Metrics:**
-- `initialization.datacenters`, `initialization.hosts`
-- `initialization.users`, `initialization.vms`, `initialization.tasks`
-
-### 2. HostPlacementStep
-
-Assigns hosts to datacenters using a configurable placement strategy.
-
-```java
-// Default FirstFit strategy
-HostPlacementStep step = new HostPlacementStep();
-
-// Custom strategy
-HostPlacementStep step = new HostPlacementStep(
-    new PowerAwareLoadBalancingHostPlacementStrategy()
-);
-```
-
-**Metrics:**
-- `hostPlacement.hostsPlaced`, `hostPlacement.hostsFailed`
-- `hostPlacement.strategy`, `hostPlacement.datacenter.<name>.hostCount`
-
-### 3. UserDatacenterMappingStep
-
-Validates and finalizes user-datacenter relationships.
-
-```java
-UserDatacenterMappingStep step = new UserDatacenterMappingStep();
-step.execute(context);
-```
-
-**Actions:**
-- Removes datacenters with no hosts from user preferences
-- Randomly reassigns users with no valid preferences
-- Calculates resource requirements per user
-- Starts user sessions
-
-**Metrics:**
-- `userMapping.usersProcessed`, `userMapping.validMappings`
-- `userMapping.reassignedUsers`, `userMapping.totalRequiredVcpus`
-
-### 4. VMPlacementStep
-
-Assigns VMs to hosts respecting user preferences and resource constraints.
-
-```java
-// Default FirstFit strategy
-VMPlacementStep step = new VMPlacementStep();
-
-// Custom strategy
-VMPlacementStep step = new VMPlacementStep(new BestFitVMPlacementStrategy());
-```
-
-**Constraints Enforced:**
-- User datacenter preferences
-- Compute type compatibility (CPU/GPU)
-- Resource capacity (vCPUs, GPUs, RAM, storage, bandwidth)
-
-**Metrics:**
-- `vmPlacement.vmsPlaced`, `vmPlacement.vmsFailed`
-- `vmPlacement.activeHosts`, `vmPlacement.strategy`
-
-### 5. TaskAssignmentStep
-
-Assigns tasks to VMs using scheduling strategies or multi-objective optimization.
-
-```java
-// Simple strategy
-TaskAssignmentStep step = new TaskAssignmentStep(
-    new WorkloadAwareTaskAssignmentStrategy()
-);
-
-// NSGA-II multi-objective optimization
-NSGA2Configuration config = NSGA2Configuration.builder()
-    .populationSize(100)
-    .addObjective(new MakespanObjective())
-    .addObjective(new EnergyObjective())
-    .terminationCondition(new GenerationCountTermination(200))
-    .build();
-TaskAssignmentStep step = new TaskAssignmentStep(
-    new NSGA2TaskSchedulingStrategy(config)
-);
-```
-
-**Constraints Enforced:**
-- User ownership (tasks only assigned to owner's VMs)
-- Compute type compatibility
-- VM must be in RUNNING state
-
-**Metrics:**
-- `taskAssignment.tasksAssigned`, `taskAssignment.tasksFailed`
-- `taskAssignment.distribution.maxTasksPerVM`, `taskAssignment.distribution.avgTasksPerVM`
-
-### 6. VMExecutionStep
-
-Orchestrates the time-stepped simulation loop (fixed dt = 1 second).
-
-```java
-VMExecutionStep step = new VMExecutionStep();
-step.execute(context);
-
-System.out.println("Simulation time: " + step.getTotalSimulationSeconds() + "s");
-System.out.println("Tasks completed: " + step.getTasksCompleted());
-```
-
-**Execution Flow Per Tick:**
-1. For each VM in RUNNING state: `vm.executeOneSecond(currentTime)`
-2. For each Host: update power consumption and energy tracking
-3. Advance simulation clock by 1 second
-4. Log progress every 100 ticks
-
-**Metrics:**
-- `vmExecution.totalSimulationSeconds`, `vmExecution.tasksCompleted`
-- `vmExecution.vmSecondsExecuted`, `vmExecution.vmSecondsIdle`
-- `vmExecution.peakConcurrentTasks`, `vmExecution.vmUtilizationRatio`
-
-### 7. TaskExecutionStep
-
-Performs post-simulation analysis of task completion.
-
-```java
-TaskExecutionStep step = new TaskExecutionStep();
-step.execute(context);
-
-System.out.println("Makespan: " + step.getMakespan() + " seconds");
-System.out.println("Throughput: " + step.getThroughput() + " tasks/second");
-```
-
-**Analysis Performed:**
-- Makespan, waiting time, turnaround time, execution time
-- Per-user completion statistics
-- Per-workload type statistics
-- User session finalization
-
-**Metrics:**
-- `taskExecution.makespan`, `taskExecution.throughput`
-- `taskExecution.avgWaitingTime`, `taskExecution.avgTurnaroundTime`
-- `taskExecution.user.<name>.completed`, `taskExecution.workload.<type>.avgExecutionTime`
-
-### 8. EnergyCalculationStep
-
-Aggregates energy consumption with PUE, carbon footprint, and cost calculations.
-
-```java
-EnergyCalculationStep step = new EnergyCalculationStep();
-step.setPUE(1.5);
-step.setCarbonIntensity(CarbonIntensityRegion.EU_AVERAGE);
-step.setElectricityCostPerKWh(0.12);
-step.execute(context);
-
-System.out.println("IT Energy: " + step.getTotalITEnergyKWh() + " kWh");
-System.out.println("Carbon: " + step.getCarbonFootprintKg() + " kg CO2");
-System.out.println("Cost: $" + step.getEstimatedCostDollars());
-```
-
-**Carbon Intensity Regions:**
-
-| Region | kg CO2/kWh | Description |
-|--------|------------|-------------|
-| `US_AVERAGE` | 0.42 | US national average |
-| `US_CALIFORNIA` | 0.22 | California (high renewables) |
-| `EU_AVERAGE` | 0.30 | European Union average |
-| `EU_FRANCE` | 0.06 | France (nuclear) |
-| `EU_NORDICS` | 0.05 | Nordic countries (hydro) |
-| `EU_POLAND` | 0.70 | Poland (coal-heavy) |
-| `CHINA` | 0.58 | China average |
-| `INDIA` | 0.70 | India average |
-| `CANADA` | 0.12 | Canada (hydro) |
-| `BRAZIL` | 0.08 | Brazil (hydro) |
-| `RENEWABLE_ONLY` | 0.00 | 100% renewable |
-
-**Metrics:**
-- `energy.totalITEnergyJoules`, `energy.totalFacilityEnergyKWh`
-- `energy.pue`, `energy.carbonFootprintKg`, `energy.estimatedCostDollars`
-
-### 9. MetricsCollectionStep
-
-Collects all metrics into a comprehensive `SimulationSummary` object.
-
-```java
-MetricsCollectionStep step = new MetricsCollectionStep();
-step.setPrimarySLAThreshold(3600);  // 1 hour SLA
-step.addSLAThreshold(1800);         // 30 min SLA
-step.execute(context);
-
-SimulationSummary summary = step.getSummary();
-System.out.println("SLA Compliance: " + summary.getSla().slaCompliancePercent + "%");
-System.out.println("P90 Turnaround: " + summary.getPerformance().p90TurnaroundTimeSeconds + "s");
-
-// Export to JSON
-String json = summary.toJson();
-```
-
-**SimulationSummary Structure:**
-```
-SimulationSummary
-├── metadata (simulationId, timestamp, randomSeed)
-├── infrastructure (datacenterCount, hostCount, vmCount, utilization)
-├── tasks (totalTasks, completedTasks, completionRate)
-├── energy (totalEnergyKWh, carbonFootprintKg, estimatedCostDollars)
-├── performance (makespan, throughput, avgTurnaroundTime, p50, p90, p99)
-├── sla (slaCompliancePercent, complianceByThreshold)
-├── datacenters[] (per-datacenter summaries)
-├── hosts[] (per-host summaries)
-├── users[] (per-user summaries)
-└── workloads[] (per-workload type summaries)
-```
-
-### 10. ReportingStep
-
-Generates CSV reports organized in timestamped experiment folders.
-
-```java
-ReportingStep step = new ReportingStep();
-step.setBaseOutputDirectory("./reports");
-step.setCustomPrefix("my_experiment");
-step.enableReport(ReportingStep.ReportType.TASKS);
-step.enableReport(ReportingStep.ReportType.HOSTS);
-step.execute(context);
-
-System.out.println("Output: " + step.getOutputDirectory());
-```
-
-**Report Types:**
-
-| Report | Filename | Description |
-|--------|----------|-------------|
-| `SUMMARY` | `{simId}_summary.csv` | One-row simulation overview |
-| `DATACENTERS` | `{simId}_datacenters.csv` | Per-datacenter metrics |
-| `HOSTS` | `{simId}_hosts.csv` | Per-host resources and energy |
-| `VMS` | `{simId}_vms.csv` | Per-VM task execution |
-| `TASKS` | `{simId}_tasks.csv` | Per-task timing details |
-| `USERS` | `{simId}_users.csv` | Per-user session metrics |
-
-**Output Folder Naming:**
-```
-{prefix}_{DATE}_{TIME}_{UNIQUEID}/
-Example: my_experiment_20241209_143025_a1b2c3/
-```
-
----
-
-## Placement and Scheduling Strategies
-
-### Host Placement Strategies
-
-| Strategy | Description | Use Case |
-|----------|-------------|----------|
-| `FirstFitHostPlacementStrategy` | Places in first datacenter with capacity | Fast, simple baseline |
-| `SlotBasedBestFitHostPlacementStrategy` | Minimizes remaining host slots (tightest fit) | Capacity consolidation |
-| `PowerAwareLoadBalancingHostPlacementStrategy` | Balances power load across datacenters | Spread / fault tolerance |
-
-### VM Placement Strategies
-
-| Strategy | Description | Use Case |
-|----------|-------------|----------|
-| `FirstFitVMPlacementStrategy` | Places on first host with capacity | Fast, simple baseline |
-| `BestFitVMPlacementStrategy` | Minimizes remaining capacity (tightest fit) | Resource consolidation |
-| `LoadBalancingVMPlacementStrategy` | Distributes to least utilized hosts | Spread / even distribution |
-
-### Task Assignment Strategies
-
-| Strategy | Description | Use Case |
-|----------|-------------|----------|
-| `FirstAvailableTaskAssignmentStrategy` | Assigns to first compatible VM | Simple baseline |
-| `ShortestQueueTaskAssignmentStrategy` | Assigns to VM with fewest tasks | Balance task count |
-| `WorkloadAwareTaskAssignmentStrategy` | Minimizes estimated completion time | Heterogeneous workloads |
-| `NSGA2TaskSchedulingStrategy` | Multi-objective Pareto optimization | Research, trade-off analysis |
-| `GenerationalGATaskSchedulingStrategy` | Single/weighted-sum optimization with elitism | Fast convergence, single best solution |
-| `SimulatedAnnealingTaskSchedulingStrategy` | Single/weighted-sum SA optimization | Memory-efficient, gradual refinement |
-
-### NSGA-II Multi-Objective Optimization
-
-The NSGA-II strategy optimizes both task-to-VM assignment and execution ordering:
-
-```java
-NSGA2Configuration config = NSGA2Configuration.builder()
-    .populationSize(100)
-    .crossoverRate(0.9)
-    .mutationRate(0.1)
-    .addObjective(new MakespanObjective())
-    .addObjective(new EnergyObjective())
-    .terminationCondition(CompositeTermination.or(
-        new GenerationCountTermination(200),
-        TimeLimitTermination.seconds(60)
-    ))
-    .randomSeed(42L)
-    .verboseLogging(true)
-    .build();
-
-NSGA2TaskSchedulingStrategy strategy = new NSGA2TaskSchedulingStrategy(config);
-ParetoFront front = strategy.optimize(tasks, vms);
-
-// Access trade-off solutions
-SchedulingSolution bestMakespan = front.getBestForObjective(0);
-SchedulingSolution bestEnergy = front.getBestForObjective(1);
-SchedulingSolution kneePoint = front.getKneePoint();
-```
-
-**Objectives:**
-- `MakespanObjective`: Minimize total completion time (seconds)
-- `EnergyObjective`: Minimize energy consumption (kWh)
-
-**Termination Conditions:**
-- `GenerationCountTermination`: Stop after N generations
-- `FitnessEvaluationsTermination`: Stop after N evaluations
-- `TimeLimitTermination`: Stop after specified time
-- `TargetFitnessTermination`: Stop when target reached
-- `CompositeTermination`: Combine with AND/OR logic
-
-### Generational GA with Elitism
-
-The Generational GA strategy provides single-objective or weighted-sum optimization with guaranteed reproducibility:
-
-```java
-// Single objective optimization (minimize makespan)
-GAConfiguration config = GAConfiguration.builder()
-    .populationSize(100)
-    .crossoverRate(0.9)
-    .mutationRate(0.1)
-    .elitePercentage(0.1)              // Keep top 10% unchanged
-    .tournamentSize(3)                  // Tournament selection
-    .objective(new MakespanObjective()) // Single objective
-    .terminationCondition(new GenerationCountTermination(200))
-    .verboseLogging(true)
-    .build();
-
-GenerationalGATaskSchedulingStrategy strategy =
-    new GenerationalGATaskSchedulingStrategy(config);
-SchedulingSolution best = strategy.optimize(tasks, vms);
-
-// Access statistics
-GAStatistics stats = strategy.getLastStatistics();
-System.out.println("Best fitness: " + stats.getGlobalBestFitness());
-System.out.println("Found at generation: " + stats.getBestSolutionGeneration());
-```
-
-**Weighted-Sum Multi-Objective:**
-
-```java
-// Combine objectives with weights (normalized automatically)
-GAConfiguration config = GAConfiguration.builder()
-    .populationSize(100)
-    .eliteCount(10)                     // Absolute elitism: keep top 10
-    .tournamentSize(2)
-    .addWeightedObjective(new MakespanObjective(), 0.7)  // 70% weight
-    .addWeightedObjective(new EnergyObjective(), 0.3)    // 30% weight
-    .terminationCondition(new GenerationCountTermination(200))
-    .build();
-```
-
-**Key Features:**
-- **Single objective** (default): Optimize one metric (Makespan or Energy)
-- **Weighted-sum**: Combine multiple objectives with configurable weights
-- **Elitism**: Preserve best solutions (absolute count or percentage)
-- **Tournament selection**: Configurable tournament size (k=2 to k=N)
-- **Reproducibility**: Uses simulator's `RandomGenerator` for identical results with same seed
-
-**Elitism Configuration:**
-
-| Method | Description | Example |
-|--------|-------------|---------|
-| `.eliteCount(N)` | Keep exactly N best individuals | `.eliteCount(10)` |
-| `.elitePercentage(P)` | Keep top P% of population | `.elitePercentage(0.1)` |
-
-**Statistics Output:**
-
-The algorithm tracks comprehensive metrics per generation:
-
-```
-Generation: X, Best Candidate: [task assignments], Fitness Value: Y
-```
-
-Additional metrics available via `GAStatistics`:
-- `getBestFitness()`: Best fitness in current generation
-- `getAverageFitness()`: Average fitness in current generation
-- `getWorstFitness()`: Worst fitness in current generation
-- `getStandardDeviation()`: Fitness standard deviation
-- `getNoImprovementGenerations()`: Generations since last improvement
-- `getGlobalBestFitness()`: Best fitness found across all generations
-- `getBestSolutionGeneration()`: Generation where best was found
-
-**Output Formats:**
-
-```java
-// Configure output format
-statistics.setOutputFormat(GAStatistics.OutputFormat.DETAILED);
-
-// Available formats:
-// MINIMAL:  "Generation: X, Best: Y"
-// DEFAULT:  "Generation: X, Best Candidate: [...], Fitness Value: Y"
-// DETAILED: Full metrics including avg, worst, std dev
-// CSV:      "generation,best,avg,worst,stddev,no_improvement"
-```
-
-**Comparison: NSGA-II vs Generational GA:**
-
-| Feature | NSGA-II | Generational GA |
-|---------|---------|-----------------|
-| Output | Pareto front (multiple solutions) | Single best solution |
-| Objectives | True multi-objective | Single or weighted-sum |
-| Selection | Crowded tournament | Standard tournament |
-| Use case | Trade-off analysis | Fast, focused optimization |
-| Complexity | Higher | Lower |
-
-### Simulated Annealing (SA)
-
-The Simulated Annealing strategy implements the classic SA metaheuristic for single-objective or weighted-sum optimization:
-
-```java
-// Single objective optimization with geometric cooling
-SAConfiguration config = SAConfiguration.builder()
-    .initialTemperature(1000.0)          // Starting temperature
-    .finalTemperature(0.001)              // Stopping temperature
-    .coolingSchedule(new GeometricCoolingSchedule(0.95))
-    .iterationsPerTemperature(100)        // Equilibrium iterations
-    .objective(new MakespanObjective())   // Single objective
-    .verboseLogging(true)
-    .build();
-
-SimulatedAnnealingTaskSchedulingStrategy strategy =
-    new SimulatedAnnealingTaskSchedulingStrategy(config);
-SchedulingSolution best = strategy.optimize(tasks, vms);
-
-// Access statistics
-SAStatistics stats = strategy.getLastStatistics();
-System.out.println("Best fitness: " + stats.getGlobalBestFitness());
-System.out.println("Acceptance rate: " + stats.getOverallAcceptanceRate());
-```
-
-**Auto-Temperature Calculation:**
-
-```java
-// Let SA calculate initial temperature for 80% acceptance rate
-SAConfiguration config = SAConfiguration.builder()
-    .autoInitialTemperature(true)
-    .initialAcceptanceProbability(0.8)    // Target 80% initial acceptance
-    .temperatureSampleSize(100)            // Sample 100 neighbors
-    .coolingSchedule(new GeometricCoolingSchedule(0.95))
-    .objective(new MakespanObjective())
-    .build();
-```
-
-**Weighted-Sum Multi-Objective:**
-
-```java
-// Combine objectives with weights
-SAConfiguration config = SAConfiguration.builder()
-    .initialTemperature(1000.0)
-    .coolingSchedule(new AdaptiveCoolingSchedule())  // Self-tuning cooling
-    .addWeightedObjective(new MakespanObjective(), 0.7)  // 70% weight
-    .addWeightedObjective(new EnergyObjective(), 0.3)    // 30% weight
-    .build();
-```
-
-**Cooling Schedules:**
-
-| Schedule | Formula | Use Case |
-|----------|---------|----------|
-| `GeometricCoolingSchedule(α)` | T = α × T | Most common, balanced (α ∈ [0.8, 0.99]) |
-| `LinearCoolingSchedule(T₀, β)` | T = T₀ - i × β | Predictable, uniform cooling |
-| `LogarithmicCoolingSchedule(T₀)` | T = T₀ / log(i+e) | Theoretical optimum, very slow |
-| `VerySlowDecreaseCoolingSchedule(β)` | T = T / (1 + β × T) | Lundy-Mees, gradual |
-| `AdaptiveCoolingSchedule()` | Dynamic based on acceptance | Self-tuning, recommended |
-
-**Adaptive Cooling Parameters:**
-
-```java
-// Fully customized adaptive cooling
-AdaptiveCoolingSchedule adaptive = new AdaptiveCoolingSchedule(
-    0.5,    // Target acceptance rate (50%)
-    0.1,    // Tolerance (±10%)
-    0.85,   // Fast cooling rate (when acceptance > 60%)
-    0.95,   // Normal cooling rate (when acceptance 40-60%)
-    0.99    // Slow cooling rate (when acceptance < 40%)
-);
-```
-
-**Statistics Output:**
-
-The algorithm tracks comprehensive metrics per temperature step:
-
-```
-Temp Step: X, Best Candidate: [task assignments], Fitness Value: Y
-```
-
-Additional metrics available via `SAStatistics`:
-- `getCurrentTemperature()`: Current temperature
-- `getBestFitness()`: Best fitness found
-- `getAcceptanceRate()`: Acceptance rate at current temperature
-- `getTotalIterations()`: Total neighbor evaluations
-- `getOverallAcceptanceRate()`: Overall acceptance rate
-- `getBestSolutionTemperatureStep()`: Step where best was found
-
-**Output Formats:**
-
-```java
-// Configure output format (same as GA)
-statistics.setOutputFormat(SAStatistics.OutputFormat.DETAILED);
-
-// Available formats:
-// MINIMAL:  "Temp Step: X, Temp: Y, Best: Z"
-// DEFAULT:  "Temp Step: X, Best Candidate: [...], Fitness Value: Y"
-// DETAILED: Full metrics including acceptance rate, moves
-// CSV:      "temp_step,temperature,current_fitness,best_fitness,acceptance_rate,..."
-```
-
-**Comparison: GA vs SA:**
-
-| Feature | Generational GA | Simulated Annealing |
-|---------|-----------------|---------------------|
-| Search type | Population-based | Single-solution |
-| Exploration | Crossover + mutation | Temperature-controlled acceptance |
-| Memory | O(population × solution) | O(1) - single solution |
-| Parallelization | Easy (population) | Harder |
-| Parameters | Population, crossover, mutation, elitism | Temperature, cooling rate, iterations |
-| Convergence | Multiple solutions evolve | Gradual refinement |
-| Use case | When diversity matters | When memory is limited |
-
-**Reference:** El-Ghazali Talbi, "Metaheuristics: From Design to Implementation"
-
----
-
-## Configuration System
-
-### .cosc File Format
-
-The `.cosc` (Cosmos Config) format provides declarative experiment configuration:
+Two further steps are available: `MetricsCollectionStep` (builds a `SimulationSummary`
+with SLA and percentile metrics) and `ReportingStep` (writes per-entity CSV reports).
+Configurations can also be built in code as an `ExperimentConfiguration` and passed to
+`engine.configure(...)`; this is how the studies define their infrastructure
+(`ExperimentConfig.toExperimentConfiguration()`).
+
+## Scheduling strategies
+
+| Stage | Strategies (package `PlacementStrategy/`) |
+|---|---|
+| Host → datacenter | `FirstFit`, `SlotBasedBestFit`, `PowerAwareLoadBalancing` (used by the studies) |
+| VM → host | `FirstFit`, `BestFit` (used by the studies), `LoadBalancing` |
+| Task → VM, heuristics | `FirstAvailable`, `ShortestQueue`, `RoundRobin`, `WorkloadAware`, `EnergyAware`, `LPT`; `PowerCeilingAdmission` (a power-cap admission wrapper, not used by the studies) |
+| Task → VM, metaheuristics | Generational GA and Simulated Annealing (single best, or with a dominance archive); NSGA-II, SPEA-II and AMOSA through MOEA Framework 4.5; power-cap-constrained versions of GA, SA, NSGA-II, SPEA-II and AMOSA. MOEA/D and OMOPSO wrappers also exist but are not used by the studies. |
+
+A metaheuristic decides both which VM runs each task and the order of tasks on each VM.
+Objectives: makespan, average waiting time, energy, load balance, and energy with peak
+power tracking for the power cap. Building blocks for new algorithms: cooling schedules
+(`metaheuristic/cooling/`), termination conditions (`termination/`), selection
+(`selection/`) and crossover / mutation / repair operators (`operators/`). In the studies
+the heuristics `LPT`, `WorkloadAware` and `EnergyAware` provide the metaheuristics'
+starting solutions.
+
+## Configuration files and the GUI
+
+A `.cosc` file declares an experiment in sections (lines starting with `#` are comments):
 
 ```
 [SEED]
 42
 
 [DATACENTERS]
-3
-DC-East,50,100000.0
-DC-West,30,75000.0
-DC-Central,40,90000.0
+<count>
+name,maxHostCapacity,maxPowerWatts
 
 [HOSTS]
-2
-2500000000,16,CPU_ONLY,0,2097152,2000000,20971520,StandardPowerModel
-3000000000,32,CPU_GPU_MIXED,4,4194304,4000000,41943040,HighPerformancePowerModel
+<count>
+ipsPerCore,cpuCores,computeType,gpus,ramMB,networkMbps,storageMB,powerModelName
 
 [USERS]
-2
-Alice,DC-East|DC-West,2,3,1,5,3,0,2,1,4,2,1,3,2,1
-Bob,DC-Central,1,2,0,3,2,1,1,0,2,1,0,2,1,0
+<count>
+name,dc1|dc2,gpuVMs,cpuVMs,mixedVMs,<task counts>
+                                 (task counts in this order: SEVEN_ZIP, DATABASE, FURMARK,
+                                  IMAGE_GEN_CPU, IMAGE_GEN_GPU, LLM_CPU, LLM_GPU, CINEBENCH,
+                                  PRIME95SmallFFT, optionally VERACRYPT)
 
 [VMS]
-GPU:2
-Alice,2000000000,4,2,8192,102400,1000
-Bob,2500000000,8,4,16384,204800,2000
-CPU:3
-Alice,2000000000,4,0,8192,102400,1000
-Alice,2000000000,2,0,4096,51200,500
-Bob,2500000000,8,0,16384,204800,2000
+CPU:<count>                      (also GPU:<count>, MIXED:<count>)
+user,ipsPerVcpu,vcpus,gpus,ramMB,storageMB,bandwidthMbps
 
 [TASKS]
-SEVEN_ZIP:3
-CompressData1,Alice,5000000000
-CompressData2,Alice,3000000000
-CompressBackup,Bob,7000000000
-DATABASE:2
-QueryProcessing,Alice,2000000000
-TransactionBatch,Bob,4000000000
+SEVEN_ZIP:<count>                (one block per workload type)
+name,user,instructionLength
 ```
 
-### Section Formats
+`configs/sample-experiment.cosc` is a complete example. The JavaFX application
+`com.cloudsimulator.gui.ConfigGeneratorApp` (`mvn javafx:run`) generates `.cosc` files
+for a range of seeds; it does not run simulations.
 
-**DATACENTERS:** `name,maxHostCapacity,totalMaxPowerDraw`
+## Tests
 
-**HOSTS:** `ips,cpuCores,computeType,gpus,ram,network,storage,powerModel`
-- computeType: `CPU_ONLY`, `GPU_ONLY`, or `CPU_GPU_MIXED`
-
-**USERS:** `name,datacenters,gpuVMs,cpuVMs,mixedVMs,sevenZipTasks,dbTasks,furmarkTasks,...`
-- datacenters: pipe-separated list (e.g., `DC-East|DC-West`)
-
-**VMS:** Subsections by compute type (`GPU:count`, `CPU:count`, `MIXED:count`)
-- Each line: `userName,ipsPerVcpu,vcpus,gpus,ram,storage,bandwidth`
-
-**TASKS:** Subsections by workload type (`WORKLOAD_TYPE:count`)
-- Each line: `name,userName,instructionLength`
-
-### Programmatic Configuration
-
-```java
-// Load from file
-SimulationEngine engine = new SimulationEngine();
-engine.configure("configs/sample-experiment.cosc");
-
-// Or build programmatically
-ExperimentConfiguration config = new ExperimentConfiguration();
-config.setRandomSeed(42);
-
-DatacenterConfig dc = new DatacenterConfig("DC-Main", 100, 200000.0);
-config.addDatacenterConfig(dc);
-
-HostConfig host = new HostConfig(3000000000L, 32, ComputeType.CPU_GPU_MIXED,
-                                  4, 4194304, 4000000, 41943040,
-                                  "HighPerformancePowerModel");
-config.addHostConfig(host);
-
-engine.configure(config);
-```
-
-### Deep-Copy for Experiment Variations
-
-```java
-ExperimentConfiguration baseConfig = engine.getConfiguration();
-
-// Run with different seeds
-ExperimentConfiguration variant1 = baseConfig.cloneWithSeed(999);
-engine.configure(variant1);
-engine.runSimulation(3600);
-
-ExperimentConfiguration variant2 = baseConfig.clone();
-// Modify variant2...
-engine.configure(variant2);
-engine.runSimulation(3600);
-```
-
-### Configuration Classes
-
-| Class | Description |
-|-------|-------------|
-| `ExperimentConfiguration` | Main container with `clone()` and `cloneWithSeed()` |
-| `DatacenterConfig` | Datacenter specs (name, capacity, power) |
-| `HostConfig` | Host specs (IPS, CPU, GPU, RAM, power model) |
-| `UserConfig` | User preferences (datacenters, VM/task counts) |
-| `VMConfig` | VM specs (resources, compute type, owner) |
-| `TaskConfig` | Task definition (name, owner, instructions, workload) |
-| `FileConfigParser` | Parser for `.cosc` files |
-
----
-
-## GUI Configuration Generator
-
-A JavaFX application for visually creating experiment configuration files.
-
-### Features
-
-- **Tabbed interface** for datacenters, hosts, users, VMs, and tasks
-- **Multi-seed generation** with seed ranges (e.g., 1-10 generates 10 files)
-- **Instruction length ranges** randomized per seed
-- **Configuration summary** and file preview
-
-### Running the GUI
-
-**Using Maven (Recommended):**
-```bash
-mvn compile
-mvn javafx:run
-```
-
-**Manual JavaFX:**
-```bash
-javac --module-path /path/to/javafx-sdk/lib --add-modules javafx.controls \
-    -d out src/main/java/com/cloudsimulator/**/*.java
-
-java --module-path /path/to/javafx-sdk/lib --add-modules javafx.controls \
-    -cp out com.cloudsimulator.gui.ConfigGeneratorApp
-```
-
-### GUI Package Structure
-
-```
-com.cloudsimulator.gui
-├── ConfigGeneratorApp.java    # Main application
-├── ExperimentTemplate.java    # Configuration container
-├── UserTemplate.java          # User with VMs and tasks
-├── VMTemplate.java            # VM specification
-├── TaskTemplate.java          # Task with instruction range
-├── DatacenterPanel.java       # Datacenter UI
-├── HostPanel.java             # Host UI
-├── UserPanel.java             # User/VM/Task UI
-├── SummaryPanel.java          # Summary and export UI
-└── CosmosConfigWriter.java    # .cosc file generator
-```
-
----
-
-## Workload Types
-
-10 workload types with different CPU/GPU utilization profiles:
-
-| Workload | Description | Resource Profile |
-|----------|-------------|------------------|
-| `SEVEN_ZIP` | Compression | CPU-intensive |
-| `DATABASE` | Database operations | CPU + moderate memory |
-| `FURMARK` | GPU stress test | GPU-intensive |
-| `IMAGE_GEN_CPU` | CPU image generation | CPU-intensive |
-| `IMAGE_GEN_GPU` | GPU image generation | GPU-intensive |
-| `LLM_CPU` | LLM inference on CPU | CPU-intensive |
-| `LLM_GPU` | LLM inference on GPU | GPU-intensive |
-| `CINEBENCH` | CPU rendering | CPU-intensive |
-| `PRIME95SmallFFT` | CPU stress test | High CPU utilization |
-| `VERACRYPT` | Disk encryption | CPU-intensive (AES) |
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- Java 17 or later
-- Maven 3.6+ (for GUI and testing)
-
-### Compile the Project
+The tests are standalone `main()` programs (no JUnit). Compile and run them from the
+repository root:
 
 ```bash
-# Using Maven
-mvn compile
-
-# Manual compilation (excluding GUI)
-find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -d out
+find src/test/java -name "*.java" | xargs javac -cp "target/classes:lib/*" -d target/test-classes
+java -cp "target/test-classes:target/classes:lib/*" com.cloudsimulator.HostTest
 ```
 
-### Run a Simulation
+| Area | Test programs |
+|---|---|
+| Model | `CloudDatacenterTest`, `HostTest`, `VMTest`, `TaskTest`, `UserTest`, `CoreBindingCheck` |
+| Configuration and steps | `ConfigTest`, `InitializationStepTest`, `HostPlacementStepTest`, `HostPlacementConstrainedTest`, `UserDatacenterMappingStepTest`, `VMPlacementStepTest`, `ExecutionStepsTest`, `EnergyMetricsStepTest`, `ReportingStepTest` |
+| Power model | `MeasurementBasedPowerModelTest`, `PowerCeilingEnergyObjectiveTest` |
+| Algorithms | `GenerationalGAVerificationTest`, `LaneConsistencyCheck` |
+| Campaign analysis | `observer.ExperimentObserverTest`, `observer.ByCapAnalysisTest`, `observer.ParetoAnalyzerParityTest`, `newExperiments.CampaignReproducibilityTest` |
 
-```bash
-# Using Maven
-mvn exec:java -Dexec.mainClass="com.cloudsimulator.SimulationExample"
+Prefix each name with `com.cloudsimulator.`. Fourteen of the programs exit with status 1
+when a check fails. The other nine only print `PASSED` / `FAILED` per check, so read their
+output; of these, `ConfigTest` and `MeasurementBasedPowerModelTest` only print values and
+check nothing. Known failure: `LaneConsistencyCheck` (on some random schedules the
+predicted makespan is one second shorter than the simulated one; optimised schedules
+match).
+`newExperiments.ParityRun` and `observer.SyntheticPowerCeilingFolder` are helper programs,
+not tests.
 
-# Manual
-java -cp out com.cloudsimulator.SimulationExample
-```
+## Further documentation
 
-### Run Tests
+| Document | Topic |
+|---|---|
+| `docs/infrastructure.md` | Infrastructure and power model in detail |
+| `docs/VMExecution.md` | Lane-based execution and timing |
+| `docs/MetaheuristicTaskScheduler.md` | Algorithms, encoding, operators and parameters |
+| `docs/PerformanceMetrics.md` | Quality indicators and contribution metrics |
+| `docs/ExperimentResults/experiment_outcomes.md` | Results of the 17 Sep 2026 campaigns |
+| `docs/ExperimentResults/amosa_summary.md` | Effect of AMOSA's temperature-scaled mutation |
+| `docs/proposals/` | The multi-datacenter carbon study proposal |
+| `article1problem.md`, `HANDOFF.md` | Development history of Article 1 |
 
-```bash
-# Compile tests
-find src/test/java -name "*.java" | xargs javac -cp out -d out
+## Reproducing Article 1
 
-# Run individual tests
-java -cp out com.cloudsimulator.ConfigTest
-java -cp out com.cloudsimulator.InitializationStepTest
-java -cp out com.cloudsimulator.HostPlacementStepTest
-java -cp out com.cloudsimulator.VMPlacementStepTest
-java -cp out com.cloudsimulator.TaskAssignmentStepTest
-java -cp out com.cloudsimulator.ExecutionStepsTest
-java -cp out com.cloudsimulator.ReportingStepTest
-java -cp out com.cloudsimulator.NSGA2VerificationTest
-java -cp out com.cloudsimulator.GenerationalGAVerificationTest
-```
+Check out tag `article1-submitted`, compile, and run the three entry points. The campaigns
+reported in the article are committed in `docs/ExperimentResults/`:
 
----
+- `MakespanVsEnergy_17_09_2026_09_50_39`
+- `WaitingTimeVsEnergy_17_09_2026_10_30_00`
+- `PowerCeilingWaitingTimeVsEnergy_17_09_2026_10_56_32`
 
-## Development
+## License and citation
 
-### Project Structure
+Licensed under the GNU General Public License v3.0 (see `LICENSE`).
 
-```
-JavaCloudSimulatorCosmos/
-├── src/
-│   ├── main/java/com/cloudsimulator/
-│   │   ├── model/              # Domain models
-│   │   ├── enums/              # Enumerations
-│   │   ├── engine/             # Simulation engine
-│   │   ├── utils/              # Utilities
-│   │   ├── factory/            # Factories
-│   │   ├── config/             # Configuration system
-│   │   ├── steps/              # 10 simulation steps
-│   │   ├── PlacementStrategy/  # Placement strategies
-│   │   ├── calculator/         # Energy calculators
-│   │   ├── reporter/           # CSV reporters
-│   │   └── gui/                # JavaFX GUI
-│   └── test/java/com/cloudsimulator/
-│       ├── ConfigTest.java
-│       ├── InitializationStepTest.java
-│       ├── HostPlacementStepTest.java
-│       ├── VMPlacementStepTest.java
-│       ├── TaskAssignmentStepTest.java
-│       ├── ExecutionStepsTest.java
-│       ├── ReportingStepTest.java
-│       ├── CloudDatacenterTest.java
-│       ├── HostTest.java
-│       ├── VMTest.java
-│       ├── UserTest.java
-│       ├── TaskTest.java
-│       ├── NSGA2VerificationTest.java
-│       └── GenerationalGAVerificationTest.java
-├── configs/
-│   └── sample-experiment.cosc
-├── pom.xml
-└── README.md
-```
-
-### Example Configuration
-
-See `configs/sample-experiment.cosc` for a complete example with:
-- 3 datacenters (DC-East, DC-West, DC-Central)
-- 5 hosts with varied compute types
-- 2 users (Alice, Bob)
-- 6 VMs (2 GPU, 3 CPU, 1 Mixed)
-- 10 tasks across 5 workload types
-
----
-
-## License
-
-This is an educational simulation framework developed for cloud computing research.
+To cite the software version used in Article 1:
+DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
