@@ -14,6 +14,8 @@ import com.cloudsimulator.PlacementStrategy.task.FirstAvailableTaskAssignmentStr
  */
 public class EnergyMetricsStepTest {
 
+    private static int failures = 0;
+
     public static void main(String[] args) {
         System.out.println("=== EnergyCalculationStep & MetricsCollectionStep Test ===\n");
 
@@ -34,6 +36,18 @@ public class EnergyMetricsStepTest {
         testJSONSerialization();
 
         System.out.println("\n=== All Tests Completed ===");
+        if (failures > 0) {
+            System.out.println("FAILURES: " + failures);
+            System.exit(1);
+        }
+    }
+
+    /** Returns the result label and counts a failure, so a failed check fails the program. */
+    private static String result(boolean passed, String failLabel) {
+        if (!passed) {
+            failures++;
+        }
+        return passed ? "PASSED" : failLabel;
     }
 
     /**
@@ -124,7 +138,7 @@ public class EnergyMetricsStepTest {
                         energyStep.getTotalFacilityEnergyKWh() > energyStep.getTotalITEnergyKWh() &&
                         energyStep.getCarbonFootprintKg() > 0;
 
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -142,9 +156,10 @@ public class EnergyMetricsStepTest {
 
         System.out.println("  Carbon footprint by region (for same workload):");
 
+        // Ascending carbon intensity, so the footprints must come out in ascending order.
         EnergyCalculationStep.CarbonIntensityRegion[] regions = {
-            EnergyCalculationStep.CarbonIntensityRegion.EU_FRANCE,
             EnergyCalculationStep.CarbonIntensityRegion.EU_NORDICS,
+            EnergyCalculationStep.CarbonIntensityRegion.EU_FRANCE,
             EnergyCalculationStep.CarbonIntensityRegion.US_AVERAGE,
             EnergyCalculationStep.CarbonIntensityRegion.CHINA,
             EnergyCalculationStep.CarbonIntensityRegion.EU_POLAND
@@ -172,7 +187,7 @@ public class EnergyMetricsStepTest {
             previousCarbon = energyStep.getCarbonFootprintKg();
         }
 
-        System.out.println("  Result: " + (ordered ? "PASSED" : "FAILED (order check)"));
+        System.out.println("  Result: " + result(ordered, "FAILED (order check)"));
         System.out.println();
     }
 
@@ -216,7 +231,7 @@ public class EnergyMetricsStepTest {
         System.out.println("  Ratio (PUE 2.0 / PUE 1.0): " + String.format("%.2f", ratio));
 
         boolean passed = Math.abs(ratio - 2.0) < 0.01; // Should be approximately 2.0
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -261,7 +276,7 @@ public class EnergyMetricsStepTest {
                         summary.getTasks().completedTasks == 3 &&
                         summary.getPerformance().makespanSeconds > 0;
 
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -299,7 +314,7 @@ public class EnergyMetricsStepTest {
         boolean passed = sla.tasksWithinSLA == 3 && sla.tasksBeyondSLA == 0 &&
                         sla.slaCompliancePercent == 100.0;
 
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -332,7 +347,7 @@ public class EnergyMetricsStepTest {
 
         // Longer thresholds should have higher compliance
         boolean passed = sla.complianceByThreshold.size() == 6;
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -457,7 +472,7 @@ public class EnergyMetricsStepTest {
                         summary.getDatacenters().size() == 2 &&
                         summary.getUsers().size() == 2;
 
-        System.out.println("\n  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("\n  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 
@@ -496,7 +511,7 @@ public class EnergyMetricsStepTest {
                         json.contains("sla");
 
         System.out.println("\n  JSON contains required sections: " + (passed ? "Yes" : "No"));
-        System.out.println("  Result: " + (passed ? "PASSED" : "FAILED"));
+        System.out.println("  Result: " + result(passed, "FAILED"));
         System.out.println();
     }
 }

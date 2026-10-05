@@ -23,10 +23,14 @@ import java.util.List;
  *  3. Overflow seconds match the expected duration once a cap is set below peak.
  *  4. Serial (non-overlapping) tasks on one VM never exceed single-task power.
  *
+ * Expectations follow the per-vCPU lane model: each vCPU is a FIFO lane running one
+ * task at the VM's effective per-vCPU speed, and every busy lane adds the workload's
+ * speed-scaled incremental power on top of its host's idle power.
+ *
  * Run via:
- *   find src/main/java -name "*.java" -not -path "GUI-excluded" | xargs javac -cp "lib" -d target/classes
- *   javac -cp "target/classes:lib" -d target/test-classes src/test/java/com/cloudsimulator/PowerCeilingEnergyObjectiveTest.java
- *   java  -cp "target/test-classes:target/classes:lib" com.cloudsimulator.PowerCeilingEnergyObjectiveTest
+ *   find src/main/java -name "*.java" | grep -v /gui/ | xargs javac -cp "lib/*" -d target/classes
+ *   javac -cp "target/classes:lib/*" -d target/test-classes src/test/java/com/cloudsimulator/PowerCeilingEnergyObjectiveTest.java
+ *   java  -cp "target/test-classes:target/classes:lib/*" com.cloudsimulator.PowerCeilingEnergyObjectiveTest
  */
 public class PowerCeilingEnergyObjectiveTest {
 
@@ -71,10 +75,10 @@ public class PowerCeilingEnergyObjectiveTest {
     }
 
     // ----------------------------------------------------------------------
-    // Test 2: two concurrent VMs → peak is ~ idle + 2 × incremental
+    // Test 2: three concurrent lanes on two hosts → peak is 2 × idle + 3 × lane
     // ----------------------------------------------------------------------
     private static void testConcurrentTasksPeak() {
-        System.out.println("[2] Peak power with two concurrent CPU-heavy tasks");
+        System.out.println("[2] Peak power with three concurrent CPU-heavy tasks");
         Fixture f = buildTwoVmFixture();
 
         PowerCeilingEnergyObjective obj = new PowerCeilingEnergyObjective(Double.POSITIVE_INFINITY);
@@ -82,18 +86,16 @@ public class PowerCeilingEnergyObjectiveTest {
 
         MeasurementBasedPowerModel pm = obj.getPowerModel();
         double idle = pm.getScaledIdlePower();
-        // Reference hand-computed peak: both VMs run concurrently for the first
-        // F.SHORT_TICKS seconds, then VM0 runs its second task alone.
-        double inc0 = pm.calculateIncrementalPowerWithSpeedScaling(
-            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getTotalRequestedIps());
-        double inc1 = pm.calculateIncrementalPowerWithSpeedScaling(
-            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm1.getTotalRequestedIps());
+        // Reference hand-computed peak: during the first f.overlapTicks seconds VM0 runs
+        // both of its tasks on two lanes and VM1 runs its task on a third lane.
+        double lane = pm.calculateIncrementalPowerWithSpeedScaling(
+            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getEffectiveIpsPerVcpu());
         // DC aggregate baseline counts every active host once.
-        double expectedPeak = idle * f.activeHostCount + inc0 + inc1;
+        double expectedPeak = idle * f.activeHostCount + 3 * lane;
 
         double reported = obj.getLastPeakPower();
-        System.out.printf("    idle/host=%.2f W, activeHosts=%d, inc0=%.2f W, inc1=%.2f W%n",
-            idle, f.activeHostCount, inc0, inc1);
+        System.out.printf("    idle/host=%.2f W, activeHosts=%d, lane=%.2f W, busy lanes=3%n",
+            idle, f.activeHostCount, lane);
         System.out.printf("    expected peak=%.4f W, reported=%.4f W%n", expectedPeak, reported);
 
         expectNear("peak power (W)", expectedPeak, reported, 1e-6);
@@ -117,11 +119,12 @@ public class PowerCeilingEnergyObjectiveTest {
 
         MeasurementBasedPowerModel pm = probe.getPowerModel();
         double idle = pm.getScaledIdlePower();
-        double inc0 = pm.calculateIncrementalPowerWithSpeedScaling(
-            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getTotalRequestedIps());
+        double lane = pm.calculateIncrementalPowerWithSpeedScaling(
+            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getEffectiveIpsPerVcpu());
 
-        // Cap just below aggregate peak, but well above (idle + single-VM inc).
-        double cap = idle * f.activeHostCount + inc0 + 1.0;
+        // Cap below the overlap peak (2 × idle + 3 × lane) but above the power after the
+        // overlap (one host, one busy lane: idle + lane).
+        double cap = idle * f.activeHostCount + lane + 1.0;
         PowerCeilingEnergyObjective capped = new PowerCeilingEnergyObjective(cap);
         capped.evaluate(f.solution, f.tasks, f.vms);
 
@@ -141,7 +144,8 @@ public class PowerCeilingEnergyObjectiveTest {
     private static void testSerialTasksNeverExceedSinglePeak() {
         System.out.println("[4] Serial tasks on one VM stay at single-task peak");
 
-        VM vm = new VM("u", 1_000_000_000L, 4, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY);
+        // One vCPU, so the VM has a single lane and its two tasks really run one after another.
+        VM vm = new VM("u", 1_000_000_000L, 1, 0, 4096, 102400, 1000, ComputeType.CPU_ONLY);
         vm.setAssignedHostId(7L);
         List<VM> vms = List.of(vm);
 
@@ -160,7 +164,7 @@ public class PowerCeilingEnergyObjectiveTest {
         MeasurementBasedPowerModel pm = obj.getPowerModel();
         double idle = pm.getScaledIdlePower();
         double inc = pm.calculateIncrementalPowerWithSpeedScaling(
-            WorkloadType.SEVEN_ZIP, 1.0, 0.0, vm.getTotalRequestedIps());
+            WorkloadType.SEVEN_ZIP, 1.0, 0.0, vm.getEffectiveIpsPerVcpu());
         double expectedPeak = idle + inc;
 
         System.out.printf("    expected serial peak=%.4f W, reported=%.4f W%n",
@@ -182,8 +186,8 @@ public class PowerCeilingEnergyObjectiveTest {
         probe.evaluate(f.solution, f.tasks, f.vms);
         double peak = probe.getLastPeakPower();
         double idle = probe.getPowerModel().getScaledIdlePower();
-        double inc0 = probe.getPowerModel().calculateIncrementalPowerWithSpeedScaling(
-            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getTotalRequestedIps());
+        double lane = probe.getPowerModel().calculateIncrementalPowerWithSpeedScaling(
+            WorkloadType.SEVEN_ZIP, 1.0, 0.0, f.vm0.getEffectiveIpsPerVcpu());
 
         // Generous cap: must be feasible, all three modes must return 0
         double generousCap = peak + 1_000.0;
@@ -197,11 +201,11 @@ public class PowerCeilingEnergyObjectiveTest {
         expectNear("feasible OVERFLOW_SECONDS", 0.0, feasS.evaluate(f.solution, f.tasks, f.vms), 1e-9);
         expectNear("feasible OVERFLOW_JOULES",  0.0, feasJ.evaluate(f.solution, f.tasks, f.vms), 1e-9);
 
-        // Tight cap: (idle·hosts + inc0 + 1) — overlap window violates by
-        //   watts: peak - cap     (should equal inc1 - 1, ≈ 230.6 W)
+        // Tight cap: (idle·hosts + lane + 1) — overlap window violates by
+        //   watts: peak - cap     (should equal 2·lane - 1, ≈ 49.1 W)
         //   seconds: f.overlapTicks
         //   joules: (peak - cap) * overlapTicks
-        double tightCap = idle * f.activeHostCount + inc0 + 1.0;
+        double tightCap = idle * f.activeHostCount + lane + 1.0;
 
         PowerCeilingViolationObjective tightW = new PowerCeilingViolationObjective(
             tightCap, PowerCeilingViolationObjective.Mode.WATTS_OVER_CAP);
@@ -231,11 +235,12 @@ public class PowerCeilingEnergyObjectiveTest {
     }
 
     // ----------------------------------------------------------------------
-    // Fixture: 2 VMs on 2 distinct hosts. VM0 gets 2 CPU tasks, VM1 gets 1.
-    //   VM0 task durations: SHORT_TICKS + LONG_TICKS
-    //   VM1 task duration:  SHORT_TICKS
-    // So both VMs run concurrently for the first SHORT_TICKS seconds, then
-    // VM0 runs solo for LONG_TICKS seconds.
+    // Fixture: 2 VMs on 2 distinct hosts, 4 vCPUs (lanes) each. VM0 gets 2 CPU tasks,
+    // VM1 gets 1. VM0 runs its two tasks side by side on two lanes:
+    //   VM0: short task 4 ticks, long task 12 ticks (concurrent)
+    //   VM1: short task 4 ticks
+    // So three lanes on two hosts are busy for the first 4 seconds, then only
+    // VM0's long task runs (one lane on one host) until second 12.
     // ----------------------------------------------------------------------
     static class Fixture {
         SchedulingSolution solution;
@@ -256,11 +261,11 @@ public class PowerCeilingEnergyObjectiveTest {
         f.activeHostCount = 2;
         f.vms = List.of(f.vm0, f.vm1);
 
-        // VM IPS = 4 vCPU × 1 GIPS = 4e9 IPS.
-        // Short task: 4e9 instructions → 1 tick. Long task: 1.2e10 → 3 ticks.
+        // Each lane runs at the per-vCPU speed of 1 GIPS.
+        // Short task: 4e9 instructions → 4 ticks. Long task: 1.2e10 → 12 ticks.
         long shortLen = 4_000_000_000L;
         long longLen  = 12_000_000_000L;
-        f.overlapTicks = 1L; // both VMs run during tick 0
+        f.overlapTicks = 4L; // three lanes busy during ticks 0-3
 
         f.tasks = new ArrayList<>();
         f.tasks.add(new Task("vm0_short", "u", shortLen, WorkloadType.SEVEN_ZIP));

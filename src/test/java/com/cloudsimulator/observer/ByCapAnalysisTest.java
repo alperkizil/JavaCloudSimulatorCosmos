@@ -127,7 +127,7 @@ public class ByCapAnalysisTest {
         List<String> pm = Files.readAllLines(dir.resolve("scenario_1_performance_metrics_by_cap.csv"));
         check("metrics header",
             "CapTier,CapWatts,Algorithm,Seed,HV,GD,IGD,Spacing,NonDomSolutions,"
-                + "TotalSolutions,ParetoContribution,TimeMs,HV_fixed", pm.get(0));
+                + "TotalSolutions,ParetoContribution,TimeMs,HV_fixed,ScoredSeeds", pm.get(0));
         // Per tier: 2 labels x (2 seed rows + MEAN + STDDEV) + 1 universal trailer = 9.
         check("metrics rows", 1 + 9 + 9, pm.size());
         int pc60Rows = 0;
