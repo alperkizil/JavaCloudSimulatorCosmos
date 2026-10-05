@@ -1,5 +1,0 @@
-#include "${problemName}.h"
-
-void ${functionName}(double* vars, double* objs, double* constrs) {
-	// TODO: Fill in with your problem definition
-}
