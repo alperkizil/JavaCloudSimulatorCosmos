@@ -23,9 +23,13 @@ import java.util.Map;
  * <p>Tolerances: HV {@code < 1e-3}, Eps+ {@code < 1e-6}, contribution {@code < 1e-6}.</p>
  *
  * <p>Usage: {@code java ... ParetoAnalyzerParityTest [reportsDir]} (default
- * {@code reports/new}).</p>
+ * {@link #DEFAULT_REPORTS_DIR}, the committed 17 Sep 2026 power-cap campaign; any
+ * committed campaign folder works). The folder is only read, never written.</p>
  */
 public class ParetoAnalyzerParityTest {
+
+    private static final String DEFAULT_REPORTS_DIR =
+        "docs/ExperimentResults/PowerCeilingWaitingTimeVsEnergy_17_09_2026_10_56_32";
 
     private static final double HV_TOL = 1e-3;
     private static final double EPS_TOL = 1e-6;
@@ -36,7 +40,7 @@ public class ParetoAnalyzerParityTest {
     private static int comparisons = 0;
 
     public static void main(String[] args) throws IOException {
-        String reportsDir = args.length > 0 ? args[0] : "reports/new";
+        String reportsDir = args.length > 0 ? args[0] : DEFAULT_REPORTS_DIR;
         System.out.println("=== ParetoAnalyzer parity test vs recompute_hv.py oracle ===");
         System.out.println("Reports dir: " + reportsDir + "\n");
 
