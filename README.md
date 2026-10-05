@@ -69,7 +69,6 @@ DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
 | `…/enums/`, `…/utils/`, `…/factory/` | Enumerations, seeded `RandomGenerator`, clock, logger, power-model factory |
 | `…/FinalExperiment/`, `…/reporter/`, `…/gui/` | Legacy runners, legacy CSV reporters, JavaFX config generator |
 | `src/test/java/` | Test programs (see [Tests](#tests)) |
-| `oldExperiments/` | Archived experiment mains (not compiled by Maven) |
 | `scripts/` | Python post-processing and analysis tools |
 | `configs/` | Example `.cosc` configuration files |
 | `docs/` | Detailed documentation, committed campaign results and proposals |
@@ -88,9 +87,6 @@ Compile with `javac` and the jars in `lib/`:
 ```bash
 # Framework and studies (the GUI needs JavaFX, which is not in lib/)
 find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
-
-# Optionally also the archived experiments
-find src/main/java oldExperiments -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
 ```
 
 With Maven: `mvn compile`, and `mvn javafx:run` for the GUI.
