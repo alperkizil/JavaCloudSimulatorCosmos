@@ -1,5 +1,12 @@
 # Session Handoff — JavaCloudSimulatorCosmos Review, Fixes & Collaborative-Pareto Intervention
 
+> **History, not the current state.** Written on 2026-07-10, before Article 1 was finished
+> and submitted (tag `article1-submitted`); for the current state and the owner's rules,
+> read `CLAUDE.md`. §0 is still the starting point for the multi-DC study, but two of the
+> proposal's decisions summarised there, D15 (cap tiers) and D7 (GT-MOSA replacing AMOSA),
+> need review first (see `CLAUDE.md`). Results are in `docs/ExperimentResults/`, not
+> `newExperimentResults/`.
+
 For the next Claude instance (or collaborator). State as of 2026-07-10, repo `main` at
 merge of PR #222. Read `README.md` (in chunks) and `CLAUDE.md` first, as always.
 

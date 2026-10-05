@@ -6,8 +6,11 @@ energy taken from a **power model built on wall-plug measurements of real hardwa
 top of the simulator it compares single- and multi-objective metaheuristics on time–energy
 trade-offs, optionally under a datacenter **power cap**.
 
-Article 1 (submitted) is archived as tag `article1-submitted` —
-DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
+This code underlies the article *Energy Aware Hybrid CPU and GPU Virtual Machine
+Scheduling*, submitted to *IEEE Transactions on Parallel and Distributed Systems*
+(Submission ID `fb3a7e80-40c4-4b06-a7b8-86fe6d0de244`). The submitted version is archived
+as tag `article1-submitted` — DOI
+[10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
 
 ---
 
@@ -22,7 +25,7 @@ DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
 7. [Configuration files and the GUI](#configuration-files-and-the-gui)
 8. [Tests](#tests)
 9. [Further documentation](#further-documentation)
-10. [Reproducing Article 1](#reproducing-article-1)
+10. [Reproducing the article](#reproducing-the-article)
 11. [License and citation](#license-and-citation)
 
 ---
@@ -69,7 +72,6 @@ DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).
 | `…/enums/`, `…/utils/`, `…/factory/` | Enumerations, seeded `RandomGenerator`, clock, logger, power-model factory |
 | `…/FinalExperiment/`, `…/reporter/`, `…/gui/` | Legacy runners, legacy CSV reporters, JavaFX config generator |
 | `src/test/java/` | Test programs (see [Tests](#tests)) |
-| `oldExperiments/` | Archived experiment mains (not compiled by Maven) |
 | `scripts/` | Python post-processing and analysis tools |
 | `configs/` | Example `.cosc` configuration files |
 | `docs/` | Detailed documentation, committed campaign results and proposals |
@@ -88,16 +90,13 @@ Compile with `javac` and the jars in `lib/`:
 ```bash
 # Framework and studies (the GUI needs JavaFX, which is not in lib/)
 find src/main/java -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
-
-# Optionally also the archived experiments
-find src/main/java oldExperiments -name "*.java" -not -path "*/gui/*" | xargs javac -cp "lib/*" -d target/classes
 ```
 
 With Maven: `mvn compile`, and `mvn javafx:run` for the GUI.
 
 ## Running the studies
 
-The three studies of Article 1 live in `src/main/java/com/cloudsimulator/newExperiments/`.
+The three studies of the article live in `src/main/java/com/cloudsimulator/newExperiments/`.
 Run them from the repository root:
 
 ```bash
@@ -291,9 +290,12 @@ not tests.
 | `docs/ExperimentResults/experiment_outcomes.md` | Results of the 17 Sep 2026 campaigns |
 | `docs/ExperimentResults/amosa_summary.md` | Effect of AMOSA's temperature-scaled mutation |
 | `docs/proposals/` | The multi-datacenter carbon study proposal |
-| `article1problem.md`, `HANDOFF.md` | Development history of Article 1 |
+| `article1problem.md`, `HANDOFF.md` | Development history of the article |
 
-## Reproducing Article 1
+## Reproducing the article
+
+*Energy Aware Hybrid CPU and GPU Virtual Machine Scheduling* — IEEE Transactions on
+Parallel and Distributed Systems, Submission ID `fb3a7e80-40c4-4b06-a7b8-86fe6d0de244`.
 
 Check out tag `article1-submitted`, compile, and run the three entry points. The campaigns
 reported in the article are committed in `docs/ExperimentResults/`:
@@ -306,5 +308,5 @@ reported in the article are committed in `docs/ExperimentResults/`:
 
 Licensed under the GNU General Public License v3.0 (see `LICENSE`).
 
-To cite the software version used in Article 1:
+To cite the software version used in the article:
 DOI [10.5281/zenodo.23161629](https://doi.org/10.5281/zenodo.23161629).

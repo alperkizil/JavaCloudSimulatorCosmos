@@ -41,6 +41,10 @@ __pycache__/
 !docs/ExperimentResults/**/*.zip
 !docs/ExperimentResults/**/*.tar.gz
 
+# The libraries in lib/ are committed on purpose (Maven cannot download them in every
+# environment); without this exception a jar added or upgraded there is skipped silently.
+!lib/*.jar
+
 # Generated simulation reports
 reports/
 
